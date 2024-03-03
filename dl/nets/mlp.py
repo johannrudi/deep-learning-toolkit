@@ -30,7 +30,7 @@ class MLPModel(nn.Module):
             self.hidden_layers.append(layer)
             input_size = layer_size
         # create output layer
-        self.output_layer = nn.Linear(input_size, output_size, output_layer_kwargs)
+        self.output_layer = nn.Linear(input_size, output_size, **output_layer_kwargs)
         # initialize parameters
         self.init_parameters()
 
