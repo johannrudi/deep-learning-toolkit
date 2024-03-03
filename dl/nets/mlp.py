@@ -35,7 +35,7 @@ class MLPModel(nn.Module):
         self.init_parameters()
 
     def forward(self, x):
-        r"""Applies the model function: y = f(x)
+        r"""Applies the model function: y = model(x)
 
         Args:
             x: input tensor
