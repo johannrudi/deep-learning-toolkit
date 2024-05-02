@@ -1,6 +1,6 @@
-# DL
+# DL-Kit
 
 Folder structure
-- `cost`
+- `loss`
 - `nets`
 - `opt`
