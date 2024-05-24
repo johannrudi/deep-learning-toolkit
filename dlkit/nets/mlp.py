@@ -15,6 +15,12 @@ class MLPModel(nn.Module):
                  output_layer_activation=None,
                  output_layer_kwargs={},
                  use_dropout=False):
+        r"""Creates the model.
+
+        Args:
+            input_sizes: length of input features
+            output_size: length of outputs
+        """
         super().__init__()
         # set from arguments
         self.hidden_layers_activation = hidden_layers_activation
@@ -24,13 +30,14 @@ class MLPModel(nn.Module):
         else:
             self.dropout = None
         # create hidden layers
+        in_size = input_size
         self.hidden_layers = nn.ModuleList()
         for layer_size in hidden_layers_sizes:
-            layer = nn.Linear(input_size, layer_size, **hidden_layers_kwargs)
+            layer = nn.Linear(in_size, layer_size, **hidden_layers_kwargs)
             self.hidden_layers.append(layer)
-            input_size = layer_size
+            in_size = layer_size
         # create output layer
-        self.output_layer = nn.Linear(input_size, output_size, **output_layer_kwargs)
+        self.output_layer = nn.Linear(in_size, output_size, **output_layer_kwargs)
         # initialize parameters
         self.init_parameters()
 
@@ -82,6 +89,7 @@ class MLPModel(nn.Module):
 
 ###############################################################################
 
+# TODO use doxygen for these test
 def test_model():
     model = MLPModel(4, 3, hidden_layers_activation=nn.SiLU())
     print(model)
