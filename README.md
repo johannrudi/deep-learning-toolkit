@@ -2,5 +2,6 @@
 
 Folder structure
 - `loss`
+- `log`
 - `nets`
 - `opt`
