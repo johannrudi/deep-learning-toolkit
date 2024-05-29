@@ -21,20 +21,28 @@ def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
 def train_epochs(n_epochs, net, dataloader, optimizer, loss_fn,
-                 device=None, logger=logging.getLogger('train_epochs')):
+                 validation_fn=None, device=None, logger=logging.getLogger('train_epochs')):
     epoch_dlog = _dlog_train_epoch_initialize(n_epochs)
-    # loop over epochs
+    # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs)):
-        batch_dlog = train_batches(net, dataloader, optimizer, loss_fn,
+        # call validation function
+        if validation_fn is not None:
+            validation_fn(epoch_idx, net)
+        # train on batches
+        batch_dlog = train_batches(epoch_idx, net, dataloader, optimizer, loss_fn,
                                    device=device, logger=logger)
         # log
         _dlog_train_epoch_update(epoch_dlog, epoch_idx, batch_dlog)
         logger.info("epoch {:6d}, loss_mean {:.6e} std {:.3e}".format(
                 epoch_idx, batch_dlog['loss_mean'], batch_dlog['loss_std']))
     time_train = timeit.default_timer() - time_train
+    # call validation function after training
+    if validation_fn is not None:
+        validation_fn(n_epochs, g_net, d_net)
+    # </code>
+    # finalize and return log
     _dlog_train_epoch_finalize(epoch_dlog, time_train)
-    # return log
     return epoch_dlog
 
 def _dlog_train_batch_initialize(n_batches):
@@ -47,13 +55,14 @@ def _dlog_train_batch_update(dlog, batch_idx, loss):
     dlog['loss'][batch_idx] = loss
 
 def _dlog_train_batch_finalize(dlog):
-    dlog['loss_mean'] = np.mean(dlog['loss'])
-    dlog['loss_std']  = np.std(dlog['loss'])
+    is_valid = np.logical_not(np.isnan(dlog['loss']))
+    dlog['loss_mean'] = np.mean(dlog['loss'][is_valid])
+    dlog['loss_std'] = np.std(dlog['loss'][is_valid])
 
-def train_batches(net, dataloader, optimizer, loss_fn,
+def train_batches(epoch_idx, net, dataloader, optimizer, loss_fn,
                   device=None, logger=logging.getLogger('train_batches')):
     batch_dlog = _dlog_train_batch_initialize(len(dataloader))
-    # loop over batches
+    # <code id="training_loop_over_batches">
     for batch_idx, data in enumerate(dataloader):
         # set network to training mode
         net.train()
@@ -76,6 +85,8 @@ def train_batches(net, dataloader, optimizer, loss_fn,
         loss_v = loss.item()
         _dlog_train_batch_update(batch_dlog, batch_idx, loss_v)
         logger.debug("batch {:6d}, loss {:.6e}".format(batch_idx, loss_v))
+    # </code>
+    # finalize and return log
     _dlog_train_batch_finalize(batch_dlog)
     return batch_dlog
 
