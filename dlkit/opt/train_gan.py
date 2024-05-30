@@ -77,16 +77,6 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
         g_net.train()
         # get input and target tensors
         x_data, y_data, z_data = data
-        #^TODO uncomment
-###DEV
-#       x_data = data[:, 0:1]
-#       y_data = data[:, 1:2]
-#       import torch
-#       print('###', z_data.size())
-#       z_data = torch.randn((dataloader.batch_size, 1))
-#       print('###', z_data.size())
-#       exit()
-###/DEV
         if device is not None:
             x_data = x_data.to(device)
             y_data = y_data.to(device)
@@ -113,16 +103,7 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
         # get values for log
         d_loss_v = d_loss.item()
         d_reg_v  = d_reg.item()
-    # </code>
 
-###DEV
-#       if (epoch_idx + 1) % 10 == 0:
-#           print(
-#               "     *** (epoch,iter):({},{}) ---> d_loss:{:.4e}, gp_term:{:.4e}, wd:{:.4e}".format(
-#                   epoch_idx, batch_idx + epoch_idx*len(dataloader), d_loss_v + d_reg_v, d_reg_v/1.0e-4, -d_loss_v
-#               )
-#           )
-###/DEV
         # if we skip training the generator for this batch
         if 0 < batch_idx % d_opt_multiplier:
             # log
@@ -133,9 +114,6 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
 
         ### train generator network ###
 
-###DEV
-#       z_data = torch.randn((dataloader.batch_size, 1))
-###/DEV
         # generate outputs with `g_net (begin AD)`
         g_optimizer.zero_grad()
         x_gen = g_net(y_data, z_data)
@@ -154,10 +132,7 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
         _dlog_train_batch_update(train_batch_dlog, batch_idx, g_loss_v, d_loss_v, d_reg_v)
         logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss {:.6e}".format(
                 batch_idx, -d_loss_v+d_reg_v, d_loss_v, g_loss_v))
-###DEV
-#       if (epoch_idx + 1) % 10 == 0:
-#           print(f"     ***           ---> g_loss:{g_loss_v:.4e}")
-###/DEV
+    # </code>
 
     # finalize and return log
     _dlog_train_batch_finalize(train_batch_dlog)
