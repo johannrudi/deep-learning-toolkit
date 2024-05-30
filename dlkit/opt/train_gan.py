@@ -21,13 +21,17 @@ def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
 def train_epochs(n_epochs, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
-                 d_reg_fn=None, d_opt_multiplier=1,
+                 d_reg_fn=None, d_opt_multiplier=1, validation_fn=None,
                  device=None, logger=logging.getLogger('train_epochs')):
     epoch_dlog = _dlog_train_epoch_initialize(n_epochs)
-    # loop over epochs
+    # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs)):
-        batch_dlog = train_batches(g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
+        # call validation function
+        if validation_fn is not None:
+            validation_fn(epoch_idx, g_net, d_net)
+        # train on batches
+        batch_dlog = train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
                                    d_reg_fn=d_reg_fn, d_opt_multiplier=d_opt_multiplier,
                                    device=device, logger=logger)
         # log
@@ -37,8 +41,12 @@ def train_epochs(n_epochs, g_net, d_net, dataloader, g_optimizer, d_optimizer, l
                 batch_dlog['d_loss_mean'], batch_dlog['d_loss_std'],
                 batch_dlog['g_loss_mean'], batch_dlog['g_loss_std']))
     time_train = timeit.default_timer() - time_train
+    # call validation function after training
+    if validation_fn is not None:
+        validation_fn(n_epochs, g_net, d_net)
+    # </code>
+    # finalize and return log
     _dlog_train_epoch_finalize(epoch_dlog, time_train)
-    # return log
     return epoch_dlog
 
 def _dlog_train_batch_initialize(n_batches):
@@ -53,21 +61,32 @@ def _dlog_train_batch_update(dlog, batch_idx, g_loss, d_loss, d_reg):
     dlog['d_reg'][batch_idx]  = d_reg
 
 def _dlog_train_batch_finalize(dlog):
-    for key in ['g_loss', 'g_loss', 'd_reg']:
-        dlog[key+'_mean'] = np.mean(dlog[key])
-        dlog[key+'_std']  = np.std(dlog[key])
+    for key in ['g_loss', 'd_loss', 'd_reg']:
+        is_valid = np.logical_not(np.isnan(dlog[key]))
+        dlog[key+'_mean'] = np.mean(dlog[key][is_valid])
+        dlog[key+'_std'] = np.std(dlog[key][is_valid])
 
-def train_batches(g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
+def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
                   d_reg_fn=None, d_opt_multiplier=1,
                   device=None, logger=logging.getLogger('train_batches')):
     train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
-    # loop over batches
+    # <code id="training_loop_over_batches">
     for batch_idx, data in enumerate(dataloader):
         # set networks to training mode
         d_net.train()
         g_net.train()
         # get input and target tensors
         x_data, y_data, z_data = data
+        #^TODO uncomment
+###DEV
+#       x_data = data[:, 0:1]
+#       y_data = data[:, 1:2]
+#       import torch
+#       print('###', z_data.size())
+#       z_data = torch.randn((dataloader.batch_size, 1))
+#       print('###', z_data.size())
+#       exit()
+###/DEV
         if device is not None:
             x_data = x_data.to(device)
             y_data = y_data.to(device)
@@ -76,7 +95,7 @@ def train_batches(g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
         ### train discriminator network ###
 
         # generate outputs with `g_net`
-        x_gen = g_net(y_data, z_data)
+        x_gen = g_net(y_data, z_data).detach()
         # evalutate discriminator (begin AD)
         d_optimizer.zero_grad()
         d_outputs_gen  = d_net(x_gen, y_data)
@@ -94,17 +113,29 @@ def train_batches(g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
         # get values for log
         d_loss_v = d_loss.item()
         d_reg_v  = d_reg.item()
+    # </code>
 
+###DEV
+#       if (epoch_idx + 1) % 10 == 0:
+#           print(
+#               "     *** (epoch,iter):({},{}) ---> d_loss:{:.4e}, gp_term:{:.4e}, wd:{:.4e}".format(
+#                   epoch_idx, batch_idx + epoch_idx*len(dataloader), d_loss_v + d_reg_v, d_reg_v/1.0e-4, -d_loss_v
+#               )
+#           )
+###/DEV
         # if we skip training the generator for this batch
-        if batch_idx % d_opt_multiplier:
+        if 0 < batch_idx % d_opt_multiplier:
             # log
             _dlog_train_batch_update(train_batch_dlog, batch_idx, np.nan, d_loss_v, d_reg_v)
             logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss N/A".format(
-                    batch_idx, -d_loss_v+d_reg_v, d_loss_v))
+                    batch_idx, d_loss_v + d_reg_v, d_loss_v))
             continue
 
         ### train generator network ###
 
+###DEV
+#       z_data = torch.randn((dataloader.batch_size, 1))
+###/DEV
         # generate outputs with `g_net (begin AD)`
         g_optimizer.zero_grad()
         x_gen = g_net(y_data, z_data)
@@ -123,7 +154,12 @@ def train_batches(g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
         _dlog_train_batch_update(train_batch_dlog, batch_idx, g_loss_v, d_loss_v, d_reg_v)
         logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss {:.6e}".format(
                 batch_idx, -d_loss_v+d_reg_v, d_loss_v, g_loss_v))
+###DEV
+#       if (epoch_idx + 1) % 10 == 0:
+#           print(f"     ***           ---> g_loss:{g_loss_v:.4e}")
+###/DEV
 
+    # finalize and return log
     _dlog_train_batch_finalize(train_batch_dlog)
     return train_batch_dlog
 
