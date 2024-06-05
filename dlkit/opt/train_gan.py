@@ -66,54 +66,31 @@ def _dlog_train_batch_finalize(dlog):
         dlog[key+'_mean'] = np.mean(dlog[key][is_valid])
         dlog[key+'_std'] = np.std(dlog[key][is_valid])
 
-def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
-                  d_reg_fn=None, d_opt_multiplier=1,
-                  device=None, logger=logging.getLogger('train_batches')):
-    train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
-    # <code id="training_loop_over_batches">
-    for batch_idx, data in enumerate(dataloader):
-        # set networks to training mode
-        d_net.train()
-        g_net.train()
-        # get input and target tensors
-        x_data, y_data, z_data = data
-        if device is not None:
-            x_data = x_data.to(device)
-            y_data = y_data.to(device)
-            z_data = z_data.to(device)
+def _train_step_discriminator(x_data, y_data, z_data,
+                              g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None):
+    """ Trains discriminator network. """
+    # generate outputs with `g_net`
+    x_gen = g_net(y_data, z_data).detach()
+    # evalutate discriminator (begin AD)
+    d_optimizer.zero_grad()
+    d_outputs_gen  = d_net(x_gen, y_data)
+    d_outputs_data = d_net(x_data, y_data)
+    # evaluate discriminator loss
+    d_loss = loss_fn(d_outputs_gen, d_outputs_data)  # loss must have correct sign for minimization
+    if d_reg_fn is not None:
+        d_reg = d_reg_fn(d_net, x_gen, x_data, y_data)
+    else:
+        d_reg = 0.0
+    loss = d_loss + d_reg
+    # calculate derivatives (end AD) and update network parameters
+    loss.backward()
+    d_optimizer.step()
+    # return values for log
+    return d_loss.item(), d_reg.item()
 
-        ### train discriminator network ###
-
-        # generate outputs with `g_net`
-        x_gen = g_net(y_data, z_data).detach()
-        # evalutate discriminator (begin AD)
-        d_optimizer.zero_grad()
-        d_outputs_gen  = d_net(x_gen, y_data)
-        d_outputs_data = d_net(x_data, y_data)
-        # evaluate discriminator loss
-        d_loss = loss_fn(d_outputs_gen, d_outputs_data)
-        if d_reg_fn is not None:
-            d_reg = d_reg_fn(d_net, x_gen, x_data, y_data)
-        else:
-            d_reg = 0.0
-        loss = d_loss + d_reg  # use negative sign, because we want to maximize the discriminator loss
-        # calculate derivatives (end AD) and update network parameters
-        loss.backward()
-        d_optimizer.step()
-        # get values for log
-        d_loss_v = d_loss.item()
-        d_reg_v  = d_reg.item()
-
-        # if we skip training the generator for this batch
-        if 0 < batch_idx % d_opt_multiplier:
-            # log
-            _dlog_train_batch_update(train_batch_dlog, batch_idx, np.nan, d_loss_v, d_reg_v)
-            logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss N/A".format(
-                    batch_idx, d_loss_v + d_reg_v, d_loss_v))
-            continue
-
-        ### train generator network ###
-
+def _train_step_generator(y_data, z_data,
+                          g_net, d_net, g_optimizer, loss_fn):
+        """ Trains generator network. """
         # generate outputs with `g_net (begin AD)`
         g_optimizer.zero_grad()
         x_gen = g_net(y_data, z_data)
@@ -125,8 +102,47 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
         # calculate derivatives (end AD) and update network parameters
         loss.backward()
         g_optimizer.step()
-        # get values for log
-        g_loss_v = g_loss.item()
+        # return values for log
+        return g_loss.item()
+
+def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
+                  d_reg_fn=None, d_opt_multiplier=1,
+                  device=None, logger=logging.getLogger('train_batches')):
+    train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
+    # <code id="training_loop_over_batches">
+    for batch_idx, data in enumerate(dataloader):
+        # set networks to training mode
+        g_net.train()
+        d_net.train()
+        # get input and target tensors
+        x_data, y_data, z_data = data
+        if device is not None:
+            x_data = x_data.to(device)
+            y_data = y_data.to(device)
+            z_data = z_data.to(device)
+
+        # train discriminator network
+        d_loss_v, d_reg_v = _train_step_discriminator(
+                x_data, y_data, z_data,
+                g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
+
+        # if we skip training the generator for this batch
+        if 0 < batch_idx % d_opt_multiplier:
+            # log
+            _dlog_train_batch_update(train_batch_dlog, batch_idx, np.nan, d_loss_v, d_reg_v)
+            logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss N/A".format(
+                    batch_idx, d_loss_v + d_reg_v, d_loss_v))
+            continue
+
+        # train generator network
+        g_loss_v = _train_step_generator(
+                y_data, z_data,
+                g_net, d_net, g_optimizer, loss_fn)
+
+        # repeat training of discriminator network
+        d_loss_v, d_reg_v = _train_step_discriminator(
+                x_data, y_data, z_data,
+                g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
 
         # log
         _dlog_train_batch_update(train_batch_dlog, batch_idx, g_loss_v, d_loss_v, d_reg_v)
