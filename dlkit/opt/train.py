@@ -69,7 +69,7 @@ def train_epochs(
                 epoch_idx, batch_dlog['loss_mean'], batch_dlog['loss_std']))
         ## Checkpoint
         if _save_checkpoints:
-            if epoch_idx % checkpoint_epochs == 0: 
+            if (epoch_idx % checkpoint_epochs == 0) or (epoch_idx == (n_epochs-1)): 
                 filename = f"{_check_dir}/{epoch_idx:02d}-{batch_dlog['loss_mean']:.2f}.pt"
                 checkpoint(
                     net, filename, epoch=epoch_idx, loss=loss_fn, 
