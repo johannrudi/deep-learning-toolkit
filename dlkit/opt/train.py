@@ -38,6 +38,11 @@ def train_epochs(
     validation_fn=None, device=None, logger=logging.getLogger('train_epochs'),
     checkpoint_epochs=10, checkpoint_path=None
     ):
+    """ Checkpointing saves model and optimizer states at every epoch divisible 
+    by `checkpoint_epochs`. Setting `checkpoint_epochs`=None turns off 
+    checkpointing. Checkpointing will create a new dir under checkpoints/{checkpoint_path}
+    with date and time of training start. 
+    """
 
     epoch_dlog = _dlog_train_epoch_initialize(n_epochs)
     # <code id="training_loop_over_epochs">
