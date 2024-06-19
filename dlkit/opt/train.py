@@ -69,8 +69,9 @@ def train_epochs(
         # save checkpoint
         if checkpoint_epochs is not None and \
            ( (epoch_idx % checkpoint_epochs == 0) or (epoch_idx == (n_epochs-1)) ):
-                fmt = '{:0'+str(math.ceil(math.log10(n_epochs)))+'d}_{:.2e}.pt'
-                filename = fmt.format(epoch_idx, batch_dlog['loss_mean'])
+                n = int(math.ceil(math.log10(n_epochs)))
+                s = '{:0'+str(n)+'d}_l{:.3e}.pt'
+                filename = s.format(epoch_idx, batch_dlog['loss_mean'])
                 path = os.path.join(checkpoint_dir, filename)
                 _checkpoint_save(net, path, epoch=epoch_idx, loss=loss_fn, optimizer=optimizer)
     time_train = timeit.default_timer() - time_train
