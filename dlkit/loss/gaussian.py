@@ -13,8 +13,8 @@ def gaussian_loss_fn(outputs, targets, svd_ranks=8, inv_eps=1.0e-5):
     # calculate covariance-weighted inner-product
     y_diff = y_data - y_mean
     yt_Cinv_y = torch.unsqueeze(y_diff, 1) @ \
-        V @ torch.diag_embed(1.0/(S + inv_eps)) @ torch.transpose(U, 1, 2) @ \
-        torch.unsqueeze(y_diff, 2)
+                V @ torch.diag_embed(1.0/(S + inv_eps)) @ torch.transpose(U, 1, 2) @ \
+                torch.unsqueeze(y_diff, 2)
     # calculate Gaussian loss
     exp_part = yt_Cinv_y.squeeze_([1, 2])
     log_part = torch.sum(torch.log(S), 1)
