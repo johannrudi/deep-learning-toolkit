@@ -2,6 +2,7 @@
 wiki: <https://en.wikipedia.org/wiki/Multilayer_perceptron>
 """
 
+import math
 import torch
 import torch.nn as nn
 
@@ -67,7 +68,7 @@ class MLPModel(nn.Module):
         r"""Calculates the gain to be used as an argument for initializing parameter values."""
         if activation is not None:
             activation_name = type(activation).__name__.lower()
-            if activation_name in ['silu']:
+            if activation_name in ['silu', 'gelu']:
                 activation_name = 'relu'
             gain = nn.init.calculate_gain(activation_name)
         else:
@@ -81,7 +82,8 @@ class MLPModel(nn.Module):
         for layer in self.hidden_layers:
             nn.init.xavier_uniform_(layer.weight, gain=gain)
             if layer.bias is not None:
-                nn.init.constant_(layer.bias, 0.1)
+                lim = 0.1*gain/math.sqrt(layer.bias.size(0))
+                nn.init.uniform_(layer.bias, a=-lim, b=+lim)
         # initialize output layer
         gain = self.get_gain(self.output_layer_activation)
         nn.init.xavier_uniform_(self.output_layer.weight, gain=gain)

@@ -1,6 +1,7 @@
 """Models with convolutional layers.
 """
 
+import math
 import torch
 import torch.nn as nn
 
@@ -96,7 +97,7 @@ class Conv1dModel(nn.Module):
         r"""Calculates the gain to be used as an argument for initializing parameter values."""
         if activation is not None:
             activation_name = type(activation).__name__.lower()
-            if activation_name in ['silu']:
+            if activation_name in ['silu', 'gelu']:
                 activation_name = 'relu'
             gain = nn.init.calculate_gain(activation_name)
         else:
@@ -110,13 +111,15 @@ class Conv1dModel(nn.Module):
         for layer in self.hidden_conv_layers:
             nn.init.xavier_uniform_(layer.weight, gain=gain)
             if layer.bias is not None:
-                nn.init.constant_(layer.bias, 0.1)
+                lim = 0.1*gain/math.sqrt(layer.bias.size(0))
+                nn.init.uniform_(layer.bias, a=-lim, b=+lim)
         # initialize hidden dense layers
         gain = self.get_gain(self.hidden_dense_layers_activation)
         for layer in self.hidden_dense_layers:
             nn.init.xavier_uniform_(layer.weight, gain=gain)
             if layer.bias is not None:
-                nn.init.constant_(layer.bias, 0.1)
+                lim = 0.1*gain/math.sqrt(layer.bias.size(0))
+                nn.init.uniform_(layer.bias, a=-lim, b=+lim)
         # initialize output layer
         gain = self.get_gain(self.output_layer_activation)
         if self.output_layer is not None:
