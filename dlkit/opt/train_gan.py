@@ -3,6 +3,7 @@
 
 import logging, timeit
 import numpy as np
+import torch
 from tqdm import tqdm
 
 def _dlog_train_epoch_initialize(n_epochs):
@@ -20,7 +21,7 @@ def _dlog_train_epoch_update(dlog, epoch_idx, batch_dlog):
 def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
-def train_epochs(n_epochs, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
+def train_epochs(n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
                  d_reg_fn=None, d_opt_multiplier=1, validation_fn=None,
                  device=None, logger=logging.getLogger('train_epochs')):
     epoch_dlog = _dlog_train_epoch_initialize(n_epochs)
@@ -31,7 +32,7 @@ def train_epochs(n_epochs, g_net, d_net, dataloader, g_optimizer, d_optimizer, l
         if validation_fn is not None:
             validation_fn(epoch_idx, g_net, d_net)
         # train on batches
-        batch_dlog = train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
+        batch_dlog = train_batches(epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
                                    d_reg_fn=d_reg_fn, d_opt_multiplier=d_opt_multiplier,
                                    device=device, logger=logger)
         # log
@@ -41,7 +42,7 @@ def train_epochs(n_epochs, g_net, d_net, dataloader, g_optimizer, d_optimizer, l
                 batch_dlog['d_loss_mean'], batch_dlog['d_loss_std'],
                 batch_dlog['g_loss_mean'], batch_dlog['g_loss_std']))
     time_train = timeit.default_timer() - time_train
-    # call validation function after training
+    # call validation function one last time after training loop over epochs
     if validation_fn is not None:
         validation_fn(n_epochs, g_net, d_net)
     # </code>
@@ -66,19 +67,22 @@ def _dlog_train_batch_finalize(dlog):
         dlog[key+'_mean'] = np.mean(dlog[key][is_valid])
         dlog[key+'_std'] = np.std(dlog[key][is_valid])
 
-def _train_step_discriminator(x_data, y_data, z_data,
+def _train_step_discriminator(x_data, y_data, z_sample_fn,
                               g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None):
     """ Trains discriminator network. """
+    # sample from latent space for generator
+    batch_size = y_data.size(0)
+    z = z_sample_fn(batch_size)
     # generate outputs with `g_net`
-    x_gen = g_net(y_data, z_data).detach()
+    x_gen = torch.vmap( lambda z_: g_net(y_data, z_) )(z).detach()
     # evalutate discriminator (begin AD)
     d_optimizer.zero_grad()
-    d_outputs_gen  = d_net(x_gen, y_data)
+    d_outputs_gen  = torch.vmap( lambda x_: d_net(x_, y_data) )(x_gen).flatten(start_dim=0, end_dim=1)
     d_outputs_data = d_net(x_data, y_data)
     # evaluate discriminator loss
     d_loss = loss_fn(d_outputs_gen, d_outputs_data)  # loss must have correct sign for minimization
     if d_reg_fn is not None:
-        d_reg = d_reg_fn(d_net, x_gen, x_data, y_data)
+        d_reg = d_reg_fn(d_net, x_gen[np.random.randint(0, x_gen.size(0))], x_data, y_data)
     else:
         d_reg = 0.0
     loss = d_loss + d_reg
@@ -88,24 +92,27 @@ def _train_step_discriminator(x_data, y_data, z_data,
     # return values for log
     return d_loss.item(), d_reg.item()
 
-def _train_step_generator(y_data, z_data,
+def _train_step_generator(y_data, z_sample_fn,
                           g_net, d_net, g_optimizer, loss_fn):
-        """ Trains generator network. """
-        # generate outputs with `g_net (begin AD)`
-        g_optimizer.zero_grad()
-        x_gen = g_net(y_data, z_data)
-        # evalutate discriminator
-        d_outputs_gen = d_net(x_gen, y_data)
-        # evaluate discriminator loss
-        g_loss = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
-        loss = g_loss
-        # calculate derivatives (end AD) and update network parameters
-        loss.backward()
-        g_optimizer.step()
-        # return values for log
-        return g_loss.item()
+    """ Trains generator network. """
+    # sample from latent space for generator
+    batch_size = y_data.size(0)
+    z = z_sample_fn(batch_size)
+    # generate outputs with `g_net` (begin AD)
+    g_optimizer.zero_grad()
+    x_gen = torch.vmap( lambda z_: g_net(y_data, z_) )(z)
+    # evalutate discriminator
+    d_outputs_gen = torch.vmap( lambda x_: d_net(x_, y_data) )(x_gen).flatten(start_dim=0, end_dim=1)
+    # evaluate discriminator loss
+    g_loss = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
+    loss = g_loss
+    # calculate derivatives (end AD) and update network parameters
+    loss.backward()
+    g_optimizer.step()
+    # return values for log
+    return g_loss.item()
 
-def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer, loss_fn,
+def train_batches(epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
                   d_reg_fn=None, d_opt_multiplier=1,
                   device=None, logger=logging.getLogger('train_batches')):
     train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
@@ -115,15 +122,14 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
         g_net.train()
         d_net.train()
         # get input and target tensors
-        x_data, y_data, z_data = data
+        x_data, y_data = data
         if device is not None:
             x_data = x_data.to(device)
             y_data = y_data.to(device)
-            z_data = z_data.to(device)
 
         # train discriminator network
         d_loss_v, d_reg_v = _train_step_discriminator(
-                x_data, y_data, z_data,
+                x_data, y_data, z_sample_fn,
                 g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
 
         # if we skip training the generator for this batch
@@ -136,12 +142,12 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, g_optimizer, d_optimizer,
 
         # train generator network
         g_loss_v = _train_step_generator(
-                y_data, z_data,
+                y_data, z_sample_fn,
                 g_net, d_net, g_optimizer, loss_fn)
 
         # repeat training of discriminator network
         d_loss_v, d_reg_v = _train_step_discriminator(
-                x_data, y_data, z_data,
+                x_data, y_data, z_sample_fn,
                 g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
 
         # log
