@@ -6,16 +6,26 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-def _dlog_train_epoch_initialize(n_epochs):
+def _dlog_train_epoch_initialize(n_epochs, save_list=True):
     dlog = {}
-    for key in ['g_loss_mean', 'g_loss_std', 'd_loss_mean', 'd_loss_std', 'd_reg_mean', 'd_reg_std']:
-        dlog[key] = np.empty((n_epochs,))
+    for key in ['g_loss_mean', 'g_loss_std',
+                'd_loss_mean', 'd_loss_std',
+                'd_loss_g_mean', 'd_loss_g_std',
+                'd_reg_mean', 'd_reg_std']:
+        if save_list:
+            dlog[key] = np.empty((n_epochs,))
+        else:
+            dlog[key] = None
     dlog['batch_dlog'] = []
     return dlog
 
 def _dlog_train_epoch_update(dlog, epoch_idx, batch_dlog):
-    for key in ['g_loss_mean', 'g_loss_std', 'd_loss_mean', 'd_loss_std', 'd_reg_mean', 'd_reg_std']:
-        dlog[key][epoch_idx] = batch_dlog[key]
+    for key in ['g_loss_mean', 'g_loss_std',
+                'd_loss_mean', 'd_loss_std',
+                'd_loss_g_mean', 'd_loss_g_std',
+                'd_reg_mean', 'd_reg_std']:
+        if dlog[key] is not None:
+            dlog[key][epoch_idx] = batch_dlog[key]
     dlog['batch_dlog'].append(batch_dlog)
 
 def _dlog_train_epoch_finalize(dlog, time_train):
@@ -50,22 +60,33 @@ def train_epochs(n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d
     _dlog_train_epoch_finalize(epoch_dlog, time_train)
     return epoch_dlog
 
-def _dlog_train_batch_initialize(n_batches):
-    dlog = {}
-    for key in ['g_loss', 'd_loss', 'd_reg']:
-        dlog[key] = np.empty((n_batches,))
+def _dlog_train_batch_initialize(n_batches, save_list=False):
+    dlog = {'n_batches': n_batches}
+    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg']:
+        if save_list:
+            dlog[key] = np.empty((n_batches,))
+        else:
+            dlog[key] = None
+        dlog[key+'_mean']    = 0.0
+        dlog[key+'_sq_mean'] = 0.0
+        dlog[key+'_std']     = None
     return dlog
 
-def _dlog_train_batch_update(dlog, batch_idx, g_loss, d_loss, d_reg):
-    dlog['g_loss'][batch_idx] = g_loss
-    dlog['d_loss'][batch_idx] = d_loss
-    dlog['d_reg'][batch_idx]  = d_reg
+def _dlog_train_batch_update(dlog, batch_idx, g_loss, d_loss, d_loss_g, d_reg):
+    for key, val in zip(['g_loss', 'd_loss', 'd_loss_g', 'd_reg'],
+                        [ g_loss ,  d_loss ,  d_loss_g ,  d_reg ]):
+        if dlog[key] is not None:
+            dlog[key][batch_idx] = val
+        if not np.isnan(val):
+            dlog[key+'_mean']    += val/dlog['n_batches']
+            dlog[key+'_sq_mean'] += val*val/dlog['n_batches']
 
 def _dlog_train_batch_finalize(dlog):
-    for key in ['g_loss', 'd_loss', 'd_reg']:
-        is_valid = np.logical_not(np.isnan(dlog[key]))
-        dlog[key+'_mean'] = np.mean(dlog[key][is_valid])
-        dlog[key+'_std'] = np.std(dlog[key][is_valid])
+    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg']:
+        assert dlog[key+'_std'] is None
+        assert not np.isnan(dlog[key+'_mean'])
+        assert not np.isnan(dlog[key+'_sq_mean'])
+        dlog[key+'_std'] = np.sqrt(dlog[key+'_sq_mean'] - dlog[key+'_mean']**2)
 
 def _train_step_discriminator(x_data, y_data, z_sample_fn,
                               g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None):
@@ -80,7 +101,7 @@ def _train_step_discriminator(x_data, y_data, z_sample_fn,
     d_outputs_gen  = torch.vmap( lambda x_: d_net(x_, y_data) )(x_gen).flatten(start_dim=0, end_dim=1)
     d_outputs_data = d_net(x_data, y_data)
     # evaluate discriminator loss
-    d_loss = loss_fn(d_outputs_gen, d_outputs_data)  # loss must have correct sign for minimization
+    d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)  # output must have correct sign for minimization
     if d_reg_fn is not None:
         d_reg = d_reg_fn(d_net, x_gen[np.random.randint(0, x_gen.size(0))], x_data, y_data)
     else:
@@ -90,7 +111,7 @@ def _train_step_discriminator(x_data, y_data, z_sample_fn,
     loss.backward()
     d_optimizer.step()
     # return values for log
-    return d_loss.item(), d_reg.item()
+    return d_loss.item(), d_loss_g.item(), d_reg.item()
 
 def _train_step_generator(y_data, z_sample_fn,
                           g_net, d_net, g_optimizer, loss_fn):
@@ -104,7 +125,7 @@ def _train_step_generator(y_data, z_sample_fn,
     # evalutate discriminator
     d_outputs_gen = torch.vmap( lambda x_: d_net(x_, y_data) )(x_gen).flatten(start_dim=0, end_dim=1)
     # evaluate discriminator loss
-    g_loss = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
+    g_loss, _ = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
     loss = g_loss
     # calculate derivatives (end AD) and update network parameters
     loss.backward()
@@ -128,16 +149,17 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer,
             y_data = y_data.to(device)
 
         # train discriminator network
-        d_loss_v, d_reg_v = _train_step_discriminator(
+        d_loss_v, d_loss_g_v, d_reg_v = _train_step_discriminator(
                 x_data, y_data, z_sample_fn,
                 g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
 
         # if we skip training the generator for this batch
         if 0 < batch_idx % d_opt_multiplier:
             # log
-            _dlog_train_batch_update(train_batch_dlog, batch_idx, np.nan, d_loss_v, d_reg_v)
+            _dlog_train_batch_update(train_batch_dlog, batch_idx, np.nan, d_loss_v, d_loss_g_v, d_reg_v)
             logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss N/A".format(
-                    batch_idx, d_loss_v + d_reg_v, d_loss_v))
+                    batch_idx, d_loss_v + d_reg_v, d_loss_v
+            ))
             continue
 
         # train generator network
@@ -146,14 +168,15 @@ def train_batches(epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer,
                 g_net, d_net, g_optimizer, loss_fn)
 
         # repeat training of discriminator network
-        d_loss_v, d_reg_v = _train_step_discriminator(
+        d_loss_v, d_loss_g_v, d_reg_v = _train_step_discriminator(
                 x_data, y_data, z_sample_fn,
                 g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
 
         # log
-        _dlog_train_batch_update(train_batch_dlog, batch_idx, g_loss_v, d_loss_v, d_reg_v)
+        _dlog_train_batch_update(train_batch_dlog, batch_idx, g_loss_v, d_loss_v, d_loss_g_v, d_reg_v)
         logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss {:.6e}".format(
-                batch_idx, -d_loss_v+d_reg_v, d_loss_v, g_loss_v))
+                batch_idx, d_loss_v + d_reg_v, d_loss_v, g_loss_v
+        ))
     # </code>
 
     # finalize and return log
