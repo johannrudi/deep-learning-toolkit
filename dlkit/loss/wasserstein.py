@@ -2,10 +2,10 @@ import torch
 
 def wasserstein_loss_fn(d_outputs_gen, d_outputs_data):
     """ Calculates loss corresponding to a Wasserstein distance. """
-    fake_loss = torch.mean(d_outputs_gen)  if d_outputs_gen is not None else 0.0
-    true_loss = torch.mean(d_outputs_data) if d_outputs_data is not None else 0.0
-    wd_loss = true_loss - fake_loss # value to be maximized
-    return -wd_loss                 # value to be minimized
+    loss_gen  = torch.mean(d_outputs_gen)  if d_outputs_gen is not None else 0.0
+    loss_data = torch.mean(d_outputs_data) if d_outputs_data is not None else 0.0
+    w_loss = loss_data - loss_gen   # value to be maximized
+    return -w_loss, loss_gen        # value to be minimized
 
 def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, device=None):
     """ Computes regularization for network representing Wasserstein distance.
