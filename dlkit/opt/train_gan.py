@@ -58,6 +58,7 @@ def train_epochs(n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d
     # </code>
     # finalize and return log
     _dlog_train_epoch_finalize(epoch_dlog, time_train)
+    logger.info("training time {:g} sec, time/epoch {:g} sec".format(time_train, time_train/n_epochs))
     return epoch_dlog
 
 def _dlog_train_batch_initialize(n_batches, save_list=False):
@@ -67,6 +68,7 @@ def _dlog_train_batch_initialize(n_batches, save_list=False):
             dlog[key] = np.empty((n_batches,))
         else:
             dlog[key] = None
+        dlog[key+'_mean_n']  = 0
         dlog[key+'_mean']    = 0.0
         dlog[key+'_sq_mean'] = 0.0
         dlog[key+'_std']     = None
@@ -78,15 +80,18 @@ def _dlog_train_batch_update(dlog, batch_idx, g_loss, d_loss, d_loss_g, d_reg):
         if dlog[key] is not None:
             dlog[key][batch_idx] = val
         if not np.isnan(val):
-            dlog[key+'_mean']    += val/dlog['n_batches']
-            dlog[key+'_sq_mean'] += val*val/dlog['n_batches']
+            dlog[key+'_mean_n']  += 1
+            dlog[key+'_mean']    += val
+            dlog[key+'_sq_mean'] += val*val
 
 def _dlog_train_batch_finalize(dlog):
     for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg']:
         assert dlog[key+'_std'] is None
         assert not np.isnan(dlog[key+'_mean'])
         assert not np.isnan(dlog[key+'_sq_mean'])
-        dlog[key+'_std'] = np.sqrt(dlog[key+'_sq_mean'] - dlog[key+'_mean']**2)
+        dlog[key+'_mean']    *= 1.0/dlog[key+'_mean_n']
+        dlog[key+'_sq_mean'] *= 1.0/dlog[key+'_mean_n']
+        dlog[key+'_std']      = np.sqrt(dlog[key+'_sq_mean'] - dlog[key+'_mean']**2)
 
 def _train_step_discriminator(x_data, y_data, z_sample_fn,
                               g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None):
