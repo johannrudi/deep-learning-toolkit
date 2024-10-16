@@ -143,8 +143,7 @@ class MLPModelMultIn(MLPModel):
             h1, h2, ... (tensor, optional): input tensors to hidden layers
         """
         # concatenate inputs; flatten inputs
-        x = torch.cat(x_args, dim=1)
-        h = torch.flatten(x, 1)
+        h = torch.cat([torch.flatten(x_, 1) for x_ in x_args], dim=1)
         # apply hidden layers
         for layer_idx, layer in enumerate(self.hidden_layers):
             h = layer(h)
