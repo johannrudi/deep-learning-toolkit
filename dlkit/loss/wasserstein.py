@@ -36,7 +36,12 @@ def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, eps=0.0, devic
         eps + torch.add(torch.sum(torch.square(grad_x), dim=1),
                         torch.sum(torch.square(grad_y), dim=1))
     )
-    grad_penalty = torch.pow(grad_norm - c0, p).mean()
+    # <code id="gradient_penalty_v0">
+    #grad_penalty = torch.pow(grad_norm - c0, p).mean()
+    # </code>
+    # <code id="gradient_penalty_v1">
+    grad_penalty = torch.pow(torch.nn.functional.relu(grad_norm - c0), p).mean()
+    # </code>
     # log to dictionary
     if dlog is not None:
         assert isinstance(dlog, dict), type(dlog)
