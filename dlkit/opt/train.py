@@ -12,13 +12,12 @@ def _checkpoint_path(checkpoint_dir, n_epochs, epoch):
     filename = fmt.format(epoch)
     return os.path.join(checkpoint_dir, filename)
 
-def _checkpoint_save(model, filepath, epoch, loss_fn, optimizer):
+def _checkpoint_save(model, filepath, epoch, optimizer):
     torch.save(
         {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'loss_fn': loss_fn,
         },
         filepath
     )
@@ -66,7 +65,7 @@ def train_epochs(
         if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
             path = _checkpoint_path(checkpoint_dir, n_epochs, epoch=epoch_idx)
             logger.debug("epoch {:6d}, save checkpoint to {}".format(epoch_idx, path))
-            _checkpoint_save(net, path, epoch=epoch_idx, loss_fn=loss_fn, optimizer=optimizer)
+            _checkpoint_save(net, path, epoch=epoch_idx, optimizer=optimizer)
         # call validation function
         if validation_fn is not None:
             validation_fn(epoch_idx, net)
@@ -81,7 +80,7 @@ def train_epochs(
     if checkpoint_epochs is not None:
         path = _checkpoint_path(checkpoint_dir, n_epochs, epoch=n_epochs)
         logger.debug("epoch {:6d}, save checkpoint to {}".format(n_epochs, path))
-        _checkpoint_save(net, path, epoch=n_epochs, loss_fn=loss_fn, optimizer=optimizer)
+        _checkpoint_save(net, path, epoch=n_epochs, optimizer=optimizer)
     # call validation function---after training
     if validation_fn is not None:
         validation_fn(n_epochs, net)
