@@ -2,12 +2,12 @@ import torch
 
 def wasserstein_loss_fn(d_outputs_gen, d_outputs_data):
     """ Calculates loss corresponding to a Wasserstein distance. """
-    loss_gen  = torch.mean(d_outputs_gen)  if d_outputs_gen is not None else 0.0
+    loss_gen  = torch.mean(d_outputs_gen)  if d_outputs_gen  is not None else 0.0
     loss_data = torch.mean(d_outputs_data) if d_outputs_data is not None else 0.0
     w_loss = loss_data - loss_gen   # value to be maximized
     return -w_loss, loss_gen        # value to be minimized
 
-def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, device=None):
+def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, eps=0.0, device=None, dlog=None):
     """ Computes regularization for network representing Wasserstein distance.
     This is a penalty term for Lipschitz continuity.
 
@@ -20,6 +20,7 @@ def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, device=None):
     x_hat.requires_grad = True
     y_data.requires_grad = True
     d_outputs_hat = d_net(x_hat, y_data)
+    # compute gradient
     grad = torch.autograd.grad(
         outputs=d_outputs_hat,
         inputs=(x_hat, y_data),
@@ -30,10 +31,16 @@ def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, device=None):
     grad_x, grad_y = grad[0], grad[1]
     grad_x = grad_x.view(batch_size, -1)
     grad_y = grad_y.view(batch_size, -1)
+    # compute the l2-norm of the gradient
     grad_norm = torch.sqrt(
-        1.0e-8 + torch.add(torch.sum(torch.square(grad_x), dim=1),
-                           torch.sum(torch.square(grad_y), dim=1))
+        eps + torch.add(torch.sum(torch.square(grad_x), dim=1),
+                        torch.sum(torch.square(grad_y), dim=1))
     )
     grad_penalty = torch.pow(grad_norm - c0, p).mean()
+    # log to dictionary
+    if dlog is not None:
+        assert isinstance(dlog, dict), type(dlog)
+        dlog['grad_norm'] = grad_norm.detach().mean().item()
+    # return the value of the regularization term
     return grad_penalty
 
