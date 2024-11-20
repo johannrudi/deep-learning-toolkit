@@ -25,10 +25,11 @@ def _checkpoint_save(model, filepath, epoch, optimizer):
 
 def _dlog_train_epoch_initialize(n_epochs, save_list=True):
     dlog = {}
-    for key in ['g_loss_mean', 'g_loss_std',
-                'd_loss_mean', 'd_loss_std',
-                'd_loss_g_mean', 'd_loss_g_std',
-                'd_reg_mean', 'd_reg_std']:
+    for key in ['g_loss_mean',      'g_loss_std',
+                'd_loss_mean',      'd_loss_std',
+                'd_loss_g_mean',    'd_loss_g_std',
+                'd_reg_mean',       'd_reg_std',
+                'd_grad_norm_mean', 'd_grad_norm_std']:
         if save_list:
             dlog[key] = np.empty((n_epochs,))
         else:
@@ -37,10 +38,11 @@ def _dlog_train_epoch_initialize(n_epochs, save_list=True):
     return dlog
 
 def _dlog_train_epoch_update(dlog, epoch_idx, batch_dlog):
-    for key in ['g_loss_mean', 'g_loss_std',
-                'd_loss_mean', 'd_loss_std',
-                'd_loss_g_mean', 'd_loss_g_std',
-                'd_reg_mean', 'd_reg_std']:
+    for key in ['g_loss_mean',      'g_loss_std',
+                'd_loss_mean',      'd_loss_std',
+                'd_loss_g_mean',    'd_loss_g_std',
+                'd_reg_mean',       'd_reg_std',
+                'd_grad_norm_mean', 'd_grad_norm_std']:
         if dlog[key] is not None:
             dlog[key][epoch_idx] = batch_dlog[key]
     dlog['batch_dlog'].append(batch_dlog)
@@ -110,7 +112,7 @@ def train_epochs(
 
 def _dlog_train_batch_initialize(n_batches, save_list=False):
     dlog = {'n_batches': n_batches}
-    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg']:
+    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg', 'd_grad_norm']:
         if save_list:
             dlog[key] = np.empty((n_batches,))
         else:
@@ -121,9 +123,12 @@ def _dlog_train_batch_initialize(n_batches, save_list=False):
         dlog[key+'_std']     = None
     return dlog
 
-def _dlog_train_batch_update(dlog, batch_idx, g_loss, d_loss, d_loss_g, d_reg):
-    for key, val in zip(['g_loss', 'd_loss', 'd_loss_g', 'd_reg'],
-                        [ g_loss ,  d_loss ,  d_loss_g ,  d_reg ]):
+def _dlog_train_batch_update(dlog, batch_idx, values):
+    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg', 'd_grad_norm']:
+        if key in values:
+            val = values[key]
+        else:
+            val = np.nan
         if dlog[key] is not None:
             dlog[key][batch_idx] = val
         if not np.isnan(val):
@@ -132,7 +137,7 @@ def _dlog_train_batch_update(dlog, batch_idx, g_loss, d_loss, d_loss_g, d_reg):
             dlog[key+'_sq_mean'] += val*val
 
 def _dlog_train_batch_finalize(dlog):
-    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg']:
+    for key in ['g_loss', 'd_loss', 'd_loss_g', 'd_reg', 'd_grad_norm']:
         assert dlog[key+'_std'] is None
         assert not np.isnan(dlog[key+'_mean'])
         assert not np.isnan(dlog[key+'_sq_mean'])
@@ -141,7 +146,7 @@ def _dlog_train_batch_finalize(dlog):
         dlog[key+'_std']      = np.sqrt(dlog[key+'_sq_mean'] - dlog[key+'_mean']**2)
 
 def _train_step_discriminator(x_data, y_data, z_sample_fn,
-                              g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None):
+                              g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None, dlog_item=None):
     """ Trains discriminator network. """
     # sample from latent space for generator
     batch_size = y_data.size(0)
@@ -154,19 +159,26 @@ def _train_step_discriminator(x_data, y_data, z_sample_fn,
     d_outputs_data = d_net(x_data, y_data)
     # evaluate discriminator loss
     d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)  # output must have correct sign for minimization
+    d_reg_dlog = dict()
     if d_reg_fn is not None:
-        d_reg = d_reg_fn(d_net, x_gen[np.random.randint(0, x_gen.size(0))], x_data, y_data)
+        d_reg = d_reg_fn(d_net, x_gen[np.random.randint(0, x_gen.size(0))], x_data, y_data, dlog=d_reg_dlog)
     else:
         d_reg = 0.0
     loss = d_loss + d_reg
     # calculate derivatives (end AD) and update network parameters
     loss.backward()
     d_optimizer.step()
-    # return values for log
-    return d_loss.item(), d_loss_g.item(), d_reg.item()
+    # output values
+    if dlog_item is not None:
+        dlog_item['d_loss']   = d_loss.item()
+        dlog_item['d_loss_g'] = d_loss_g.item()
+        dlog_item['d_reg']    = d_reg.item()
+        for key, val in d_reg_dlog.items():
+            dlog_item['d_'+key] = val
+    return loss.item()
 
 def _train_step_generator(y_data, z_sample_fn,
-                          g_net, d_net, g_optimizer, loss_fn):
+                          g_net, d_net, g_optimizer, loss_fn, dlog_item=None):
     """ Trains generator network. """
     # sample from latent space for generator
     batch_size = y_data.size(0)
@@ -182,8 +194,10 @@ def _train_step_generator(y_data, z_sample_fn,
     # calculate derivatives (end AD) and update network parameters
     loss.backward()
     g_optimizer.step()
-    # return values for log
-    return g_loss.item()
+    # output values
+    if dlog_item is not None:
+        dlog_item['g_loss'] = g_loss.item()
+    return loss.item()
 
 def train_batches(
         epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
@@ -194,6 +208,7 @@ def train_batches(
     train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
     # <code id="training_loop_over_batches">
     for batch_idx, data in enumerate(dataloader):
+        dlog_item = dict()
         # set networks to training mode
         g_net.train()
         d_net.train()
@@ -204,33 +219,33 @@ def train_batches(
             y_data = y_data.to(device)
 
         # train discriminator network
-        d_loss_v, d_loss_g_v, d_reg_v = _train_step_discriminator(
+        d_loss_reg_v = _train_step_discriminator(
                 x_data, y_data, z_sample_fn,
-                g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
+                g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn, dlog_item=dlog_item)
 
         # if we skip training the generator for this batch
         if 0 < batch_idx % d_opt_multiplier:
             # log
-            _dlog_train_batch_update(train_batch_dlog, batch_idx, np.nan, d_loss_v, d_loss_g_v, d_reg_v)
+            _dlog_train_batch_update(train_batch_dlog, batch_idx, dlog_item)
             logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss N/A".format(
-                    batch_idx, d_loss_v + d_reg_v, d_loss_v
+                    batch_idx, d_loss_reg_v, dlog_item['d_loss']
             ))
             continue
 
         # train generator network
         g_loss_v = _train_step_generator(
                 y_data, z_sample_fn,
-                g_net, d_net, g_optimizer, loss_fn)
+                g_net, d_net, g_optimizer, loss_fn, dlog_item=dlog_item)
 
         # repeat training of discriminator network
-        d_loss_v, d_loss_g_v, d_reg_v = _train_step_discriminator(
+        d_loss_reg_v = _train_step_discriminator(
                 x_data, y_data, z_sample_fn,
-                g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn)
+                g_net, d_net, d_optimizer, loss_fn, d_reg_fn=d_reg_fn, dlog_item=dlog_item)
 
         # log
-        _dlog_train_batch_update(train_batch_dlog, batch_idx, g_loss_v, d_loss_v, d_loss_g_v, d_reg_v)
+        _dlog_train_batch_update(train_batch_dlog, batch_idx, dlog_item)
         logger.debug("batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss {:.6e}".format(
-                batch_idx, d_loss_v + d_reg_v, d_loss_v, g_loss_v
+                batch_idx, d_loss_reg_v, dlog_item['d_loss'], g_loss_v
         ))
     # </code>
 
