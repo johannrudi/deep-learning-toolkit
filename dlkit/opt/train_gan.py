@@ -1,10 +1,28 @@
 """Training loops for generative adversarial networks.
 """
 
-import logging, timeit
+import logging, math, os, timeit
 import numpy as np
 import torch
 from tqdm import tqdm
+from datetime import datetime
+
+def _checkpoint_path(checkpoint_dir, n_epochs, prefix, epoch):
+    n_digits = int(math.ceil(math.log10(1.01 * n_epochs)))
+    fmt      = '{}_e{:0'+str(n_digits)+'d}.pt'
+    filename = fmt.format(prefix, epoch)
+    return os.path.join(checkpoint_dir, filename)
+
+def _checkpoint_save(model, filepath, epoch, loss_fn, optimizer):
+    torch.save(
+        {
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss_fn': loss_fn,
+        },
+        filepath
+    )
 
 def _dlog_train_epoch_initialize(n_epochs, save_list=True):
     dlog = {}
@@ -31,13 +49,37 @@ def _dlog_train_epoch_update(dlog, epoch_idx, batch_dlog):
 def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
-def train_epochs(n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
-                 d_reg_fn=None, d_opt_multiplier=1, validation_fn=None,
-                 device=None, logger=logging.getLogger('train_epochs')):
+def train_epochs(
+        n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
+        d_reg_fn=None, d_opt_multiplier=1, validation_fn=None,
+        device=None, logger=logging.getLogger('train_epochs'),
+        checkpoint_epochs=None, checkpoint_dir='checkpoints'
+    ):
+    """ Runs training loop over epochs.
+
+    Checkpointing saves networks `g_net`, `d_net` and both optimizer states at
+    every epoch divisible by `checkpoint_epochs`. Setting `checkpoint_epochs=None`
+    turns off checkpointing. Checkpointing will create a new dir under
+    `checkpoint_dir/` followed by a directory with date and time of training start.
+    """
     epoch_dlog = _dlog_train_epoch_initialize(n_epochs)
+    # set checkpoint directory; create if it doesn't exist
+    if checkpoint_epochs is not None:
+        assert 1 <= checkpoint_epochs, checkpoint_epochs
+        assert checkpoint_dir is not None
+        checkpoint_time = datetime.now().strftime('%Y-%m-%d_t%H%M%S')
+        checkpoint_dir  = os.path.join(checkpoint_dir, checkpoint_time)
+        if not os.path.exists(checkpoint_dir):
+            os.makedirs(checkpoint_dir)
     # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs)):
+        # save checkpoint
+        if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
+            for tag_, net_, opt_ in zip(['g', 'd'], [g_net, d_net], [g_optimizer, d_optimizer]):
+                path = _checkpoint_path(checkpoint_dir, n_epochs, prefix=tag_+'-net', epoch=epoch_idx)
+                logger.debug("epoch {:6d}, save checkpoint to {}".format(epoch_idx, path))
+                _checkpoint_save(net_, path, epoch=epoch_idx, loss_fn=loss_fn, optimizer=opt_)
         # call validation function
         if validation_fn is not None:
             validation_fn(epoch_idx, g_net, d_net)
@@ -51,10 +93,16 @@ def train_epochs(n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d
                 epoch_idx,
                 batch_dlog['d_loss_mean'], batch_dlog['d_loss_std'],
                 batch_dlog['g_loss_mean'], batch_dlog['g_loss_std']))
-    time_train = timeit.default_timer() - time_train
-    # call validation function one last time after training loop over epochs
+    # save checkpoint---after training
+    if checkpoint_epochs is not None:
+        for tag_, net_, opt_ in zip(['g', 'd'], [g_net, d_net], [g_optimizer, d_optimizer]):
+            path = _checkpoint_path(checkpoint_dir, n_epochs, prefix=tag_+'-net', epoch=n_epochs)
+            logger.debug("epoch {:6d}, save checkpoint to {}".format(n_epochs, path))
+            _checkpoint_save(net_, path, epoch=n_epochs, loss_fn=loss_fn, optimizer=opt_)
+    # call validation function---after training
     if validation_fn is not None:
         validation_fn(n_epochs, g_net, d_net)
+    time_train = timeit.default_timer() - time_train
     # </code>
     # finalize and return log
     _dlog_train_epoch_finalize(epoch_dlog, time_train)
@@ -138,9 +186,12 @@ def _train_step_generator(y_data, z_sample_fn,
     # return values for log
     return g_loss.item()
 
-def train_batches(epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
-                  d_reg_fn=None, d_opt_multiplier=1,
-                  device=None, logger=logging.getLogger('train_batches')):
+def train_batches(
+        epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
+        d_reg_fn=None, d_opt_multiplier=1,
+        device=None, logger=logging.getLogger('train_batches')
+    ):
+    """ Runs training loop over batches. """
     train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
     # <code id="training_loop_over_batches">
     for batch_idx, data in enumerate(dataloader):

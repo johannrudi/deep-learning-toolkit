@@ -6,13 +6,19 @@ import torch
 from tqdm import tqdm
 from datetime import datetime
 
-def _checkpoint_save(model, filepath, epoch, loss, optimizer):
+def _checkpoint_path(checkpoint_dir, n_epochs, epoch):
+    n_digits = int(math.ceil(math.log10(1.01 * n_epochs)))
+    fmt      = 'e{:0'+str(n_digits)+'d}.pt'
+    filename = fmt.format(epoch)
+    return os.path.join(checkpoint_dir, filename)
+
+def _checkpoint_save(model, filepath, epoch, loss_fn, optimizer):
     torch.save(
         {
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
+            'loss_fn': loss_fn,
         },
         filepath
     )
@@ -33,9 +39,9 @@ def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
 def train_epochs(
-    n_epochs, net, dataloader, optimizer, loss_fn,
-    validation_fn=None, device=None, logger=logging.getLogger('train_epochs'),
-    checkpoint_epochs=None, checkpoint_dir='checkpoints'
+        n_epochs, net, dataloader, optimizer, loss_fn,
+        validation_fn=None, device=None, logger=logging.getLogger('train_epochs'),
+        checkpoint_epochs=None, checkpoint_dir='checkpoints'
     ):
     """ Runs training loop over epochs.
 
@@ -56,6 +62,11 @@ def train_epochs(
     # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs)):
+        # save checkpoint
+        if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
+            path = _checkpoint_path(checkpoint_dir, n_epochs, epoch=epoch_idx)
+            logger.debug("epoch {:6d}, save checkpoint to {}".format(epoch_idx, path))
+            _checkpoint_save(net, path, epoch=epoch_idx, loss_fn=loss_fn, optimizer=optimizer)
         # call validation function
         if validation_fn is not None:
             validation_fn(epoch_idx, net)
@@ -66,18 +77,15 @@ def train_epochs(
         _dlog_train_epoch_update(epoch_dlog, epoch_idx, batch_dlog)
         logger.info("epoch {:6d}, loss_mean {:.6e} std {:.3e}".format(
                 epoch_idx, batch_dlog['loss_mean'], batch_dlog['loss_std']))
-        # save checkpoint
-        if checkpoint_epochs is not None and \
-           ( (epoch_idx % checkpoint_epochs == 0) or (epoch_idx == (n_epochs-1)) ):
-                n = int(math.ceil(math.log10(n_epochs)))
-                s = '{:0'+str(n)+'d}_l{:.3e}.pt'
-                filename = s.format(epoch_idx, batch_dlog['loss_mean'])
-                path = os.path.join(checkpoint_dir, filename)
-                _checkpoint_save(net, path, epoch=epoch_idx, loss=loss_fn, optimizer=optimizer)
-    time_train = timeit.default_timer() - time_train
-    # call validation function after training
+    # save checkpoint---after training
+    if checkpoint_epochs is not None:
+        path = _checkpoint_path(checkpoint_dir, n_epochs, epoch=n_epochs)
+        logger.debug("epoch {:6d}, save checkpoint to {}".format(n_epochs, path))
+        _checkpoint_save(net, path, epoch=n_epochs, loss_fn=loss_fn, optimizer=optimizer)
+    # call validation function---after training
     if validation_fn is not None:
-        validation_fn(n_epochs, g_net, d_net)
+        validation_fn(n_epochs, net)
+    time_train = timeit.default_timer() - time_train
     # </code>
     # finalize and return log
     _dlog_train_epoch_finalize(epoch_dlog, time_train)
@@ -97,8 +105,10 @@ def _dlog_train_batch_finalize(dlog):
     dlog['loss_mean'] = np.mean(dlog['loss'][is_valid])
     dlog['loss_std'] = np.std(dlog['loss'][is_valid])
 
-def train_batches(epoch_idx, net, dataloader, optimizer, loss_fn,
-                  device=None, logger=logging.getLogger('train_batches')):
+def train_batches(
+        epoch_idx, net, dataloader, optimizer, loss_fn,
+        device=None, logger=logging.getLogger('train_batches')
+    ):
     """ Runs training loop over batches. """
     batch_dlog = _dlog_train_batch_initialize(len(dataloader))
     # <code id="training_loop_over_batches">
