@@ -141,9 +141,14 @@ def _dlog_train_batch_finalize(dlog):
         assert dlog[key+'_std'] is None
         assert not np.isnan(dlog[key+'_mean'])
         assert not np.isnan(dlog[key+'_sq_mean'])
-        dlog[key+'_mean']    *= 1.0/dlog[key+'_mean_n']
-        dlog[key+'_sq_mean'] *= 1.0/dlog[key+'_mean_n']
-        dlog[key+'_std']      = np.sqrt(dlog[key+'_sq_mean'] - dlog[key+'_mean']**2)
+        if 0 < dlog[key+'_mean_n']:
+            dlog[key+'_mean']    *= 1.0/dlog[key+'_mean_n']
+            dlog[key+'_sq_mean'] *= 1.0/dlog[key+'_mean_n']
+            dlog[key+'_std']      = np.sqrt(dlog[key+'_sq_mean'] - dlog[key+'_mean']**2)
+        else:
+            dlog[key+'_mean']     = 0.0
+            dlog[key+'_sq_mean']  = 0.0
+            dlog[key+'_std']      = 0.0
 
 def _train_step_discriminator(x_data, y_data, z_sample_fn,
                               g_net, d_net, d_optimizer, loss_fn, d_reg_fn=None, dlog_item=None):
@@ -163,7 +168,7 @@ def _train_step_discriminator(x_data, y_data, z_sample_fn,
     if d_reg_fn is not None:
         d_reg = d_reg_fn(d_net, x_gen[np.random.randint(0, x_gen.size(0))], x_data, y_data, dlog=d_reg_dlog)
     else:
-        d_reg = 0.0
+        d_reg = torch.tensor(0.0)
     loss = d_loss + d_reg
     # calculate derivatives (end AD) and update network parameters
     loss.backward()
