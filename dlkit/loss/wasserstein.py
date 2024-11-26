@@ -31,16 +31,20 @@ def wasserstein_reg_fn(d_net, x_gen, x_data, y_data, p=2, c0=1.0, eps=0.0, devic
     grad_x, grad_y = grad[0], grad[1]
     grad_x = grad_x.view(batch_size, -1)
     grad_y = grad_y.view(batch_size, -1)
-    # compute the l2-norm of the gradient
-    grad_norm = torch.sqrt(
-        eps + torch.add(torch.sum(torch.square(grad_x), dim=1),
-                        torch.sum(torch.square(grad_y), dim=1))
-    )
+    # compute the squared l2-norm of the gradient
+    grad_norm_sq = eps + torch.add(torch.sum(torch.square(grad_x), dim=1),
+                                   torch.sum(torch.square(grad_y), dim=1))
     # <code id="gradient_penalty_v0">
+    #grad_norm    = torch.sqrt(grad_norm_sq)
     #grad_penalty = torch.pow(grad_norm - c0, p).mean()
     # </code>
     # <code id="gradient_penalty_v1">
-    grad_penalty = torch.pow(torch.nn.functional.relu(grad_norm - c0), p).mean()
+    #grad_norm    = torch.sqrt(grad_norm_sq)
+    #grad_penalty = torch.pow(torch.nn.functional.relu(grad_norm - c0), p).mean()
+    # </code>
+    # <code id="gradient_penalty_v2">
+    grad_norm    = torch.sqrt(grad_norm_sq.detach())  # for logging purposes
+    grad_penalty = torch.nn.functional.relu(grad_norm_sq - c0*c0).mean()
     # </code>
     # log to dictionary
     if dlog is not None:
