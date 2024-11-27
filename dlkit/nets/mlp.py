@@ -1,5 +1,7 @@
-"""Model for Multilayer Perceptron.
-wiki: <https://en.wikipedia.org/wiki/Multilayer_perceptron>
+"""
+Models for Multilayer Perceptron.
+
+- wiki: <https://en.wikipedia.org/wiki/Multilayer_perceptron>
 """
 
 import math

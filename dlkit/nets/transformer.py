@@ -1,7 +1,8 @@
-"""Model for Transformer.
+"""
+Models with transformer layers.
 
-annotated transformer: <https://nlp.seas.harvard.edu/annotated-transformer/>
-pytorch tutorial: <https://pytorch.org/tutorials/beginner/translation_transformer.html>
+- annotated transformer: <https://nlp.seas.harvard.edu/annotated-transformer/>
+- pytorch tutorial: <https://pytorch.org/tutorials/beginner/translation_transformer.html>
 """
 
 import math

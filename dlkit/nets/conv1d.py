@@ -1,4 +1,5 @@
-"""Models with convolutional layers.
+"""
+Models with 1D convolutional layers.
 """
 
 import math
