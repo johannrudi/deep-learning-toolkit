@@ -405,7 +405,7 @@ class ResBlock2d(nn.Module):
         :param x: an [N x C x ...] Tensor of features.
         :return: an [N x C x ...] Tensor of outputs.
         """
-        assert x.size(1) == self.channels
+        assert x.size(1) == self.input_channels
         h = self.in_layers(x)
         h = self.out_layers(h)
         return self.skip_connection(x) + h
@@ -561,7 +561,7 @@ class UNetXd_2021_idd(nn.Module):
         output_channels: number of channels of outputs
         internal_channels: base channel count for the model.
         num_res_blocks: number of residual blocks per downsample.
-        attention_resolutions: a collection of downsample rates at which
+        attention_levels: a collection of levels at which
             attention will take place. May be a set, list, or tuple.
             For example, if this contains 4, then at 4x downsampling, attention
             will be used.
@@ -576,7 +576,7 @@ class UNetXd_2021_idd(nn.Module):
                  output_channels,
                  internal_channels,
                  num_res_blocks=1,
-                 attention_resolutions=[],
+                 attention_levels=[],
                  channel_mult=(1, 2, 4, 8),
                  num_classes=None,
                  num_heads=1,
@@ -594,29 +594,30 @@ class UNetXd_2021_idd(nn.Module):
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
-        self.input_channels        = input_channels
-        self.output_channels       = output_channels
-        self.internal_channels     = internal_channels
-        self.num_res_blocks        = num_res_blocks
-        self.attention_resolutions = attention_resolutions
-        self.channel_mult = channel_mult
-        self.num_classes  = num_classes
-        self.num_heads    = num_heads
-        if num_heads_upsample == -1:
+        self.input_channels    = input_channels
+        self.output_channels   = output_channels
+        self.internal_channels = internal_channels
+        self.num_res_blocks    = num_res_blocks
+        self.attention_levels  = attention_levels
+        self.channel_mult      = channel_mult
+        self.num_classes       = num_classes
+        self.num_heads         = num_heads
+        self.time_embed_dim    = time_embed_dim
+        if -1 == num_heads_upsample:
             self.num_heads_upsample = num_heads
         else:
             self.num_heads_upsample = num_heads_upsample
-        # create time embedding layers
-        self.time_embed_dim = time_embed_dim
+        # create embedding layers
         if time_embed_dim is not None:
+            # create time embedding layers
             self.time_embed = nn.Sequential(
                 nn.Linear(internal_channels, time_embed_dim),
                 nn.SiLU(),
                 nn.Linear(time_embed_dim, time_embed_dim),
             )
-        # create label embedding layers
-        if self.num_classes is not None and time_embed_dim is not None:
-            self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+            # create label embedding layers
+            if self.num_classes is not None:
+                self.label_emb = nn.Embedding(num_classes, time_embed_dim)
         #
         # create downsample blocks
         #
@@ -627,8 +628,8 @@ class UNetXd_2021_idd(nn.Module):
         self.input_blocks = nn.ModuleList([input_layer])
         input_block_channels = [internal_channels]
         ch = internal_channels
-        ds = 1
         for level, mult in enumerate(channel_mult):
+            print(f"### downsample {level=}")
             for _ in range(num_res_blocks):
                 layers = [
                     with_LevelBlock(ch,
@@ -636,7 +637,7 @@ class UNetXd_2021_idd(nn.Module):
                                     normalization=with_Normalization)
                 ]
                 ch = mult * internal_channels
-                if ds in attention_resolutions:
+                if level in attention_levels:
                     layers.append(
                         AttentionBlock(ch, num_heads=self.num_heads,
                                        normalization=with_Normalization)
@@ -647,22 +648,29 @@ class UNetXd_2021_idd(nn.Module):
                 down_layer = EmbedSequential(with_Downsample(ch, ch, 3))
                 self.input_blocks.append(down_layer)
                 input_block_channels.append(ch)
-                ds *= 2
         #
         # create middle block
         #
+        level += 1
+        print(f"### middle {level=}")
         layers = [
-            with_LevelBlock(ch, normalization=with_Normalization),
-            AttentionBlock(ch, num_heads=self.num_heads,
-                           normalization=with_Normalization),
-            with_LevelBlock(ch, normalization=with_Normalization),
+            with_LevelBlock(ch, normalization=with_Normalization)
         ]
+        if level in attention_levels:
+            layers.append(
+                AttentionBlock(ch, num_heads=self.num_heads,
+                               normalization=with_Normalization)
+            )
+        layers.append(
+            with_LevelBlock(ch, normalization=with_Normalization)
+        )
         self.middle_block = EmbedSequential(*layers)
         #
         # create upsample blocks
         #
         self.output_blocks = nn.ModuleList([])
         for level, mult in list(enumerate(channel_mult))[::-1]:
+            print(f"### upsample {level=}")
             for i in range(num_res_blocks + 1):
                 layers = [
                     with_LevelBlock(ch + input_block_channels.pop(),
@@ -670,14 +678,13 @@ class UNetXd_2021_idd(nn.Module):
                                     normalization=with_Normalization)
                 ]
                 ch = mult * internal_channels
-                if ds in attention_resolutions:
+                if level in attention_levels:
                     layers.append(
                         AttentionBlock(ch, num_heads=self.num_heads_upsample,
                                        normalization=with_Normalization)
                     )
                 if level and i == num_res_blocks:
                     layers.append(with_Upsample(ch, ch, 3))
-                    ds //= 2
                 self.output_blocks.append(EmbedSequential(*layers))
         #
         # create output layer
@@ -734,6 +741,18 @@ class UNetXd_2021_idd(nn.Module):
 
 ########################################
 
+class UNet2d_2021(UNetXd_2021_idd):
+    def __init__(self, *args, internal_channels=32, **kwargs):
+        def _Normalization(_num_channels):
+            return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=32)
+        super().__init__(*args,
+                         internal_channels  = internal_channels,
+                         with_Downsample    = dlkit.nets.conv2d.Downsample,
+                         with_Upsample      = dlkit.nets.conv2d.Upsample,
+                         with_LevelBlock    = ResBlock2d,
+                         with_Normalization = _Normalization,
+                         **kwargs)
+
 class UNet2d_2021_idd(UNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
         time_embed_dim = 4*internal_channels
@@ -753,6 +772,19 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
 ###############################################################################
 
 # TODO use doxygen for these test
+
+def test_UNet_2021():
+    print('---------------------------------------^')
+    net = UNet2d_2021(1, 1, channel_mult=(1, 2, 4))
+    print(net)
+
+    print('Test 1:')
+    x = torch.ones((1, 1, 16, 16))
+    y = net(x)
+    print('- input  x =', x, sep='\n')
+    print('- output y =', y, sep='\n')
+    print('---------------------------------------$')
+
 
 def test_UNet_2021_idd():
     print('---------------------------------------^')
@@ -787,5 +819,6 @@ def test_UNet_2025():
 
 if __name__ == '__main__':
     r"""Runs tests."""
-    test_UNet_2021_idd()
-    ###test_UNet_2025()
+    test_UNet_2021()
+    ###test_UNet_2021_idd() ###DEV
+    ###test_UNet_2025() ###DEV
