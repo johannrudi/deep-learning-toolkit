@@ -153,6 +153,7 @@ def _set_zero_parameters(layer):
     """
     for p in layer.parameters():
         torch.nn.init.zeros_(p)
+    return layer
 
 # --------------------------------------
 # Tests

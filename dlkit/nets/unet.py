@@ -353,65 +353,7 @@ class EmbedSequential(EmbedModule, nn.Sequential):
         return x
 
 
-# TODO use LevelBlock in conv2d.py
-class ResBlock2d(nn.Module):
-    """
-    A residual block that can optionally change the number of channels.
-
-    :param channels: the number of input channels.
-    :param output_channels: if specified, the number of out channels.
-    :param use_conv: if True and output_channels is specified, use a spatial
-        convolution instead of a smaller 1x1 convolution to change the
-        channels in the skip connection.
-    """
-
-    def __init__(
-        self,
-        input_channels,
-        output_channels=None,
-        use_conv=False,
-        normalization=None,
-    ):
-        super().__init__()
-        self.input_channels = input_channels
-        self.output_channels = output_channels or input_channels
-        # create input layers
-        self.in_layers = nn.Sequential(
-            normalization(input_channels),
-            nn.SiLU(),
-            nn.Conv2d(input_channels, self.output_channels, 3,
-                      padding=1, padding_mode='replicate')
-        )
-        # create output layers
-        self.out_layers = nn.Sequential(
-            normalization(self.output_channels),
-            nn.SiLU(),
-            _zero_module(nn.Conv2d(self.output_channels, self.output_channels, 3,
-                                   padding=1, padding_mode='replicate')),
-        )
-        # create skip connection
-        if self.output_channels == input_channels:
-            self.skip_connection = nn.Identity()
-        elif use_conv:
-            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 3,
-                                             padding=1, padding_mode='replicate')
-        else:
-            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 1)
-
-    def forward(self, x):
-        """
-        Apply the block to a Tensor.
-
-        :param x: an [N x C x ...] Tensor of features.
-        :return: an [N x C x ...] Tensor of outputs.
-        """
-        assert x.size(1) == self.input_channels
-        h = self.in_layers(x)
-        h = self.out_layers(h)
-        return self.skip_connection(x) + h
-
-
-class ResBlock2d_EmbedBlock(ResBlock2d, EmbedModule):
+class ResBlock2d_EmbedBlock(dlkit.nets.conv2d.ResBlock, EmbedModule):
     """
     A residual block that can optionally change the number of channels.
 
@@ -749,7 +691,7 @@ class UNet2d_2021(UNetXd_2021_idd):
                          internal_channels  = internal_channels,
                          with_Downsample    = dlkit.nets.conv2d.Downsample,
                          with_Upsample      = dlkit.nets.conv2d.Upsample,
-                         with_LevelBlock    = ResBlock2d,
+                         with_LevelBlock    = dlkit.nets.conv2d.ResBlock,
                          with_Normalization = _Normalization,
                          **kwargs)
 

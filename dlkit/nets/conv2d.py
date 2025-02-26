@@ -329,13 +329,71 @@ class LevelBlock(nn.Module):
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
-        _zero_parameters(self.layer)
+        _set_zero_parameters(self.layer)
         if not isinstance(self.residual_layer, nn.Identity):
             _set_init_parameters(self.residual_layer, _get_gain(None))
 
 
 def Normalization(num_channels, num_groups=1):
     return nn.GroupNorm(num_groups, num_channels)
+
+
+# TODO replace by implementation of LevelBlock
+class ResBlock(nn.Module):
+    """
+    A residual block that can optionally change the number of channels.
+
+    :param channels: the number of input channels.
+    :param output_channels: if specified, the number of out channels.
+    :param use_conv: if True and output_channels is specified, use a spatial
+        convolution instead of a smaller 1x1 convolution to change the
+        channels in the skip connection.
+    """
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels=None,
+        use_conv=False,
+        normalization=None,
+    ):
+        super().__init__()
+        self.input_channels = input_channels
+        self.output_channels = output_channels or input_channels
+        # create input layers
+        self.in_layers = nn.Sequential(
+            normalization(input_channels),
+            nn.SiLU(),
+            nn.Conv2d(input_channels, self.output_channels, 3,
+                      padding=1, padding_mode='replicate')
+        )
+        # create output layers
+        self.out_layers = nn.Sequential(
+            normalization(self.output_channels),
+            nn.SiLU(),
+            _set_zero_parameters(nn.Conv2d(self.output_channels, self.output_channels, 3,
+                                           padding=1, padding_mode='replicate')),
+        )
+        # create skip connection
+        if self.output_channels == input_channels:
+            self.skip_connection = nn.Identity()
+        elif use_conv:
+            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 3,
+                                             padding=1, padding_mode='replicate')
+        else:
+            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 1)
+
+    def forward(self, x):
+        """
+        Apply the block to a Tensor.
+
+        :param x: an [N x C x ...] Tensor of features.
+        :return: an [N x C x ...] Tensor of outputs.
+        """
+        assert x.size(1) == self.input_channels
+        h = self.in_layers(x)
+        h = self.out_layers(h)
+        return self.skip_connection(x) + h
 
 # --------------------------------------
 # Utility Functions
@@ -372,6 +430,7 @@ def _set_zero_parameters(layer):
     """
     for p in layer.parameters():
         torch.nn.init.zeros_(p)
+    return layer
 
 # --------------------------------------
 # Tests
