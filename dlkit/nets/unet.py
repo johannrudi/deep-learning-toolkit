@@ -820,5 +820,5 @@ def test_UNet_2025():
 if __name__ == '__main__':
     r"""Runs tests."""
     test_UNet_2021()
-    ###test_UNet_2021_idd() ###DEV
-    ###test_UNet_2025() ###DEV
+    test_UNet_2021_idd()
+    test_UNet_2025()
