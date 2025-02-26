@@ -525,12 +525,16 @@ class UNetXd_2021_idd(nn.Module):
                  num_heads_upsample=-1,
                  time_embed_dim=None,
                  # dimension dependent classes
+                 with_InputLayer=None,
+                 with_OutputLayer=None,
                  with_Downsample=None,
                  with_Upsample=None,
                  with_LevelBlock=None,
                  with_Normalization=None):
         super().__init__()
         # check dimension dependent classes
+        assert with_InputLayer is not None
+        assert with_OutputLayer is not None
         assert with_Downsample is not None
         assert with_Upsample is not None
         assert with_LevelBlock is not None
@@ -564,8 +568,7 @@ class UNetXd_2021_idd(nn.Module):
         # create downsample blocks
         #
         input_layer = EmbedSequential(
-                nn.Conv2d(input_channels, internal_channels, 3,
-                          padding=1, padding_mode='replicate')
+            with_InputLayer(input_channels, internal_channels)
         )
         self.input_blocks = nn.ModuleList([input_layer])
         input_block_channels = [internal_channels]
@@ -634,8 +637,7 @@ class UNetXd_2021_idd(nn.Module):
         self.output_layer = nn.Sequential(
             with_Normalization(ch),
             nn.SiLU(),
-            _zero_module(nn.Conv2d(internal_channels, output_channels, 3,
-                                   padding=1, padding_mode='replicate')),
+            with_OutputLayer(internal_channels, output_channels),
         )
 
     def forward(self, x, timesteps=None, y=None):
@@ -683,12 +685,40 @@ class UNetXd_2021_idd(nn.Module):
 
 ########################################
 
+class UNet1d_2021(UNetXd_2021_idd):
+    def __init__(self, *args, internal_channels=32, **kwargs):
+        def _with_InputLayer(_input_channels, _internal_channels):
+            return nn.Conv1d(_input_channels, _internal_channels, 3,
+                             padding=1, padding_mode='replicate')
+        def _with_OutputLayer(_internal_channels, _output_channels):
+            return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
+                                          padding=1, padding_mode='replicate'))
+        def _Normalization(_num_channels):
+            return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=32)
+        super().__init__(*args,
+                         internal_channels  = internal_channels,
+                         with_InputLayer    = _with_InputLayer,
+                         with_OutputLayer   = _with_OutputLayer,
+                         with_Downsample    = dlkit.nets.conv1d.Downsample,
+                         with_Upsample      = dlkit.nets.conv1d.Upsample,
+                         with_LevelBlock    = dlkit.nets.conv1d.ResBlock,
+                         with_Normalization = _Normalization,
+                         **kwargs)
+
 class UNet2d_2021(UNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
+        def _with_InputLayer(_input_channels, _internal_channels):
+            return nn.Conv2d(_input_channels, _internal_channels, 3,
+                             padding=1, padding_mode='replicate')
+        def _with_OutputLayer(_internal_channels, _output_channels):
+            return _zero_module(nn.Conv2d(_internal_channels, _output_channels, 3,
+                                          padding=1, padding_mode='replicate'))
         def _Normalization(_num_channels):
             return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=32)
         super().__init__(*args,
                          internal_channels  = internal_channels,
+                         with_InputLayer    = _with_InputLayer,
+                         with_OutputLayer   = _with_OutputLayer,
                          with_Downsample    = dlkit.nets.conv2d.Downsample,
                          with_Upsample      = dlkit.nets.conv2d.Upsample,
                          with_LevelBlock    = dlkit.nets.conv2d.ResBlock,
@@ -698,6 +728,12 @@ class UNet2d_2021(UNetXd_2021_idd):
 class UNet2d_2021_idd(UNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
         time_embed_dim = 4*internal_channels
+        def _with_InputLayer(_input_channels, _internal_channels):
+            return nn.Conv2d(_input_channels, _internal_channels, 3,
+                             padding=1, padding_mode='replicate')
+        def _with_OutputLayer(_internal_channels, _output_channels):
+            return _zero_module(nn.Conv2d(_internal_channels, _output_channels, 3,
+                                          padding=1, padding_mode='replicate'))
         def _ResBlock2d_EmbedBlock(_input_channels, **_kwargs):
             return ResBlock2d_EmbedBlock(_input_channels, time_embed_dim, **_kwargs)
         def _Normalization(_num_channels):
@@ -705,6 +741,8 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
         super().__init__(*args,
                          internal_channels  = internal_channels,
                          time_embed_dim     = time_embed_dim,
+                         with_InputLayer    = _with_InputLayer,
+                         with_OutputLayer   = _with_OutputLayer,
                          with_Downsample    = dlkit.nets.conv2d.Downsample,
                          with_Upsample      = dlkit.nets.conv2d.Upsample,
                          with_LevelBlock    = _ResBlock2d_EmbedBlock,
@@ -715,7 +753,20 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
 
 # TODO use doxygen for these test
 
-def test_UNet_2021():
+def test_UNet1d_2021():
+    print('---------------------------------------^')
+    net = UNet1d_2021(1, 1, channel_mult=(1, 2, 4))
+    print(net)
+
+    print('Test 1:')
+    x = torch.ones((1, 1, 16))
+    y = net(x)
+    print('- input  x =', x, sep='\n')
+    print('- output y =', y, sep='\n')
+    print('---------------------------------------$')
+
+
+def test_UNet2d_2021():
     print('---------------------------------------^')
     net = UNet2d_2021(1, 1, channel_mult=(1, 2, 4))
     print(net)
@@ -728,7 +779,7 @@ def test_UNet_2021():
     print('---------------------------------------$')
 
 
-def test_UNet_2021_idd():
+def test_UNet2d_2021_idd():
     print('---------------------------------------^')
     net = UNet2d_2021_idd(1, 1, channel_mult=(1, 2, 4))
     print(net)
@@ -743,7 +794,7 @@ def test_UNet_2021_idd():
     print('---------------------------------------$')
 
 
-def test_UNet_2025():
+def test_UNet2d_2025():
     print('---------------------------------------^')
     net = UNet2d_2025(1, 1,
                       down_levels_conv_channels = [[2,2], [4,4], [8,8]],
@@ -761,6 +812,7 @@ def test_UNet_2025():
 
 if __name__ == '__main__':
     r"""Runs tests."""
-    test_UNet_2021()
-    test_UNet_2021_idd()
-    test_UNet_2025()
+    test_UNet1d_2021()
+    test_UNet2d_2021()
+    test_UNet2d_2021_idd()
+    test_UNet2d_2025()
