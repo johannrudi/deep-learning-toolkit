@@ -6,7 +6,9 @@ import math
 import torch
 import torch.nn as nn
 
-#TODO rename "upscale/upscaling" -> "upsample/upsampling"
+# --------------------------------------
+# Upsample Convolutional Nets
+# --------------------------------------
 
 class ConvUpsampleNet_Reshuffle(nn.Module):
     r"""
@@ -101,18 +103,18 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize hidden convolutional layers before upsampling
-        gain = get_gain(self.pre_up_layers_activation)
+        gain = _get_gain(self.pre_up_layers_activation)
         for layer in self.pre_up_layers:
-            set_init_parameters(layer, gain)
+            _set_init_parameters(layer, gain)
         # initialize hidden convolutional layers after upsampling
         if self.post_up_layers:
-            gain = get_gain(self.post_up_layers_activation)
-            set_init_parameters(self.up_layer, gain)
+            gain = _get_gain(self.post_up_layers_activation)
+            _set_init_parameters(self.up_layer, gain)
             for layer in self.post_up_layers[:-1]:
-                set_init_parameters(layer, gain)
-            set_init_parameters(self.post_up_layers[-1], get_gain(None))
+                _set_init_parameters(layer, gain)
+            _set_init_parameters(self.post_up_layers[-1], _get_gain(None))
         else:
-            set_init_parameters(self.up_layer, get_gain(None))
+            _set_init_parameters(self.up_layer, _get_gain(None))
 
 
 class ConvUpsampleNet_Interpolate(nn.Module):
@@ -184,14 +186,23 @@ class ConvUpsampleNet_Interpolate(nn.Module):
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
-        gain = get_gain(self.conv_layers_activation)
+        gain = _get_gain(self.conv_layers_activation)
         for layer in self.conv_layers[:-1]:
-            set_init_parameters(layer, gain)
-        set_init_parameters(self.conv_layers[-1], get_gain(None))
+            _set_init_parameters(layer, gain)
+        _set_init_parameters(self.conv_layers[-1], _get_gain(None))
 
-###############################################################################
+# --------------------------------------
+# UNet Components
+# --------------------------------------
 
 class Downsample(nn.Module):
+    """
+    A downsampling layer with a convolution.
+
+    Args:
+      input_channels   Channels in the inputs.
+      output_channels  Channels in the outputs.
+    """
     def __init__(self,
                  input_channels,
                  output_channels,
@@ -201,7 +212,7 @@ class Downsample(nn.Module):
                  scale_factor=2,
                  **conv_kwargs):
         super().__init__()
-        # create convolutional layer with stride=2
+        # create convolutional layer with stride=scale_factor
         self.layer = nn.Conv2d(input_channels, output_channels, kernel_size, **conv_kwargs,
                                padding=1, padding_mode='replicate', stride=scale_factor)
         # set from arguments
@@ -223,12 +234,20 @@ class Downsample(nn.Module):
         return y
 
     def init_parameters(self):
-        r"""Initializes the values of trainable parameters."""
-        gain = get_gain(self.activation)
-        set_init_parameters(self.layer, gain)
+        r"""
+        Initializes the values of trainable parameters.
+        """
+        _set_init_parameters(self.layer, _get_gain(self.activation))
 
 
 class Upsample(nn.Module):
+    """
+    An upsampling layer with a convolution.
+
+    Args:
+      input_channels   Channels in the inputs.
+      output_channels  Channels in the outputs.
+    """
     def __init__(self,
                  input_channels,
                  output_channels,
@@ -263,9 +282,10 @@ class Upsample(nn.Module):
         return y
 
     def init_parameters(self):
-        r"""Initializes the values of trainable parameters."""
-        gain = get_gain(self.activation)
-        set_init_parameters(self.layer, gain)
+        r"""
+        Initializes the values of trainable parameters.
+        """
+        _set_init_parameters(self.layer, _get_gain(self.activation))
 
 
 class LevelBlock(nn.Module):
@@ -309,17 +329,19 @@ class LevelBlock(nn.Module):
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
-        zero_parameters(self.layer)
+        _zero_parameters(self.layer)
         if not isinstance(self.residual_layer, nn.Identity):
-            set_init_parameters(self.residual_layer, get_gain(None))
+            _set_init_parameters(self.residual_layer, _get_gain(None))
 
 
 def Normalization(num_channels, num_groups=1):
     return nn.GroupNorm(num_groups, num_channels)
 
-###############################################################################
+# --------------------------------------
+# Utility Functions
+# --------------------------------------
 
-def get_gain(activation):
+def _get_gain(activation):
     r"""Calculates the gain to be used as an argument for initializing parameter values."""
     if activation is not None:
         activation_name = type(activation).__name__.lower()
@@ -330,18 +352,22 @@ def get_gain(activation):
         gain = nn.init.calculate_gain('conv2d')
     return gain
 
-def set_init_parameters(layer, gain=1.0):
+def _set_init_parameters(layer, gain=1.0):
     nn.init.xavier_uniform_(layer.weight, gain=gain)
     if layer.bias is not None:
         lim = 0.1*gain/math.sqrt(layer.bias.size(0))
         nn.init.uniform_(layer.bias, a=-lim, b=+lim)
 
-def zero_parameters(layer):
-    torch.nn.init.zeros_(layer.weight)
-    if layer.bias is not None:
-        torch.nn.init.zeros_(layer.bias)
+def _zero_parameters(layer):
+    """
+    Zero out the parameters of a layer.
+    """
+    for p in layer.parameters():
+        torch.nn.init.zeros_(p)
 
-###############################################################################
+# --------------------------------------
+# Tests
+# --------------------------------------
 
 # TODO use doxygen for these test
 
