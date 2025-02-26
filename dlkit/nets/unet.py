@@ -694,7 +694,7 @@ class UNet1d_2021(UNetXd_2021_idd):
             return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
                                           padding=1, padding_mode='replicate'))
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=32)
+            return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=internal_channels)
         super().__init__(*args,
                          internal_channels  = internal_channels,
                          with_InputLayer    = _with_InputLayer,
@@ -714,7 +714,7 @@ class UNet2d_2021(UNetXd_2021_idd):
             return _zero_module(nn.Conv2d(_internal_channels, _output_channels, 3,
                                           padding=1, padding_mode='replicate'))
         def _Normalization(_num_channels):
-            return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=32)
+            return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=internal_channels)
         super().__init__(*args,
                          internal_channels  = internal_channels,
                          with_InputLayer    = _with_InputLayer,
