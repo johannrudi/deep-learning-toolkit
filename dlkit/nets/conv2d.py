@@ -352,15 +352,23 @@ def _get_gain(activation):
         gain = nn.init.calculate_gain('conv2d')
     return gain
 
-def _set_init_parameters(layer, gain=1.0):
+def _set_init_parameters(layer, gain=1.0, bias_scale=0.1):
+    r"""
+    Initializes the trainable parameters of a layer.
+
+    Args:
+        layer:      Layer of a network to be initialized (of type nn.Module)
+        gain:       Gain to use for sampling initial parameters
+        bias_scale: Scaling of uniform distribution for initializing the bias
+    """
     nn.init.xavier_uniform_(layer.weight, gain=gain)
     if layer.bias is not None:
-        lim = 0.1*gain/math.sqrt(layer.bias.size(0))
+        lim = bias_scale * gain/math.sqrt(layer.bias.size(0))
         nn.init.uniform_(layer.bias, a=-lim, b=+lim)
 
-def _zero_parameters(layer):
-    """
-    Zero out the parameters of a layer.
+def _set_zero_parameters(layer):
+    r"""
+    Zeros the parameters of a layer.
     """
     for p in layer.parameters():
         torch.nn.init.zeros_(p)
