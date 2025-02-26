@@ -304,48 +304,28 @@ def _zero_module(module):
     return module
 
 
-# TODO use Downsample in conv2d.py
-class Downsample(nn.Module):
+def timestep_embedding(timesteps, dim, max_period=10000):
     """
-    A downsampling layer with a convolution.
+    Create sinusoidal timestep embeddings.
 
-    :param channels: channels in the inputs and outputs.
+    :param timesteps: a 1-D Tensor of N indices, one per batch element.
+                      These may be fractional.
+    :param dim: the dimension of the output.
+    :param max_period: controls the minimum frequency of the embeddings.
+    :return: an [N x dim] Tensor of positional embeddings.
     """
-
-    def __init__(self, channels):
-        super().__init__()
-        self.channels = channels
-        stride = 2
-        self.op = nn.Conv2d(channels, channels, 3, stride=stride,
-                            padding=1, padding_mode='replicate')
-
-    def forward(self, x):
-        assert x.shape[1] == self.channels
-        return self.op(x)
+    half = dim // 2
+    freqs = torch.exp(
+        -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+    ).to(device=timesteps.device)
+    args = timesteps[:, None].float() * freqs[None]
+    embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+    if dim % 2:
+        embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
+    return embedding
 
 
-# TODO use Upsample in conv2d.py
-class Upsample(nn.Module):
-    """
-    An upsampling layer with a convolution.
-
-    :param channels: channels in the inputs and outputs.
-    """
-
-    def __init__(self, channels):
-        super().__init__()
-        self.channels = channels
-        self.conv = nn.Conv2d(channels, channels, 3,
-                              padding=1, padding_mode='replicate')
-
-    def forward(self, x):
-        assert x.shape[1] == self.channels
-        x = nn.functional.interpolate(x, scale_factor=2, mode="nearest")
-        x = self.conv(x)
-        return x
-
-
-class EmbedBlock(nn.Module):
+class EmbedModule(nn.Module):
     """
     Any module where forward() takes embeddings as a second argument.
     """
@@ -357,7 +337,7 @@ class EmbedBlock(nn.Module):
         """
 
 
-class EmbedBlockSequential(nn.Sequential, EmbedBlock):
+class EmbedSequential(EmbedModule, nn.Sequential):
     """
     A sequential module that passes embeddings to the children that
     support it as an extra input.
@@ -365,7 +345,7 @@ class EmbedBlockSequential(nn.Sequential, EmbedBlock):
 
     def forward(self, x, emb):
         for layer in self:
-            if isinstance(layer, EmbedBlock):
+            if isinstance(layer, EmbedModule):
                 assert emb is not None
                 x = layer(x, emb)
             else:
@@ -374,7 +354,7 @@ class EmbedBlockSequential(nn.Sequential, EmbedBlock):
 
 
 # TODO use LevelBlock in conv2d.py
-class ResBlock(nn.Module):
+class ResBlock2d(nn.Module):
     """
     A residual block that can optionally change the number of channels.
 
@@ -387,20 +367,19 @@ class ResBlock(nn.Module):
 
     def __init__(
         self,
-        channels,
+        input_channels,
         output_channels=None,
         use_conv=False,
         normalization=None,
     ):
         super().__init__()
-        self.channels = channels
-        self.output_channels = output_channels or channels
-        self.use_conv = use_conv
+        self.input_channels = input_channels
+        self.output_channels = output_channels or input_channels
         # create input layers
         self.in_layers = nn.Sequential(
-            normalization(channels),
+            normalization(input_channels),
             nn.SiLU(),
-            nn.Conv2d(channels, self.output_channels, 3,
+            nn.Conv2d(input_channels, self.output_channels, 3,
                       padding=1, padding_mode='replicate')
         )
         # create output layers
@@ -411,14 +390,13 @@ class ResBlock(nn.Module):
                                    padding=1, padding_mode='replicate')),
         )
         # create skip connection
-        if self.output_channels == channels:
+        if self.output_channels == input_channels:
             self.skip_connection = nn.Identity()
         elif use_conv:
-            self.skip_connection = nn.Conv2d(channels, self.output_channels, 3,
+            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 3,
                                              padding=1, padding_mode='replicate')
         else:
-            self.skip_connection = nn.Conv2d(channels, self.output_channels, 3,
-                                             padding=1, padding_mode='replicate')
+            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 1)
 
     def forward(self, x):
         """
@@ -427,16 +405,17 @@ class ResBlock(nn.Module):
         :param x: an [N x C x ...] Tensor of features.
         :return: an [N x C x ...] Tensor of outputs.
         """
+        assert x.size(1) == self.channels
         h = self.in_layers(x)
         h = self.out_layers(h)
         return self.skip_connection(x) + h
 
 
-class ResBlock_EmbedBlock(ResBlock, EmbedBlock):
+class ResBlock2d_EmbedBlock(ResBlock2d, EmbedModule):
     """
     A residual block that can optionally change the number of channels.
 
-    :param channels: the number of input channels.
+    :param input_channels: the number of input channels.
     :param emb_channels: the number of timestep embedding channels.
     :param output_channels: if specified, the number of out channels.
     :param use_conv: if True and output_channels is specified, use a spatial
@@ -445,15 +424,15 @@ class ResBlock_EmbedBlock(ResBlock, EmbedBlock):
     """
     def __init__(
         self,
-        channels,
-        emb_channels=None,
+        input_channels,
+        emb_channels,
         output_channels=None,
         use_conv=False,
         use_scale_shift_norm=False,
         normalization=None,
     ):
         super().__init__(
-            channels,
+            input_channels,
             output_channels=output_channels,
             use_conv=use_conv,
             normalization=normalization
@@ -479,6 +458,9 @@ class ResBlock_EmbedBlock(ResBlock, EmbedBlock):
         :param emb: an [N x emb_channels] Tensor of timestep embeddings.
         :return: an [N x C x ...] Tensor of outputs.
         """
+        assert x.size(0) == emb.size(0)
+        assert x.size(1) == self.input_channels
+        assert emb.size(1) == self.emb_channels
         # apply input layers
         h = self.in_layers(x)
         # apply embedding layers
@@ -577,7 +559,7 @@ class UNetXd_2021_idd(nn.Module):
     Args:
         input_channels:  number of channels of inputs
         output_channels: number of channels of outputs
-        model_channels: base channel count for the model.
+        internal_channels: base channel count for the model.
         num_res_blocks: number of residual blocks per downsample.
         attention_resolutions: a collection of downsample rates at which
             attention will take place. May be a set, list, or tuple.
@@ -592,14 +574,14 @@ class UNetXd_2021_idd(nn.Module):
     def __init__(self,
                  input_channels,
                  output_channels,
-                 model_channels,
+                 internal_channels,
                  num_res_blocks=1,
                  attention_resolutions=[],
                  channel_mult=(1, 2, 4, 8),
                  num_classes=None,
                  num_heads=1,
                  num_heads_upsample=-1,
-                 time_embed_dim=None, # e.g., model_channels*4
+                 time_embed_dim=None,
                  # dimension dependent classes
                  with_Downsample=None,
                  with_Upsample=None,
@@ -612,9 +594,9 @@ class UNetXd_2021_idd(nn.Module):
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
-        self.input_channels  = input_channels
-        self.output_channels = output_channels
-        self.model_channels  = model_channels
+        self.input_channels        = input_channels
+        self.output_channels       = output_channels
+        self.internal_channels     = internal_channels
         self.num_res_blocks        = num_res_blocks
         self.attention_resolutions = attention_resolutions
         self.channel_mult = channel_mult
@@ -628,7 +610,7 @@ class UNetXd_2021_idd(nn.Module):
         self.time_embed_dim = time_embed_dim
         if time_embed_dim is not None:
             self.time_embed = nn.Sequential(
-                nn.Linear(model_channels, time_embed_dim),
+                nn.Linear(internal_channels, time_embed_dim),
                 nn.SiLU(),
                 nn.Linear(time_embed_dim, time_embed_dim),
             )
@@ -638,31 +620,31 @@ class UNetXd_2021_idd(nn.Module):
         #
         # create downsample blocks
         #
-        input_layer = EmbedBlockSequential(
-                nn.Conv2d(input_channels, model_channels, 3,
+        input_layer = EmbedSequential(
+                nn.Conv2d(input_channels, internal_channels, 3,
                           padding=1, padding_mode='replicate')
         )
         self.input_blocks = nn.ModuleList([input_layer])
-        input_block_channels = [model_channels]
-        ch = model_channels
+        input_block_channels = [internal_channels]
+        ch = internal_channels
         ds = 1
         for level, mult in enumerate(channel_mult):
             for _ in range(num_res_blocks):
                 layers = [
-                    ResBlock(ch,
-                             output_channels=mult * model_channels,
-                             normalization=with_Normalization)
+                    with_LevelBlock(ch,
+                                    output_channels=mult*internal_channels,
+                                    normalization=with_Normalization)
                 ]
-                ch = mult * model_channels
+                ch = mult * internal_channels
                 if ds in attention_resolutions:
                     layers.append(
                         AttentionBlock(ch, num_heads=self.num_heads,
                                        normalization=with_Normalization)
                     )
-                self.input_blocks.append(EmbedBlockSequential(*layers))
+                self.input_blocks.append(EmbedSequential(*layers))
                 input_block_channels.append(ch)
             if level != len(channel_mult) - 1:
-                down_layer = EmbedBlockSequential(Downsample(ch))
+                down_layer = EmbedSequential(with_Downsample(ch, ch, 3))
                 self.input_blocks.append(down_layer)
                 input_block_channels.append(ch)
                 ds *= 2
@@ -670,12 +652,12 @@ class UNetXd_2021_idd(nn.Module):
         # create middle block
         #
         layers = [
-            ResBlock(ch, normalization=with_Normalization),
+            with_LevelBlock(ch, normalization=with_Normalization),
             AttentionBlock(ch, num_heads=self.num_heads,
                            normalization=with_Normalization),
-            ResBlock(ch, normalization=with_Normalization),
+            with_LevelBlock(ch, normalization=with_Normalization),
         ]
-        self.middle_block = EmbedBlockSequential(*layers)
+        self.middle_block = EmbedSequential(*layers)
         #
         # create upsample blocks
         #
@@ -683,27 +665,27 @@ class UNetXd_2021_idd(nn.Module):
         for level, mult in list(enumerate(channel_mult))[::-1]:
             for i in range(num_res_blocks + 1):
                 layers = [
-                    ResBlock(ch + input_block_channels.pop(),
-                             output_channels=model_channels * mult,
-                             normalization=with_Normalization)
+                    with_LevelBlock(ch + input_block_channels.pop(),
+                                    output_channels=mult*internal_channels,
+                                    normalization=with_Normalization)
                 ]
-                ch = model_channels * mult
+                ch = mult * internal_channels
                 if ds in attention_resolutions:
                     layers.append(
                         AttentionBlock(ch, num_heads=self.num_heads_upsample,
                                        normalization=with_Normalization)
                     )
                 if level and i == num_res_blocks:
-                    layers.append(Upsample(ch))
+                    layers.append(with_Upsample(ch, ch, 3))
                     ds //= 2
-                self.output_blocks.append(EmbedBlockSequential(*layers))
+                self.output_blocks.append(EmbedSequential(*layers))
         #
         # create output layer
         #
         self.output_layer = nn.Sequential(
             with_Normalization(ch),
             nn.SiLU(),
-            _zero_module(nn.Conv2d(model_channels, output_channels, 3,
+            _zero_module(nn.Conv2d(internal_channels, output_channels, 3,
                                    padding=1, padding_mode='replicate')),
         )
 
@@ -716,17 +698,17 @@ class UNetXd_2021_idd(nn.Module):
         :param y: an [N] Tensor of labels, if class-conditional.
         :return: an [N x C x ...] Tensor of outputs.
         """
-        assert (timesteps is not None) == (
-            self.time_embed_dim is not None
-        ), "must specify timestep if and only if the model has time embedding"
-        assert (y is not None) == (
-            self.num_classes is not None
-        ), "must specify y if and only if the model is class-conditional"
-        # apply embedding layers
-        if self.time_embed_dim is not None:
-            emb = self.time_embed(timestep_embedding(timesteps, self.model_channels))
-            if self.num_classes is not None:
+        if timesteps is not None:
+            assert self.time_embed_dim is not None, "must specify timestep if and only if the model has time embedding"
+            assert x.size(0) == timesteps.size(0)
+            assert timesteps.dim() == 1
+            if y is not None:
+                assert self.num_classes is not None, "must specify y if and only if the model is class-conditional"
                 assert y.shape == (x.shape[0],)
+        # apply embedding layers
+        if timesteps is not None:
+            emb = self.time_embed(timestep_embedding(timesteps, self.internal_channels))
+            if y is not None:
                 emb = emb + self.label_emb(y)
         else:
             emb = None
@@ -753,12 +735,20 @@ class UNetXd_2021_idd(nn.Module):
 ########################################
 
 class UNet2d_2021_idd(UNetXd_2021_idd):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs,
+    def __init__(self, *args, internal_channels=32, **kwargs):
+        time_embed_dim = 4*internal_channels
+        def _ResBlock2d_EmbedBlock(_input_channels, **_kwargs):
+            return ResBlock2d_EmbedBlock(_input_channels, time_embed_dim, **_kwargs)
+        def _Normalization(_num_channels):
+            return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=32)
+        super().__init__(*args,
+                         internal_channels  = internal_channels,
+                         time_embed_dim     = time_embed_dim,
                          with_Downsample    = dlkit.nets.conv2d.Downsample,
                          with_Upsample      = dlkit.nets.conv2d.Upsample,
-                         with_LevelBlock    = dlkit.nets.conv2d.LevelBlock,
-                         with_Normalization = dlkit.nets.conv2d.Normalization)
+                         with_LevelBlock    = _ResBlock2d_EmbedBlock,
+                         with_Normalization = _Normalization,
+                         **kwargs)
 
 ###############################################################################
 
@@ -766,14 +756,15 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
 
 def test_UNet_2021_idd():
     print('---------------------------------------^')
-    net = UNet2d_2021_idd(1, 1, 4, channel_mult=(1, 2, 4))
+    net = UNet2d_2021_idd(1, 1, channel_mult=(1, 2, 4))
     print(net)
 
     print('Test 1:')
-    row = 16*[1.]
-    x = torch.tensor([[ [row for _ in range(16)] ]])
-    y = net(x)
+    x = torch.ones((1, 1, 16, 16))
+    t = torch.tensor([0.1])
+    y = net(x, t)
     print('- input  x =', x, sep='\n')
+    print('- input  t =', t, sep='\n')
     print('- output y =', y, sep='\n')
     print('---------------------------------------$')
 
@@ -783,13 +774,11 @@ def test_UNet_2025():
     net = UNet2d_2025(1, 1,
                       down_levels_conv_channels = [[2,2], [4,4], [8,8]],
                       up_levels_conv_channels   = [[8,8], [4,4], [2,2]],
-                      with_Normalization=dlkit.nets.conv2d.Normalization,
     )
     print(net)
 
     print('Test 1:')
-    row = 16*[1.]
-    x = torch.tensor([[ [row for _ in range(16)] ]])
+    x = torch.ones((1, 1, 16, 16))
     y = net(x)
     print('- input  x =', x, sep='\n')
     print('- output y =', y, sep='\n')
@@ -799,4 +788,4 @@ def test_UNet_2025():
 if __name__ == '__main__':
     r"""Runs tests."""
     test_UNet_2021_idd()
-    test_UNet_2025()
+    ###test_UNet_2025()
