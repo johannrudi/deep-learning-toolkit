@@ -38,9 +38,18 @@ def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
 def train_epochs(
-        n_epochs, net, dataloader, optimizer, loss_fn,
-        validation_fn=None, device=None, logger=logging.getLogger('train_epochs'),
-        checkpoint_epochs=None, checkpoint_dir='checkpoints'
+        n_epochs,
+        net,
+        dataloader,
+        optimizer,
+        loss_fn,
+        validation_fn=None,
+        device=None,
+        inputs_transform_fn=None,
+        targets_transform_fn=None,
+        logger=logging.getLogger('train_epochs'),
+        checkpoint_epochs=None,
+        checkpoint_dir='checkpoints'
     ):
     """ Runs training loop over epochs.
 
@@ -70,8 +79,17 @@ def train_epochs(
         if validation_fn is not None:
             validation_fn(epoch_idx, net)
         # train on batches
-        batch_dlog = train_batches(epoch_idx, net, dataloader, optimizer, loss_fn,
-                                   device=device, logger=logger)
+        batch_dlog = train_batches(
+                epoch_idx,
+                net,
+                dataloader,
+                optimizer,
+                loss_fn,
+                device=device,
+                inputs_transform_fn=inputs_transform_fn,
+                targets_transform_fn=targets_transform_fn,
+                logger=logger
+        )
         # log
         _dlog_train_epoch_update(epoch_dlog, epoch_idx, batch_dlog)
         logger.info("epoch {:6d}, loss_mean {:.6e} std {:.3e}".format(
@@ -105,8 +123,15 @@ def _dlog_train_batch_finalize(dlog):
     dlog['loss_std'] = np.std(dlog['loss'][is_valid])
 
 def train_batches(
-        epoch_idx, net, dataloader, optimizer, loss_fn,
-        device=None, logger=logging.getLogger('train_batches')
+        epoch_idx,
+        net,
+        dataloader,
+        optimizer,
+        loss_fn,
+        device=None,
+        inputs_transform_fn=None,
+        targets_transform_fn=None,
+        logger=logging.getLogger('train_batches')
     ):
     """ Runs training loop over batches. """
     batch_dlog = _dlog_train_batch_initialize(len(dataloader))
@@ -119,6 +144,10 @@ def train_batches(
         if device is not None:
             inputs = inputs.to(device)
             targets = targets.to(device)
+        if inputs_transform_fn is not None:
+            inputs = inputs_transform_fn(inputs)
+        if targets_transform_fn is not None:
+            targets = targets_transform_fn(targets)
         # zero the gradients (begin AD)
         optimizer.zero_grad()
         # forward pass
