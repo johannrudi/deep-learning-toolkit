@@ -637,7 +637,7 @@ class UNetXd_2021_idd(nn.Module):
         self.output_layer = nn.Sequential(
             with_Normalization(ch),
             nn.SiLU(),
-            with_OutputLayer(internal_channels, output_channels),
+            with_OutputLayer(ch, output_channels),
         )
 
     def forward(self, x, timesteps=None, y=None):
@@ -760,6 +760,7 @@ class EncoderNetXd_2021_idd(nn.Module):
 
     Args:
         input_channels:  number of channels of inputs
+        output_channels: number of channels of outputs
         internal_channels: base channel count for the model.
         num_res_blocks: number of residual blocks per downsample.
         attention_levels: a collection of levels at which
@@ -774,6 +775,7 @@ class EncoderNetXd_2021_idd(nn.Module):
     """
     def __init__(self,
                  input_channels,
+                 output_channels,
                  internal_channels,
                  num_res_blocks=1,
                  attention_levels=[],
@@ -784,6 +786,7 @@ class EncoderNetXd_2021_idd(nn.Module):
                  time_embed_dim=None,
                  # dimension dependent classes
                  with_InputLayer=None,
+                 with_OutputLayer=None,
                  with_Downsample=None,
                  with_Upsample=None,
                  with_LevelBlock=None,
@@ -791,12 +794,14 @@ class EncoderNetXd_2021_idd(nn.Module):
         super().__init__()
         # check dimension dependent classes
         assert with_InputLayer is not None
+        assert with_OutputLayer is not None
         assert with_Downsample is not None
         assert with_Upsample is not None
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
         self.input_channels    = input_channels
+        self.output_channels   = output_channels
         self.internal_channels = internal_channels
         self.num_res_blocks    = num_res_blocks
         self.attention_levels  = attention_levels
@@ -854,6 +859,14 @@ class EncoderNetXd_2021_idd(nn.Module):
             with_LevelBlock(ch, normalization=with_Normalization)
         ]
         self.middle_block = EmbedSequential(*layers)
+        #
+        # create output layer
+        #
+        self.output_layer = nn.Sequential(
+            with_Normalization(ch),
+            nn.SiLU(),
+            with_OutputLayer(ch, output_channels),
+        )
 
     def forward(self, x, timesteps=None, y=None):
         """
@@ -882,7 +895,8 @@ class EncoderNetXd_2021_idd(nn.Module):
         h = x.type(self.inner_dtype)
         for block in self.input_blocks:
             h = block(h, emb)
-        return self.middle_block(h, emb)
+        h = self.middle_block(h, emb)
+        return self.output_layer(h)
 
     @property
     def inner_dtype(self):
@@ -897,6 +911,7 @@ class DecoderNetXd_2021_idd(nn.Module):
     Decoder Net derived from UNetXd_2021_idd.
 
     Args:
+        input_channels:  number of channels of inputs
         output_channels: number of channels of outputs
         internal_channels: base channel count for the model.
         num_res_blocks: number of residual blocks per downsample.
@@ -911,6 +926,7 @@ class DecoderNetXd_2021_idd(nn.Module):
         num_heads: the number of attention heads in each attention layer.
     """
     def __init__(self,
+                 input_channels,
                  output_channels,
                  internal_channels,
                  num_res_blocks=1,
@@ -921,6 +937,7 @@ class DecoderNetXd_2021_idd(nn.Module):
                  num_heads_upsample=-1,
                  time_embed_dim=None,
                  # dimension dependent classes
+                 with_InputLayer=None,
                  with_OutputLayer=None,
                  with_Downsample=None,
                  with_Upsample=None,
@@ -928,12 +945,14 @@ class DecoderNetXd_2021_idd(nn.Module):
                  with_Normalization=None):
         super().__init__()
         # check dimension dependent classes
+        assert with_InputLayer is not None
         assert with_OutputLayer is not None
         assert with_Downsample is not None
         assert with_Upsample is not None
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
+        self.input_channels    = input_channels
         self.output_channels   = output_channels
         self.internal_channels = internal_channels
         self.num_res_blocks    = num_res_blocks
@@ -961,6 +980,9 @@ class DecoderNetXd_2021_idd(nn.Module):
         # create middle block
         #
         ch = channel_mult[-1] * internal_channels
+        self.input_layer = EmbedSequential(
+            with_InputLayer(input_channels, ch)
+        )
         level = len(channel_mult)
         print(f"### middle {level=}")
         layers = [
@@ -994,7 +1016,7 @@ class DecoderNetXd_2021_idd(nn.Module):
         self.output_layer = nn.Sequential(
             with_Normalization(ch),
             nn.SiLU(),
-            with_OutputLayer(internal_channels, output_channels),
+            with_OutputLayer(ch, output_channels),
         )
 
     def forward(self, x, timesteps=None, y=None):
@@ -1022,6 +1044,7 @@ class DecoderNetXd_2021_idd(nn.Module):
             emb = None
         # apply layers
         h = x.type(self.inner_dtype)
+        h = self.input_layer(h, emb)
         h = self.middle_block(h, emb)
         for block in self.output_blocks:
             h = block(h, emb)
@@ -1041,14 +1064,15 @@ class EncoderNet1d_2021(EncoderNetXd_2021_idd):
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(_input_channels, _internal_channels, 3,
                              padding=1, padding_mode='replicate')
-       #def _with_OutputLayer(_internal_channels, _output_channels):
-       #    return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
-       #                                  padding=1, padding_mode='replicate'))
+        def _with_OutputLayer(_internal_channels, _output_channels):
+            return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
+                                          padding=1, padding_mode='replicate'))
         def _Normalization(_num_channels):
             return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=internal_channels)
         super().__init__(*args,
                          internal_channels  = internal_channels,
                          with_InputLayer    = _with_InputLayer,
+                         with_OutputLayer   = _with_OutputLayer,
                          with_Downsample    = dlkit.nets.conv1d.Downsample,
                          with_Upsample      = dlkit.nets.conv1d.Upsample,
                          with_LevelBlock    = dlkit.nets.conv1d.ResBlock,
@@ -1057,6 +1081,9 @@ class EncoderNet1d_2021(EncoderNetXd_2021_idd):
 
 class DecoderNet1d_2021(DecoderNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
+        def _with_InputLayer(_input_channels, _internal_channels):
+            return nn.Conv1d(_input_channels, _internal_channels, 3,
+                             padding=1, padding_mode='replicate')
         def _with_OutputLayer(_internal_channels, _output_channels):
             return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
                                           padding=1, padding_mode='replicate'))
@@ -1064,6 +1091,7 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
             return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=internal_channels)
         super().__init__(*args,
                          internal_channels  = internal_channels,
+                         with_InputLayer    = _with_InputLayer,
                          with_OutputLayer   = _with_OutputLayer,
                          with_Downsample    = dlkit.nets.conv1d.Downsample,
                          with_Upsample      = dlkit.nets.conv1d.Upsample,
@@ -1136,7 +1164,7 @@ def test_UNet2d_2021_idd():
 
 def test_EncoderNet1d_2021():
     print('---------------------------------------^')
-    net = EncoderNet1d_2021(1, channel_mult=(1, 1, 1))
+    net = EncoderNet1d_2021(1, 1, channel_mult=(1, 1, 1))
     print(net)
 
     print('Test 1:')
@@ -1149,11 +1177,11 @@ def test_EncoderNet1d_2021():
 
 def test_DecoderNet1d_2021():
     print('---------------------------------------^')
-    net = DecoderNet1d_2021(1, channel_mult=(1, 1, 1))
+    net = DecoderNet1d_2021(1, 1, channel_mult=(1, 1, 1))
     print(net)
 
     print('Test 1:')
-    x = torch.ones((1, 32, 16))
+    x = torch.ones((1, 1, 4))
     y = net(x)
     print('- input  x =', x, sep='\n')
     print('- output y =', y, sep='\n')
