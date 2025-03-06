@@ -72,7 +72,7 @@ class ConvNet(nn.Module):
         Args:
             x: input tensor
         """
-        assert x.shape[1] == self.input_channels
+        assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
         h = x
         # apply hidden convolutional layers
         for layer in self.hidden_conv_layers:
@@ -146,7 +146,7 @@ class Downsample(nn.Module):
         self.init_parameters()
 
     def forward(self, x):
-        assert x.size(1) == self.input_channels
+        assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
         h = self.layer(x)
         if self.activation is not None:
             h = self.activation(h)
@@ -193,7 +193,7 @@ class Upsample(nn.Module):
         self.init_parameters()
 
     def forward(self, x):
-        assert x.size(1) == self.input_channels
+        assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
         h = nn.functional.interpolate(x, scale_factor=self.scale_factor, mode=self.interp_mode)
         h = self.layer(h)
         if self.activation is not None:
@@ -270,7 +270,7 @@ class ResBlock(nn.Module):
         :param x: an [N x C x ...] Tensor of features.
         :return: an [N x C x ...] Tensor of outputs.
         """
-        assert x.size(1) == self.input_channels
+        assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
         h = self.in_layers(x)
         h = self.out_layers(h)
         return self.skip_connection(x) + h
