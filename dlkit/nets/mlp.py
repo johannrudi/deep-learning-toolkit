@@ -111,7 +111,7 @@ class MLPNet(nn.Module):
 
 class MLPNet_MultIn(MLPNet):
     def __init__(self,
-                 input_sizes,
+                 input_size,
                  output_size,
                  input_layer_activation   = None,
                  input_layer_kwargs       = {},
@@ -126,14 +126,14 @@ class MLPNet_MultIn(MLPNet):
         r"""MLPNet_MultIn.
 
         Args:
-            input_sizes (list): list of lengths for each input feature vector
+            input_size (int): sum of lengths of each input vector
             output_size (int): length of outputs
         """
-        # set size of the input layer
-        input_size = sum(input_sizes)
         # set sizes of the hidden layers
         if hidden_input_sizes is None:
             hidden_input_sizes = [0]*len(hidden_layers_sizes)
+        if len(hidden_input_sizes) == (len(hidden_layers_sizes) - 1):
+            hidden_input_sizes += [0]
         assert len(hidden_input_sizes) == len(hidden_layers_sizes)
         # create regular MLP net with only input and output layers
         super().__init__(
@@ -164,15 +164,19 @@ class MLPNet_MultIn(MLPNet):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, *x_args, **h_kwargs):
-        r"""Applies the forward function: y = net(x0, x1, ..., h1=hidden_input_1, h2=hidden_input2, ...)
+    def forward(self, *x, **h_kwargs):
+        r"""Applies the forward function: y = net(x0, x1, ..., h0=hidden_input_0, h1=hidden_input1, ...)
 
         Args:
             x0, x1, ... (tensor): input tensors
-            h1, h2, ... (tensor, optional): input tensors to hidden layers
+            h0, h1, ... (tensor, optional): input tensors to hidden layers
         """
         # concatenate inputs; flatten inputs
-        h = torch.cat([torch.flatten(x_, 1) for x_ in x_args], dim=1)
+        assert 0 < len(x)
+        if 1 < len(x):
+            h = torch.cat([torch.flatten(x_, 1) for x_ in x], dim=1)
+        else:
+            h = torch.flatten(x[0], 1)
         # apply input layer
         h = self.input_layer(h)
         # apply hidden layers
@@ -180,16 +184,9 @@ class MLPNet_MultIn(MLPNet):
             h_in = h_kwargs.get(f"h{block_idx}", None)
             if h_in is not None:
                 h = torch.cat((h, torch.flatten(h_in, 1)), dim=1)
-            assert h.size(1) == block.layer.in_features, f"{h.size(1)=}, {block.layer.in_features=}"
+            assert h.size(1) == block.layer.in_features, f"{block_idx=}, {h.size(1)=}, {block.layer.in_features=}"
             h = block(h)
         # apply output layer
-        h_in = h_kwargs.get(f"h{len(self.hidden_blocks)}", None)
-        if h_in is not None:
-            h = torch.cat((h, torch.flatten(h_in, 1)), dim=1)
-        if isinstance(self.output_layer, nn.Sequential):
-            assert h.size(1) == self.output_layer.layer.in_features, f"{h.size(1)=}, {self.output_layer.layer.in_features=}"
-        else:
-            assert h.size(1) == self.output_layer.in_features, f"{h.size(1)=}, {self.output_layer.in_features=}"
         y = self.output_layer(h)
         return y
 
@@ -201,10 +198,12 @@ class ResidualBlock(nn.Module):
     r"""ResidualBlock.
 
     Args:
-        input_output_size (int): length of input and output vectors
+        input_size (int): length of input vectors
+        output_size (int): length of output vectors (if None, `output_size = input_size`)
     """
     def __init__(self,
-                 input_output_size,
+                 input_size,
+                 output_size              = None,
                  normalization_layer_size = 32,
                  activation_layer_size    = 128,
                  activation               = nn.ReLU(),
@@ -213,39 +212,48 @@ class ResidualBlock(nn.Module):
         ):
         super().__init__()
         # set from arguments
-        self.input_output_size = input_output_size
-        # create layers
-        io_size = input_output_size
+        self.input_size = input_size
+        # create layers of the residual block
+        in_size = input_size
         nl_size = normalization_layer_size
         al_size = activation_layer_size
+        out_size = output_size if output_size is not None else input_size
         block = OrderedDict()
-        block['layer_0']       = nn.Linear(io_size, nl_size, **layers_kwargs)
+        block['layer_0']       = nn.Linear(in_size, nl_size, **layers_kwargs)
         block['normalization'] = nn.LayerNorm(nl_size)
         block['layer_1']       = nn.Linear(nl_size, al_size, **layers_kwargs)
         block['activation']    = activation
         if use_dropout:
             block['dropout']   = nn.Dropout(use_dropout)
-        block['layer_2']       = nn.Linear(al_size, io_size, **layers_kwargs)
+        block['layer_2']       = nn.Linear(al_size, out_size, **layers_kwargs)
         self.block = nn.Sequential(block)
+        # create skip connection
+        if in_size != out_size:
+            self.skip_connection = nn.Linear(in_size, out_size, **layers_kwargs)
+        else:
+            self.skip_connection = None
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x):
-        r"""Applies the forward function: y = net(x)
+    def forward(self, *x):
+        r"""Applies the forward function: y = net(x0, x1, ...)
 
         Args:
-            x (tensor): input tensor
+            x0, x1, ... (tensor): input tensors
         """
-        # flatten inputs
-        if 2 < x.dim():
-            h = h0 = torch.flatten(x, 1)
+        # concatenate inputs; flatten inputs
+        assert 0 < len(x)
+        if 1 < len(x):
+            h = hs = torch.cat([torch.flatten(x_, 1) for x_ in x], dim=1)
         else:
-            h = h0 = x
-        assert h.size(1) == self.input_output_size, f"{h.size(1)=}, {self.input_output_size=}"
+            h = hs = torch.flatten(x[0], 1)
+        assert h.size(1) == self.input_size, f"{h.size(1)=}, {self.input_size=}"
         # apply layers
         h = self.block(h)
+        if self.skip_connection is not None:
+            hs = self.skip_connection(hs)
         # compute output
-        y = 0.5*h + 0.5*h0
+        y = 0.5*h + 0.5*hs
         return y
 
     def init_parameters(self):
@@ -266,22 +274,26 @@ class MLPResNet(nn.Module):
     def __init__(self,
                  input_size,
                  output_size,
-                 input_layer_activation             = None,
-                 input_layer_kwargs                 = {},
-                 n_residual_blocks                  = 4,
-                 residual_blocks_size               = 32,
-                 residual_blocks_normalization_size = 32,
-                 residual_blocks_activation_size    = 128,
-                 residual_blocks_activation         = nn.ReLU(),
-                 residual_blocks_kwargs             = {},
-                 use_dropout                        = False,
-                 output_layer_activation            = None,
-                 output_layer_kwargs                = {}
+                 input_layer_activation     = None,
+                 input_layer_kwargs         = {},
+                 residual_blocks_sizes      = 4*[(32, 32, 128, 32)],
+                 residual_blocks_activation = nn.ReLU(),
+                 residual_blocks_kwargs     = {},
+                 use_dropout                = False,
+                 output_layer_activation    = None,
+                 output_layer_kwargs        = {}
         ):
         super().__init__()
+        assert 0 < len(residual_blocks_sizes)
+        assert 0 < len(residual_blocks_sizes[0])
         # create input layer
-        self.input_size = input_size
-        layer = nn.Linear(input_size, residual_blocks_size, **input_layer_kwargs)
+        try:
+            self.input_size = input_size[0]
+            out_size_       = input_size[1]
+        except:
+            self.input_size = input_size
+            out_size_       = residual_blocks_sizes[0][0]
+        layer = nn.Linear(self.input_size, out_size_, **input_layer_kwargs)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(OrderedDict([
                     ('layer', layer),
@@ -291,18 +303,24 @@ class MLPResNet(nn.Module):
             self.input_layer = layer
         # create residual blocks
         blocks = list()
-        for k in range(n_residual_blocks):
+        for sizes in residual_blocks_sizes:
+            assert 3 <= len(sizes)
+            block_in_size = sizes[0]
+            block_nl_size = sizes[1]
+            block_al_size = sizes[2]
+            block_out_size = sizes[3] if 3 < len(sizes) else sizes[0]
             blocks.append(ResidualBlock(
-                    residual_blocks_size,
-                    residual_blocks_normalization_size,
-                    residual_blocks_activation_size,
-                    activation=residual_blocks_activation,
-                    layers_kwargs=residual_blocks_kwargs,
-                    use_dropout=use_dropout
+                    block_in_size,
+                    output_size              = block_out_size,
+                    normalization_layer_size = block_nl_size,
+                    activation_layer_size    = block_al_size,
+                    activation               = residual_blocks_activation,
+                    layers_kwargs            = residual_blocks_kwargs,
+                    use_dropout              = use_dropout
             ))
         self.residual_blocks = nn.Sequential(*blocks)
         # create output layer
-        layer = nn.Linear(residual_blocks_size, output_size, **output_layer_kwargs)
+        layer = nn.Linear(block_out_size, output_size, **output_layer_kwargs)
         if output_layer_activation is not None:
             self.output_layer = nn.Sequential(OrderedDict([
                     ('layer', layer),
@@ -313,21 +331,32 @@ class MLPResNet(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x):
-        r"""Applies the forward function: y = net(x)
+    def forward(self, *x, **h_kwargs):
+        r"""Applies the forward function: y = net(x0, x1, ..., h0=hidden_input_0, h1=hidden_input1, ...)
 
         Args:
-            x (tensor): input tensor
+            x0, x1, ... (tensor): input tensors
+            h0, h1, ... (tensor, optional): input tensors to hidden layers
         """
-        # flatten inputs
-        if 2 < x.dim():
-            h = torch.flatten(x, 1)
+        # concatenate inputs; flatten inputs
+        assert 0 < len(x)
+        if 1 < len(x):
+            h = torch.cat([torch.flatten(x_, 1) for x_ in x], dim=1)
         else:
-            h = x
-        assert h.size(1) == self.input_size, f"{h.size(1)=}, {self.input_size=}"
-        # apply layers
+            h = torch.flatten(x[0], 1)
+        # apply input layer
         h = self.input_layer(h)
-        h = self.residual_blocks(h)
+        # apply residual blocks
+        for block_idx, block in enumerate(self.residual_blocks):
+            h_in = h_kwargs.get(f"h{block_idx}", None)
+            if h_in is not None:
+                assert (h.size(1) + sum(h_in.size()[1:])) == block.input_size, \
+                       f"{block_idx=}, {h.size(1)=}, {sum(h_in.size()[1:])=}, {block.input_size=}"
+                h = block(h, h_in)
+            else:
+                assert h.size(1) == block.input_size, f"{block_idx=}, {h.size(1)=}, {block.input_size=}"
+                h = block(h)
+        # apply output layer
         y = self.output_layer(h)
         return y
 
@@ -419,7 +448,7 @@ def test_MLPNet():
 def test_MLPNet_MultIn():
     print('---------------------------------------^')
     print('Test 1:')
-    net = MLPNet_MultIn([4,2], 3)
+    net = MLPNet_MultIn(4+2, 3)
     print(net)
     x0 = torch.tensor([[1., -1., 1., -1.]])
     x1 = torch.tensor([[2., -2.]])
@@ -429,7 +458,7 @@ def test_MLPNet_MultIn():
     print('- output y  =', y)
 
     print('Test 2:')
-    net = MLPNet_MultIn([4,2], 3, hidden_input_sizes=[0,3,0,5])
+    net = MLPNet_MultIn(4+2, 3, hidden_input_sizes=[0,3,0,5], hidden_layers_sizes=[10,20,30,40,50])
     print(net)
     x0 = torch.randn(8, 4)
     x1 = torch.randn(8, 2)
@@ -445,26 +474,47 @@ def test_MLPNet_MultIn():
 
 def test_ResidualBlock():
     print('---------------------------------------^')
+    print('Test 1:')
     net = ResidualBlock(4)
     print(net)
-
-    print('Test 1:')
     x = torch.tensor([[1., -1., 1., -1.]])
     y = net(x)
     print('- input  x =', x)
     print('- output y =', y)
+    print('Test 2:')
+    net = ResidualBlock(4+4, 3)
+    print(net)
+    x0 = torch.tensor([[1., -1., 1., -1.]])
+    x1 = torch.tensor([[5., -5., 5., -5.]])
+    y = net(x0, x1)
+    print('- input  x0 =', x0)
+    print('- input  x1 =', x1)
+    print('- output y  =', y)
     print('---------------------------------------$')
 
 def test_MLPResNet():
     print('---------------------------------------^')
-    net = MLPResNet(4, 2)
-    print(net)
-
     print('Test 1:')
+    net = MLPResNet(4, 10, residual_blocks_sizes=2*[(16, 32, 128, 16)] + [(16, 16, 64, 8)])
+    print(net)
     x = torch.tensor([[1., -1., 1., -1.]])
     y = net(x)
     print('- input  x =', x)
     print('- output y =', y)
+
+    print('Test 2:')
+    net = MLPResNet((4+2, 8), 10, residual_blocks_sizes=2*[(20, 30, 60, 10)])
+    print(net)
+    x0 = torch.tensor([[1., -1., 1., -1.]])
+    x1 = torch.tensor([[2., -2.]])
+    h0 = torch.randn(1, 12)
+    h1 = torch.randn(1, 10)
+    y = net(x0, x1, h0=h0, h1=h1)
+    print('- input  x0 =', x0)
+    print('- input  x1 =', x1)
+    print('- input  h0 =', h0)
+    print('- input  h1 =', h1)
+    print('- output y  =', y)
     print('---------------------------------------$')
 
 if __name__ == '__main__':
