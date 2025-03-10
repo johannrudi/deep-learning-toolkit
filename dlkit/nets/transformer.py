@@ -9,7 +9,7 @@ import math
 import torch
 import torch.nn as nn
 
-from .mlp import MLPModel
+from .mlp import MLPNet
 
 from typing import Optional, Any, Union, Callable
 from torch import Tensor
@@ -120,9 +120,9 @@ class Transformer1d0dModel(nn.Module):
             **transformer_kwargs
         )
         # create MLP model for output
-        self.generator = MLPModel(embedding_size, trg_size,
-                                  hidden_layers_sizes=[],
-                                  output_layer_activation=output_layer_activation)
+        self.generator = MLPNet(embedding_size, trg_size,
+                                hidden_layers_sizes=[],
+                                output_layer_activation=output_layer_activation)
 
     def forward(self, x_src: Tensor, x_trg: Tensor = None, **kwargs):
         r"""Applies the model function: y = model(x_src, x_trg)
