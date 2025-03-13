@@ -44,6 +44,7 @@ def train_epochs(
         optimizer,
         loss_fn,
         validation_fn=None,
+        lr_scheduler=None,
         device=None,
         inputs_transform_fn=None,
         targets_transform_fn=None,
@@ -90,6 +91,15 @@ def train_epochs(
                 targets_transform_fn=targets_transform_fn,
                 logger=logger
         )
+        # update the learning rate scheduler
+        if lr_scheduler is not None:
+            lr_current = lr_scheduler.get_last_lr()
+            if 1 == len(lr_current):
+                lr_current = "{:.6e}".format(lr_current[0])
+            else:
+                lr_current = str(lr_current)
+            logger.debug("epoch {:6d}, learning_rate {}".format(epoch_idx, lr_current))
+            lr_scheduler.step()
         # log
         _dlog_train_epoch_update(epoch_dlog, epoch_idx, batch_dlog)
         logger.info("epoch {:6d}, loss_mean {:.6e} std {:.3e}".format(

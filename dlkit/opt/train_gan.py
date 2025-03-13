@@ -51,10 +51,23 @@ def _dlog_train_epoch_finalize(dlog, time_train):
     dlog['time_train'] = time_train
 
 def train_epochs(
-        n_epochs, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
-        d_reg_fn=None, d_opt_multiplier=1, validation_fn=None,
-        device=None, logger=logging.getLogger('train_epochs'),
-        checkpoint_epochs=None, checkpoint_dir='checkpoints'
+        n_epochs,
+        g_net,
+        d_net,
+        dataloader,
+        z_sample_fn,
+        g_optimizer,
+        d_optimizer,
+        loss_fn,
+        d_reg_fn=None,
+        d_opt_multiplier=1,
+        validation_fn=None,
+        g_lr_scheduler=None,
+        d_lr_scheduler=None,
+        device=None,
+        logger=logging.getLogger('train_epochs'),
+        checkpoint_epochs=None,
+        checkpoint_dir='checkpoints'
     ):
     """ Runs training loop over epochs.
 
@@ -85,9 +98,40 @@ def train_epochs(
         if validation_fn is not None:
             validation_fn(epoch_idx, g_net, d_net)
         # train on batches
-        batch_dlog = train_batches(epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
-                                   d_reg_fn=d_reg_fn, d_opt_multiplier=d_opt_multiplier,
-                                   device=device, logger=logger)
+        batch_dlog = train_batches(
+                epoch_idx,
+                g_net,
+                d_net,
+                dataloader,
+                z_sample_fn,
+                g_optimizer,
+                d_optimizer,
+                loss_fn,
+                d_reg_fn=d_reg_fn,
+                d_opt_multiplier=d_opt_multiplier,
+                device=device, logger=logger
+        )
+        # update the learning rate schedulers
+        if g_lr_scheduler is not None:
+            g_lr_current = g_lr_scheduler.get_last_lr()
+            if 1 == len(g_lr_current):
+                g_lr_current = "{:.6e}".format(g_lr_current[0])
+            else:
+                g_lr_current = str(g_lr_current)
+            g_lr_scheduler.step()
+        else:
+            g_lr_current = 'n/a'
+        if d_lr_scheduler is not None:
+            d_lr_current = d_lr_scheduler.get_last_lr()
+            if 1 == len(d_lr_current):
+                d_lr_current = "{:.6e}".format(d_lr_current[0])
+            else:
+                d_lr_current = str(d_lr_current)
+            d_lr_scheduler.step()
+        else:
+            d_lr_current = 'n/a'
+        if g_lr_scheduler is not None or d_lr_scheduler is not None:
+            logger.debug("epoch {:6d}, g_learning_rate {}, d_learning_rate {}".format(epoch_idx, g_lr_current, d_lr_current))
         # log
         _dlog_train_epoch_update(epoch_dlog, epoch_idx, batch_dlog)
         logger.info("epoch {:6d}, d_loss_mean {:.6e} std {:.3e}, g_loss_mean {:.6e} std {:.3e}".format(
@@ -205,9 +249,18 @@ def _train_step_generator(y_data, z_sample_fn,
     return loss.item()
 
 def train_batches(
-        epoch_idx, g_net, d_net, dataloader, z_sample_fn, g_optimizer, d_optimizer, loss_fn,
-        d_reg_fn=None, d_opt_multiplier=1,
-        device=None, logger=logging.getLogger('train_batches')
+        epoch_idx,
+        g_net,
+        d_net,
+        dataloader,
+        z_sample_fn,
+        g_optimizer,
+        d_optimizer,
+        loss_fn,
+        d_reg_fn=None,
+        d_opt_multiplier=1,
+        device=None,
+        logger=logging.getLogger('train_batches')
     ):
     """ Runs training loop over batches. """
     train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
