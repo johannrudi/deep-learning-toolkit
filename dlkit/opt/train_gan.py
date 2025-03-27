@@ -201,10 +201,10 @@ def _train_step_discriminator(x_data, y_data, z_sample_fn,
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
     # generate outputs with `g_net`
-    x_gen = torch.vmap( lambda z_: g_net(y_data, z_) )(z).detach()
+    x_gen = g_net(y_data, z).detach()
     # evalutate discriminator (begin AD)
     d_optimizer.zero_grad()
-    d_outputs_gen  = torch.vmap( lambda x_: d_net(x_, y_data) )(x_gen).flatten(start_dim=0, end_dim=1)
+    d_outputs_gen  = d_net(x_gen, y_data)
     d_outputs_data = d_net(x_data, y_data)
     # evaluate discriminator loss
     d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)  # output must have correct sign for minimization
@@ -234,9 +234,9 @@ def _train_step_generator(y_data, z_sample_fn,
     z = z_sample_fn(batch_size)
     # generate outputs with `g_net` (begin AD)
     g_optimizer.zero_grad()
-    x_gen = torch.vmap( lambda z_: g_net(y_data, z_) )(z)
+    x_gen = g_net(y_data, z)
     # evalutate discriminator
-    d_outputs_gen = torch.vmap( lambda x_: d_net(x_, y_data) )(x_gen).flatten(start_dim=0, end_dim=1)
+    d_outputs_gen = d_net(x_gen, y_data)
     # evaluate discriminator loss
     g_loss, _ = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
     loss = g_loss
