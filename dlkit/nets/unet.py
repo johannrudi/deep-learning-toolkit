@@ -308,6 +308,12 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     """
     Create sinusoidal timestep embeddings.
 
+    Compute embedding `emb` as:
+
+        fq[j]  = exp( -log(T_max) * j/(d/2) ),  for j=0,..,d/2
+        x[i,j] = ts[i] * fq[j],  for i=0,..,N, j=0,..,d/2
+        emb = [cos(x) , sin(x)]
+
     :param timesteps: a 1-D Tensor of N indices, one per batch element.
                       These may be fractional.
     :param dim: the dimension of the output.
@@ -426,12 +432,19 @@ class ResBlock2d_EmbedBlock(dlkit.nets.conv2d.ResBlock, EmbedModule):
 class AttentionBlock(nn.Module):
     """
     An attention block that allows spatial positions to attend to each other.
+
+    Computes:
+
+        q,k,v = conv1d(norm(x))
+        h = qkv_attention(q, k, v)
+        h = conv1d(h)
+        y = x + h
     """
 
     def __init__(self, channels, num_heads=1, normalization=None):
         super().__init__()
         self.channels = channels
-        self.num_heads = num_heads
+        self.num_heads = num_heads  #TODO probably num_heads need to be used in dim of self.qkv
 
         self.norm = normalization(channels)
         self.qkv = nn.Conv1d(channels, channels * 3, 1)
@@ -457,6 +470,12 @@ class QKVAttention(nn.Module):
     def forward(self, qkv):
         """
         Apply QKV attention.
+
+        Input: q, k, v
+        Computes:
+
+            s = (#channels)^(-1/4)
+            y = softmax(q*s * k^T*s) * v
 
         :param qkv: an [N x (C * 3) x T] tensor of Qs, Ks, and Vs.
         :return: an [N x C x T] tensor after attention.
