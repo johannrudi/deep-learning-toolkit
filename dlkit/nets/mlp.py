@@ -194,6 +194,19 @@ class MLPNet_MultIn(MLPNet):
 # Residual MLP Net
 # --------------------------------------
 
+class SelfAttentionLayer(nn.MultiheadAttention):
+    def __init__(self, emb_dim, n_heads, use_dropout=False, **kwargs):
+        if use_dropout:
+            dropout = use_dropout
+        else:
+            dropout = 0.0
+        super().__init__(emb_dim, n_heads, dropout=dropout, batch_first=True, **kwargs)
+        # initialization of parameters is done in constructor of MultiheadAttention calling _reset_parameters()
+
+    def forward(self, x):
+        return super().forward(x, x, x, need_weights=False)[0]
+
+
 class ResidualBlock(nn.Module):
     r"""ResidualBlock.
 
@@ -204,10 +217,12 @@ class ResidualBlock(nn.Module):
     def __init__(self,
                  input_size,
                  output_size              = None,
+                 attention_layer_n_heads  = 0,
                  normalization_layer_size = 32,
                  activation_layer_size    = 128,
                  activation               = nn.ReLU(),
                  layers_kwargs            = {},
+                 attention_layer_kwargs   = {},
                  use_dropout              = False
         ):
         super().__init__()
@@ -219,13 +234,16 @@ class ResidualBlock(nn.Module):
         al_size = activation_layer_size
         out_size = output_size if output_size is not None else input_size
         block = OrderedDict()
-        block['layer_0']       = nn.Linear(in_size, nl_size, **layers_kwargs)
-        block['normalization'] = nn.LayerNorm(nl_size)
-        block['layer_1']       = nn.Linear(nl_size, al_size, **layers_kwargs)
-        block['activation']    = activation
+        if attention_layer_n_heads:
+            block['attention_layer'] = SelfAttentionLayer(in_size, attention_layer_n_heads,
+                                                           use_dropout=use_dropout, **attention_layer_kwargs)
+        block['layer_0']             = nn.Linear(in_size, nl_size, **layers_kwargs)
+        block['normalization']       = nn.LayerNorm(nl_size)
+        block['layer_1']             = nn.Linear(nl_size, al_size, **layers_kwargs)
+        block['activation']          = activation
         if use_dropout:
-            block['dropout']   = nn.Dropout(use_dropout)
-        block['layer_2']       = nn.Linear(al_size, out_size, **layers_kwargs)
+            block['dropout']         = nn.Dropout(use_dropout)
+        block['layer_2']             = nn.Linear(al_size, out_size, **layers_kwargs)
         self.block = nn.Sequential(block)
         # create skip connection
         if in_size != out_size:
@@ -244,16 +262,18 @@ class ResidualBlock(nn.Module):
         # concatenate inputs; flatten inputs
         assert 0 < len(x)
         if 1 < len(x):
-            h = hs = torch.cat([torch.flatten(x_, 1) for x_ in x], dim=1)
+            h = torch.cat([torch.flatten(x_, 1) for x_ in x], dim=1)
         else:
-            h = hs = torch.flatten(x[0], 1)
+            h = torch.flatten(x[0], 1)
         assert h.size(1) == self.input_size, f"{h.size(1)=}, {self.input_size=}"
         # apply layers
-        h = self.block(h)
         if self.skip_connection is not None:
-            hs = self.skip_connection(hs)
+            hs = self.skip_connection(h)
+        else:
+            hs = h
+        hb = self.block(h)
         # compute output
-        y = 0.5*h + 0.5*hs
+        y = 0.5*hb + 0.5*hs
         return y
 
     def init_parameters(self):
@@ -279,6 +299,8 @@ class MLPResNet(nn.Module):
                  residual_blocks_sizes      = 4*[(32, 32, 128, 32)],
                  residual_blocks_activation = nn.ReLU(),
                  residual_blocks_kwargs     = {},
+                 attention_layers_n_heads   = None,
+                 attention_layers_kwargs    = {},
                  use_dropout                = False,
                  output_layer_activation    = None,
                  output_layer_kwargs        = {}
@@ -286,6 +308,10 @@ class MLPResNet(nn.Module):
         super().__init__()
         assert 0 < len(residual_blocks_sizes)
         assert 0 < len(residual_blocks_sizes[0])
+        # set up default parameters for attention layers
+        if attention_layers_n_heads is None:
+            attention_layers_n_heads = len(residual_blocks_sizes)*[0]
+        assert len(attention_layers_n_heads) == len(residual_blocks_sizes)
         # create input layer
         try:
             self.input_size = input_size[0]
@@ -303,7 +329,7 @@ class MLPResNet(nn.Module):
             self.input_layer = layer
         # create residual blocks
         blocks = list()
-        for sizes in residual_blocks_sizes:
+        for i, sizes in enumerate(residual_blocks_sizes):
             assert 3 <= len(sizes)
             block_in_size = sizes[0]
             block_nl_size = sizes[1]
@@ -312,10 +338,12 @@ class MLPResNet(nn.Module):
             blocks.append(ResidualBlock(
                     block_in_size,
                     output_size              = block_out_size,
+                    attention_layer_n_heads  = attention_layers_n_heads[i],
                     normalization_layer_size = block_nl_size,
                     activation_layer_size    = block_al_size,
                     activation               = residual_blocks_activation,
                     layers_kwargs            = residual_blocks_kwargs,
+                    attention_layer_kwargs   = attention_layers_kwargs,
                     use_dropout              = use_dropout
             ))
         self.residual_blocks = nn.Sequential(*blocks)
@@ -515,6 +543,14 @@ def test_MLPResNet():
     print('- input  h0 =', h0)
     print('- input  h1 =', h1)
     print('- output y  =', y)
+
+    print('Test 3:')
+    net = MLPResNet(4, 10, residual_blocks_sizes=2*[(16, 32, 128, 16)], attention_layers_n_heads=2*[2])
+    print(net)
+    x = torch.tensor([[1., -1., 1., -1.]])
+    y = net(x)
+    print('- input  x =', x)
+    print('- output y =', y)
     print('---------------------------------------$')
 
 if __name__ == '__main__':
