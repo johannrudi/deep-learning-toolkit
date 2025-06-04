@@ -40,18 +40,40 @@ def set_zero_parameters(layer):
         torch.nn.init.zeros_(p)
     return layer
 
-def count_trainable_parameters(net):
-    """
+def print_parameters(net):
+    r"""
     Original source: https://stackoverflow.com/questions/49201236/check-the-total-number-of-parameters-in-a-pytorch-model
     """
-    table = PrettyTable(["Modules", "Parameters"])
-    total_params = 0
+    table = PrettyTable(['Module name', 'Num. parameters', 'Trainable'])
+    table.align['Module name']     = 'l'
+    table.align['Num. parameters'] = 'r'
+    table.align['Trainable']       = 'c'
+    n_trainable_params = 0
+    n_nontrainable_params = 0
     for name, parameter in net.named_parameters():
-        if not parameter.requires_grad:
-            continue
         n_params = parameter.numel()
-        table.add_row([name, n_params])
-        total_params += n_params
+        if parameter.requires_grad:
+            table.add_row([name, n_params, True])
+            n_trainable_params += n_params
+        else:
+            table.add_row([name, n_params, False])
+            n_nontrainable_params += n_params
+    table.add_divider()
+    table.add_row(['Total number of trainable parameters', f"{n_trainable_params}", True])
+    table.add_row(['Total number of non-trainable parameters', f"{n_nontrainable_params}", False])
     print(table)
-    print(f"Total trainable parameters: {total_params}")
-    return total_params
+    return n_trainable_params, n_nontrainable_params
+
+def count_trainable_parameters(net):
+    r"""
+    Counts the number of trainable parameters of a network.
+    """
+    assert isinstance(net, nn.Module)
+    return sum(p.numel() for p in net.parameters() if p.requires_grad)
+
+def count_all_parameters(net):
+    r"""
+    Counts the number of all parameters (including non-trainable) of a network.
+    """
+    assert isinstance(net, nn.Module)
+    return sum(p.numel() for p in net.parameters())
