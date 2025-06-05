@@ -208,53 +208,43 @@ class SelfAttentionLayer(nn.MultiheadAttention):
         return y
 
 
-class ResidualBlock(nn.Module):
-    r"""ResidualBlock.
+class AttentionBlock(nn.Module):
+    r"""AttentionBlock.
 
     Args:
         input_size (int): length of input vectors
         output_size (int): length of output vectors (if None, `output_size = input_size`)
     """
     def __init__(self,
-                 input_size,
-                 output_size              = None,
-                 embedding_size           = 0,
-                 attention_layer_n_heads  = 0,
-                 normalization_layer_size = 32,
-                 activation_layer_size    = 128,
-                 activation               = nn.ReLU(),
-                 layers_kwargs            = {},
-                 attention_layer_kwargs   = {},
-                 use_dropout              = False
+                 embedding_size,
+                 attention_layer_n_heads,
+                 output_embedding_size   = None,
+                 activation_layer_size   = 128,
+                 activation              = nn.ReLU(),
+                 attention_layer_kwargs  = {},
+                 activation_layer_kwargs = {},
+                 use_dropout             = False
         ):
         super().__init__()
         # set from arguments
-        self.input_size     = input_size
         self.embedding_size = embedding_size
-        # create attention layer
-        if attention_layer_n_heads:
-            assert 0 < self.embedding_size
-            self.attention_layer = SelfAttentionLayer(embedding_size, attention_layer_n_heads,
-                                                      use_dropout=use_dropout, **attention_layer_kwargs)
-        else:
-            self.attention_layer = None
-        # create layers of the residual block
-        in_size = input_size
-        nl_size = normalization_layer_size
+        # create layers
+        in_size = embedding_size
         al_size = activation_layer_size
-        out_size = output_size if output_size is not None else input_size
+        out_size = output_size if output_embedding_size is not None else embedding_size
+        self.attention_layer = SelfAttentionLayer(in_size, attention_layer_n_heads,
+                                                  use_dropout=use_dropout, **attention_layer_kwargs)
         block = OrderedDict()
-        block['layer_0']             = nn.Linear(in_size, nl_size, **layers_kwargs)
-        block['normalization']       = nn.LayerNorm(nl_size)
-        block['layer_1']             = nn.Linear(nl_size, al_size, **layers_kwargs)
-        block['activation']          = activation
+        block['normalization'] = nn.LayerNorm(in_size)
+        block['layer_0']       = nn.Linear(in_size, al_size, **activation_layer_kwargs)
+        block['activation']    = activation
         if use_dropout:
-            block['dropout']         = nn.Dropout(use_dropout)
-        block['layer_2']             = nn.Linear(al_size, out_size, **layers_kwargs)
-        self.block = nn.Sequential(block)
+            block['dropout']   = nn.Dropout(use_dropout)
+        block['layer_1']       = nn.Linear(al_size, out_size, **activation_layer_kwargs)
+        self.attention_block = nn.Sequential(block)
         # create skip connection
         if in_size != out_size:
-            self.skip_connection = nn.Linear(in_size, out_size, **layers_kwargs)
+            self.skip_connection = nn.Linear(in_size, out_size, **activation_layer_kwargs)
         else:
             self.skip_connection = None
         # initialize parameters
@@ -266,43 +256,118 @@ class ResidualBlock(nn.Module):
         Args:
             x0, x1, ... (tensor): input tensors
         """
-        # flatten and concatenate inputs
-        input_dim = 1 + int(0 < self.embedding_size)
+        embed_dim, input_dim = 1, 2
+        # flatten and concatenate along input dimension
         if 1 < len(x):
             h_in = torch.cat([torch.flatten(x_, input_dim) for x_ in x], dim=input_dim)
         else:
             assert 1 == len(x)
             h_in = torch.flatten(x[0], input_dim)
-        assert h_in.size(input_dim) == self.input_size, f"{h_in.size(input_dim)=}, {self.input_size=}"
+        input_size = h_in.size(input_dim)
+        # swap embedding and input dimensions
+        h_in = h_in.transpose(embed_dim, input_dim)
+        # apply skip connection
+        h = h_in.reshape(-1, self.embedding_size)
+        if self.skip_connection is not None:
+            hs = self.skip_connection(h)
+        else:
+            hs = h
+        # apply attention layer and activation block
+        h = self.attention_layer(h_in)
+        h = h.reshape(-1, self.embedding_size)
+        hb = self.attention_block(h)
+        # compute output
+        y = 0.5*hs + 0.5*hb
+        y = y.reshape(-1, input_size, self.embedding_size)
+        # swap embedding and input dimensions back
+        y = y.transpose(embed_dim, input_dim)
+        return y
+
+    def init_parameters(self):
+        r"""Initializes the values of trainable parameters."""
+        # initialize layers
+        _set_init_parameters(self.attention_block.layer_0, _get_gain(self.attention_block.activation))
+        _set_init_parameters(self.attention_block.layer_1, _get_gain(None))
+
+
+class ResidualBlock(nn.Module):
+    r"""ResidualBlock.
+
+    Args:
+        input_size (int): length of input vectors
+        output_size (int): length of output vectors (if None, `output_size = input_size`)
+    """
+    def __init__(self,
+                 input_size,
+                 output_size              = None,
+                 normalization_layer_size = 32,
+                 activation_layer_size    = 128,
+                 activation               = nn.ReLU(),
+                 layer_kwargs             = {},
+                 use_dropout              = False
+        ):
+        super().__init__()
+        # set from arguments
+        self.input_size  = input_size
+        self.output_size = output_size if output_size is not None else input_size
+        # create layers
+        in_size = self.input_size
+        nl_size = normalization_layer_size
+        al_size = activation_layer_size
+        out_size = self.output_size
+        block = OrderedDict()
+        block['layer_0']             = nn.Linear(in_size, nl_size, **layer_kwargs)
+        block['normalization']       = nn.LayerNorm(nl_size)
+        block['layer_1']             = nn.Linear(nl_size, al_size, **layer_kwargs)
+        block['activation']          = activation
+        if use_dropout:
+            block['dropout']         = nn.Dropout(use_dropout)
+        block['layer_2']             = nn.Linear(al_size, out_size, **layer_kwargs)
+        self.residual_block = nn.Sequential(block)
+        # create skip connection
+        if in_size != out_size:
+            self.skip_connection = nn.Linear(in_size, out_size, **layer_kwargs)
+        else:
+            self.skip_connection = None
+        # initialize parameters
+        self.init_parameters()
+
+    def forward(self, *x):
+        r"""Applies the forward function: y = net(x0, x1, ...)
+
+        Args:
+            x0, x1, ... (tensor): input tensors
+        """
+        # flatten and concatenate along input dimension
+        embed_dim, input_dim = 1, 2
+        if 1 < len(x):
+            h = torch.cat([torch.flatten(x_, input_dim) for x_ in x], dim=input_dim)
+        else:
+            assert 1 == len(x)
+            h = torch.flatten(x[0], input_dim)
+        assert h.size(input_dim) == self.input_size, f"{h.size(input_dim)=}, {self.input_size=}"
         # combine batch and embedding dimensions for subsequent layers
-        h = h_in
-        if 0 < self.embedding_size:
-            h = h.reshape(-1, h.size(input_dim))
+        batch_size = h.size(0)
+        h = h.reshape(-1, self.input_size)
         # apply skip connection
         if self.skip_connection is not None:
             hs = self.skip_connection(h)
         else:
             hs = h
         # apply block
-        if self.attention_layer is not None:
-            ha = self.attention_layer(h_in.transpose(1, 2)).transpose(1, 2)
-            ha = ha.reshape(-1, ha.size(input_dim))
-            hb = self.block(ha)
-        else:
-            hb = self.block(h)
+        hb = self.residual_block(h)
         # compute output
         y = 0.5*hs + 0.5*hb
         # separate batch and embedding dimensions
-        if 0 < self.embedding_size:
-            y = y.reshape(-1, self.embedding_size, self.input_size)
+        y = y.reshape(batch_size, -1, self.output_size)
         return y
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize layers
-        _set_init_parameters(self.block.layer_0, _get_gain(None))
-        _set_init_parameters(self.block.layer_1, _get_gain(self.block.activation))
-        _set_init_parameters(self.block.layer_2, _get_gain(None))
+        _set_init_parameters(self.residual_block.layer_0, _get_gain(None))
+        _set_init_parameters(self.residual_block.layer_1, _get_gain(self.residual_block.activation))
+        _set_init_parameters(self.residual_block.layer_2, _get_gain(None))
 
 
 class MLPResNet(nn.Module):
@@ -315,7 +380,7 @@ class MLPResNet(nn.Module):
     def __init__(self,
                  input_size,
                  output_size,
-                 embedding_size             = 0,
+                 embedding_size             = 1,
                  input_layer_activation     = None,
                  input_layer_kwargs         = {},
                  residual_blocks_sizes      = 4*[(32, 32, 128, 32)],
@@ -328,11 +393,11 @@ class MLPResNet(nn.Module):
                  output_layer_kwargs        = {}
         ):
         super().__init__()
+        assert 1 <= embedding_size
         assert 0 < len(residual_blocks_sizes)
         assert 0 < len(residual_blocks_sizes[0])
-        # set up parameters for attention layers
+        # set up parameters for [optional] attention layers
         self.embedding_size = embedding_size
-        assert attention_layers_n_heads is None or 0 < embedding_size
         if attention_layers_n_heads is None:
             attention_layers_n_heads = len(residual_blocks_sizes)*[0]
         assert len(attention_layers_n_heads) == len(residual_blocks_sizes)
@@ -343,8 +408,7 @@ class MLPResNet(nn.Module):
         except:
             self.input_size = input_size
             out_size_       = residual_blocks_sizes[0][0]
-        if 0 < embedding_size:
-            out_size_ *= embedding_size
+        out_size_ *= embedding_size
         layer = nn.Linear(self.input_size, out_size_, **input_layer_kwargs)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(OrderedDict([
@@ -361,23 +425,28 @@ class MLPResNet(nn.Module):
             block_nl_size = sizes[1]
             block_al_size = sizes[2]
             block_out_size = sizes[3] if 3 < len(sizes) else sizes[0]
+            if attention_layers_n_heads[i]:
+                blocks.append(AttentionBlock(
+                        embedding_size,
+                        attention_layers_n_heads[i],
+                        activation_layer_size   = block_al_size,
+                        activation              = residual_blocks_activation,
+                        attention_layer_kwargs  = attention_layers_kwargs,
+                        activation_layer_kwargs = residual_blocks_kwargs,
+                        use_dropout             = use_dropout
+                ))
             blocks.append(ResidualBlock(
                     block_in_size,
                     output_size              = block_out_size,
-                    embedding_size           = embedding_size,
-                    attention_layer_n_heads  = attention_layers_n_heads[i],
                     normalization_layer_size = block_nl_size,
                     activation_layer_size    = block_al_size,
                     activation               = residual_blocks_activation,
-                    layers_kwargs            = residual_blocks_kwargs,
-                    attention_layer_kwargs   = attention_layers_kwargs,
+                    layer_kwargs             = residual_blocks_kwargs,
                     use_dropout              = use_dropout
             ))
-        self.residual_blocks = nn.Sequential(*blocks)
+        self.blocks = nn.Sequential(*blocks)
         # create output layer
-        in_size_ = block_out_size
-        if 0 < embedding_size:
-            in_size_ *= embedding_size
+        in_size_ = block_out_size * embedding_size
         layer = nn.Linear(in_size_, output_size, **output_layer_kwargs)
         if output_layer_activation is not None:
             self.output_layer = nn.Sequential(OrderedDict([
@@ -402,25 +471,38 @@ class MLPResNet(nn.Module):
             h = torch.cat([torch.flatten(x_, 1) for x_ in x], dim=1)
         else:
             h = torch.flatten(x[0], 1)
-        batch_size = h.size(0)
-        input_dim  = 1 + int(0 < self.embedding_size)
         # apply input layer
+        batch_size = h.size(0)
+        assert h.size(1) == self.input_size, f"{h.size(1)=}, {self.input_size=}"
         h = self.input_layer(h)
-        if 0 < self.embedding_size:
-            h = h.reshape(batch_size, self.embedding_size, -1)
-        # apply residual blocks
-        for block_idx, block in enumerate(self.residual_blocks):
+        h = h.reshape(batch_size, self.embedding_size, -1)
+        # apply [optional attention and] residual blocks
+        embed_dim, input_dim = 1, 2
+        for block_idx, block in enumerate(self.blocks):
+            block_embed_size = getattr(block, f"embedding_size", None)
+            block_input_size = getattr(block, f"input_size", None)
+            assert (block_embed_size is None) ^ (block_input_size is None)
             h_in = h_kwargs.get(f"h{block_idx}", None)
             if h_in is not None:
-                assert (h.size(input_dim) + sum(h_in.size()[input_dim:])) == block.input_size, \
-                       f"{block_idx=}, {h.size(input_dim)=}, {sum(h_in.size()[input_dim:])=}, {block.input_size=}"
+                assert h_in.dim() in [2, 3], f"{h_in.dim()=}"
+                assert h_in.size(0) == batch_size, f"{h_in.size(0)=}, {batch_size}"
+                if 2 == h_in.dim():
+                    h_in = h_in.reshape(batch_size, self.embedding_size, -1)
+                assert block_embed_size is None or \
+                       (block_embed_size == h.size(embed_dim) and block_embed_size == h_in.size(embed_dim)), \
+                       f"{block_idx=}, {block_embed_size=}, {h.size(input_dim)=}, {sum(h_in.size()[input_dim:])=}"
+                assert block_input_size is None or \
+                       block_input_size == (h.size(input_dim) + sum(h_in.size()[input_dim:])), \
+                       f"{block_idx=}, {block_input_size=}, {h.size(input_dim)=}, {sum(h_in.size()[input_dim:])=}"
                 h = block(h, h_in)
             else:
-                assert h.size(input_dim) == block.input_size, f"{block_idx=}, {h.size(input_dim)=}, {block.input_size=}"
+                assert block_embed_size is None or block_embed_size == h.size(embed_dim), \
+                       f"{block_idx=}, {block_embed_size=}, {h.size(embed_dim)=}"
+                assert block_input_size is None or block_input_size == h.size(input_dim), \
+                       f"{block_idx=}, {block_input_size=}, {h.size(input_dim)=}"
                 h = block(h)
         # apply output layer
-        if 0 < self.embedding_size:
-            h = h.reshape(batch_size, -1)
+        h = h.reshape(batch_size, -1)
         y = self.output_layer(h)
         return y
 
@@ -541,31 +623,29 @@ def test_ResidualBlock():
     print('Test 1:')
     net = ResidualBlock(4)
     print(net)
-    x = torch.tensor([[1., -1., 1., -1.]])
+    x = torch.tensor([[[1., -1., 1., -1.]]])
     y = net(x)
     print('- input  x =', x)
     print('- output y =', y)
 
     print('Test 2:')
-    net = ResidualBlock(4+4, 3)
-    print(net)
-    x0 = torch.tensor([[1., -1., 1., -1.]])
-    x1 = torch.tensor([[5., -5., 5., -5.]])
-    y = net(x0, x1)
-    print('- input  x0 =', x0)
-    print('- input  x1 =', x1)
-    print('- output y  =', y)
-
-    print('Test 3:')
-    net = ResidualBlock(4, embedding_size=2)
-    print(net)
     x = torch.randn(1, 2, 4)
     y = net(x)
     print('- input  x =', x)
     print('- output y =', y)
 
+    print('Test 3:')
+    net = ResidualBlock(4+4, 3)
+    print(net)
+    x0 = torch.tensor([[[1., -1., 1., -1.]]])
+    x1 = torch.tensor([[[5., -5., 5., -5.]]])
+    y = net(x0, x1)
+    print('- input  x0 =', x0)
+    print('- input  x1 =', x1)
+    print('- output y  =', y)
+
     print('Test 4:')
-    net = ResidualBlock(4, embedding_size=6, attention_layer_n_heads=3)
+    net = AttentionBlock(embedding_size=6, attention_layer_n_heads=3)
     print(net)
     x = torch.randn(1, 6, 4)
     y = net(x)
