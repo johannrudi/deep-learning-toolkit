@@ -221,8 +221,7 @@ class AttentionBlock(nn.Module):
                  output_embedding_size   = None,
                  activation_layer_size   = 128,
                  activation              = nn.ReLU(),
-                 attention_layer_kwargs  = {},
-                 activation_layer_kwargs = {},
+                 block_kwargs            = {},
                  use_dropout             = False
         ):
         super().__init__()
@@ -233,18 +232,18 @@ class AttentionBlock(nn.Module):
         al_size = activation_layer_size
         out_size = output_size if output_embedding_size is not None else embedding_size
         self.attention_layer = SelfAttentionLayer(in_size, attention_layer_n_heads,
-                                                  use_dropout=use_dropout, **attention_layer_kwargs)
+                                                  use_dropout=use_dropout, **block_kwargs)
         block = OrderedDict()
         block['normalization'] = nn.LayerNorm(in_size)
-        block['layer_0']       = nn.Linear(in_size, al_size, **activation_layer_kwargs)
+        block['layer_0']       = nn.Linear(in_size, al_size, **block_kwargs)
         block['activation']    = activation
         if use_dropout:
             block['dropout']   = nn.Dropout(use_dropout)
-        block['layer_1']       = nn.Linear(al_size, out_size, **activation_layer_kwargs)
+        block['layer_1']       = nn.Linear(al_size, out_size, **block_kwargs)
         self.attention_block = nn.Sequential(block)
         # create skip connection
         if in_size != out_size:
-            self.skip_connection = nn.Linear(in_size, out_size, **activation_layer_kwargs)
+            self.skip_connection = nn.Linear(in_size, out_size, **block_kwargs)
         else:
             self.skip_connection = None
         # initialize parameters
@@ -380,17 +379,19 @@ class MLPResNet(nn.Module):
     def __init__(self,
                  input_size,
                  output_size,
-                 embedding_size             = 1,
-                 input_layer_activation     = None,
-                 input_layer_kwargs         = {},
-                 residual_blocks_sizes      = 4*[(32, 32, 128, 32)],
-                 residual_blocks_activation = nn.ReLU(),
-                 residual_blocks_kwargs     = {},
-                 attention_layers_n_heads   = None,
-                 attention_layers_kwargs    = {},
-                 use_dropout                = False,
-                 output_layer_activation    = None,
-                 output_layer_kwargs        = {}
+                 embedding_size                   = 1,
+                 input_layer_activation           = None,
+                 input_layer_kwargs               = {},
+                 attention_blocks_n_heads         = None,
+                 attention_blocks_activation_size = 128,
+                 attention_blocks_activation      = nn.ReLU(),
+                 attention_blocks_kwargs          = {},
+                 residual_blocks_sizes            = 4*[(32, 32, 128, 32)],
+                 residual_blocks_activation       = nn.ReLU(),
+                 residual_blocks_kwargs           = {},
+                 use_dropout                      = False,
+                 output_layer_activation          = None,
+                 output_layer_kwargs              = {}
         ):
         super().__init__()
         assert 1 <= embedding_size
@@ -398,9 +399,9 @@ class MLPResNet(nn.Module):
         assert 0 < len(residual_blocks_sizes[0])
         # set up parameters for [optional] attention layers
         self.embedding_size = embedding_size
-        if attention_layers_n_heads is None:
-            attention_layers_n_heads = len(residual_blocks_sizes)*[0]
-        assert len(attention_layers_n_heads) == len(residual_blocks_sizes)
+        if attention_blocks_n_heads is None:
+            attention_blocks_n_heads = len(residual_blocks_sizes)*[0]
+        assert len(attention_blocks_n_heads) == len(residual_blocks_sizes)
         # create input layer
         try:
             self.input_size = input_size[0]
@@ -408,7 +409,6 @@ class MLPResNet(nn.Module):
         except:
             self.input_size = input_size
             out_size_       = residual_blocks_sizes[0][0]
-        out_size_ *= embedding_size
         layer = nn.Linear(self.input_size, out_size_, **input_layer_kwargs)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(OrderedDict([
@@ -417,6 +417,10 @@ class MLPResNet(nn.Module):
             ]))
         else:
             self.input_layer = layer
+        if 1 < embedding_size:
+            self.input_embedding_layer = nn.Linear(1, embedding_size, **input_layer_kwargs)
+        else:
+            self.input_embedding_layer = None
         # create residual blocks
         blocks = list()
         for i, sizes in enumerate(residual_blocks_sizes):
@@ -425,14 +429,13 @@ class MLPResNet(nn.Module):
             block_nl_size = sizes[1]
             block_al_size = sizes[2]
             block_out_size = sizes[3] if 3 < len(sizes) else sizes[0]
-            if attention_layers_n_heads[i]:
+            if attention_blocks_n_heads[i]:
                 blocks.append(AttentionBlock(
                         embedding_size,
-                        attention_layers_n_heads[i],
-                        activation_layer_size   = block_al_size,
-                        activation              = residual_blocks_activation,
-                        attention_layer_kwargs  = attention_layers_kwargs,
-                        activation_layer_kwargs = residual_blocks_kwargs,
+                        attention_blocks_n_heads[i],
+                        activation_layer_size   = attention_blocks_activation_size,
+                        activation              = attention_blocks_activation,
+                        block_kwargs            = attention_blocks_kwargs,
                         use_dropout             = use_dropout
                 ))
             blocks.append(ResidualBlock(
@@ -446,7 +449,11 @@ class MLPResNet(nn.Module):
             ))
         self.blocks = nn.Sequential(*blocks)
         # create output layer
-        in_size_ = block_out_size * embedding_size
+        if 1 < embedding_size:
+            self.output_embedding_layer = nn.Linear(embedding_size, 1, **output_layer_kwargs)
+        else:
+            self.output_embedding_layer = None
+        in_size_ = block_out_size
         layer = nn.Linear(in_size_, output_size, **output_layer_kwargs)
         if output_layer_activation is not None:
             self.output_layer = nn.Sequential(OrderedDict([
@@ -473,11 +480,16 @@ class MLPResNet(nn.Module):
             h = torch.flatten(x[0], 1)
         # apply input layer
         batch_size = h.size(0)
+        embed_dim, input_dim = 1, 2
         assert h.size(1) == self.input_size, f"{h.size(1)=}, {self.input_size=}"
         h = self.input_layer(h)
+        if self.input_embedding_layer is not None:
+            h = h.reshape(-1, 1)
+            h = self.input_embedding_layer(h)
+            h = h.reshape(batch_size, -1, self.embedding_size)
+            h = h.transpose(embed_dim, input_dim)
         h = h.reshape(batch_size, self.embedding_size, -1)
         # apply [optional attention and] residual blocks
-        embed_dim, input_dim = 1, 2
         for block_idx, block in enumerate(self.blocks):
             block_embed_size = getattr(block, f"embedding_size", None)
             block_input_size = getattr(block, f"input_size", None)
@@ -502,6 +514,9 @@ class MLPResNet(nn.Module):
                        f"{block_idx=}, {block_input_size=}, {h.size(input_dim)=}"
                 h = block(h)
         # apply output layer
+        if self.output_embedding_layer is not None:
+            h = h.transpose(embed_dim, input_dim)
+            h = self.output_embedding_layer(h)
         h = h.reshape(batch_size, -1)
         y = self.output_layer(h)
         return y
@@ -678,7 +693,7 @@ def test_MLPResNet():
     print('- output y  =', y)
 
     print('Test 3:')
-    net = MLPResNet(4, 10, embedding_size=6, residual_blocks_sizes=2*[(16, 32, 128, 16)], attention_layers_n_heads=2*[3])
+    net = MLPResNet(4, 10, embedding_size=6, residual_blocks_sizes=2*[(16, 32, 128, 16)], attention_blocks_n_heads=2*[3])
     print(net)
     x = torch.tensor([[1., -1., 1., -1.]])
     y = net(x)
