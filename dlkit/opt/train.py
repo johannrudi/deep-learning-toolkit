@@ -70,7 +70,7 @@ def train_epochs(
             os.makedirs(checkpoint_dir)
     # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
-    for epoch_idx in tqdm(range(n_epochs)):
+    for epoch_idx in tqdm(range(n_epochs), desc='epochs'):
         # save checkpoint
         if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
             path = _checkpoint_path(checkpoint_dir, n_epochs, epoch=epoch_idx)
