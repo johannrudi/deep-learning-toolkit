@@ -87,7 +87,7 @@ def train_epochs(
             os.makedirs(checkpoint_dir)
     # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
-    for epoch_idx in tqdm(range(n_epochs)):
+    for epoch_idx in tqdm(range(n_epochs), desc='epochs'):
         # save checkpoint
         if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
             for tag_, net_, opt_ in zip(['g', 'd'], [g_net, d_net], [g_optimizer, d_optimizer]):
