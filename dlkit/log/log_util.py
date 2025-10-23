@@ -111,7 +111,7 @@ def logging_set_up(
 
     # set up logging to console
     if log_console_level is not None:
-        # define a Handler which writes messages or higher to the sys.stderr
+        # define a Handler which writes messages to the sys.stderr
         console = logging.StreamHandler()
         console.setLevel(log_console_level)
         # set a format for console use
