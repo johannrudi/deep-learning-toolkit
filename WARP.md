@@ -8,17 +8,17 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Installation and Development
 
-### install the package in editable mode
+### Install the package in editable mode
 ```bash
 pip install -e .
 ```
 
-### install with development dependencies
+### Install with development dependencies
 ```bash
 pip install -e ".[dev]"
 ```
 
-### run tests for specific network modules
+### Run tests for specific network modules
 ```bash
 python -m dlkit.nets.mlp
 python -m dlkit.nets.transformer1d
