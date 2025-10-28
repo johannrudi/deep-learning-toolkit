@@ -2,9 +2,12 @@
 Networks with 1D convolutional layers.
 """
 
+from collections import OrderedDict
 import math
 import torch
 import torch.nn as nn
+
+from .mlp import MLPResNet
 
 # --------------------------------------
 # Convolutional Nets
@@ -112,6 +115,152 @@ class ConvNet(nn.Module):
         gain = _get_gain(self.output_layer_activation)
         if self.output_layer is not None:
             _set_init_parameters(self.output_layer, gain, bias_scale=0.0)
+
+
+class ConvResNet(nn.Module):
+    r"""
+    Network with residual convolutional layers followed by residual dense layers.
+
+    Args:
+        input_channels: number of input channels
+        conv_layers_params: configuration for convolutional layers
+        mlp_resnet_params: parameters to pass to MLPResNet constructor
+        output_size: size of output layer
+        output_layer_activation: activation for output layer
+        output_layer_kwargs: additional kwargs for output layer
+        use_dropout: dropout configuration
+
+    Specs:
+    - doc/specify/2025-10-27a.md
+    """
+    def __init__(self,
+                 input_channels,
+                 conv_layers_params={
+                     "channels_mult": [8, 16, 32],
+                     "kernels": [5, 5, 5],
+                     "activation": nn.ReLU(),
+                     "conv_kwargs": {},
+                 },
+                 mlp_resnet_params={},
+                 output_size=None,
+                 output_layer_activation=None,
+                 output_layer_kwargs={},
+                 use_dropout=False):
+        super().__init__()
+        # set from arguments
+        self.input_channels = input_channels
+        self.conv_layers_params = conv_layers_params
+        self.mlp_resnet_params = mlp_resnet_params
+        self.output_size = output_size
+        self.output_layer_activation = output_layer_activation
+        self.use_dropout = use_dropout
+        if use_dropout:
+            self.dropout = nn.Dropout(use_dropout)
+        else:
+            self.dropout = None
+
+        # extract convolutional layer parameters
+        channels_mult = conv_layers_params.get('channels_mult', [8, 16, 32])
+        kernels = conv_layers_params.get('kernels', [5, 5, 5])
+        activation = conv_layers_params.get('activation', nn.ReLU())
+        conv_kwargs = conv_layers_params.get('conv_kwargs', {})
+
+        # create convolutional layers using Downsample
+        assert len(channels_mult) == len(kernels)
+        self.conv_block = nn.ModuleList()
+        in_channels = input_channels
+        for mult, kernel_size in zip(channels_mult, kernels):
+            out_channels = mult * input_channels
+            layer = Downsample(in_channels, out_channels, kernel_size,
+                             activation=activation, dropout=self.dropout,
+                             **conv_kwargs)
+            self.conv_block.append(layer)
+            in_channels = out_channels
+        self.conv_out_channels = in_channels
+
+        # create dense layers using MLPResNet if parameters provided
+        if mlp_resnet_params:
+            # check if input_size is provided in mlp_resnet_params
+            if 'input_size' not in mlp_resnet_params:
+                raise ValueError("mlp_resnet_params must include 'input_size' (flattened conv output size)")
+            if 'output_size' not in mlp_resnet_params:
+                mlp_resnet_params = dict(mlp_resnet_params)  # copy to avoid modifying input
+                mlp_resnet_params['output_size'] = output_size if output_size is not None else mlp_resnet_params['input_size']
+            self.mlp_resnet_block = MLPResNet(**mlp_resnet_params)
+            block_out_size = mlp_resnet_params['output_size']
+        else:
+            self.mlp_resnet_block = None
+            # block_out_size would be the flattened conv output size
+            # Since we don't know the spatial dimension, output_layer won't be created
+            # if mlp_resnet_block is None and output_size is provided
+            block_out_size = None
+
+        # create output layer
+        if output_size is not None and block_out_size is not None:
+            layer = nn.Linear(block_out_size, output_size, **output_layer_kwargs)
+            if output_layer_activation is not None:
+                self.output_layer = nn.Sequential(OrderedDict([
+                        ('layer', layer),
+                        ('activation', output_layer_activation)
+                ]))
+            else:
+                self.output_layer = layer
+        else:
+            self.output_layer = None
+        # initialize parameters
+        self.init_parameters()
+
+    def forward(self, x, **h_kwargs):
+        r"""Applies the forward function: y = net(x, h0=hidden_input_0, h1=hidden_input1, ...)
+
+        Args:
+            x (tensor): input tensor
+            h0, h1, ... (tensor, optional): input tensors to hidden dense layers
+        """
+        assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
+        h = x
+
+        # apply convolutional layers
+        for layer in self.conv_block:
+            h = layer(h)
+
+        # flatten for dense layers
+        h = torch.flatten(h, 1)
+
+        # apply dense residual network if configured
+        if self.mlp_resnet_block is not None:
+            h = self.mlp_resnet_block(h, **h_kwargs)
+
+        # apply output layer
+        if self.output_layer is not None:
+            y = self.output_layer(h)
+        else:
+            y = h
+
+        return y
+
+    def init_parameters(self):
+        r"""Initializes the values of trainable parameters."""
+        # initialize convolutional layers
+        activation = self.conv_layers_params.get('activation')
+        gain = _get_gain(activation)
+        for layer in self.conv_block:
+            if hasattr(layer, 'layer'):
+                _set_init_parameters(layer.layer, gain)
+            else:
+                _set_init_parameters(layer, gain)
+
+        # initialize MLPResNet (calls its own init_parameters)
+        if self.mlp_resnet_block is not None:
+            self.mlp_resnet_block.init_parameters()
+
+        # initialize output layer
+        if self.output_layer is not None:
+            gain = _get_gain(self.output_layer_activation)
+            if isinstance(self.output_layer, nn.Sequential):
+                _set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
+            else:
+                _set_init_parameters(self.output_layer, gain, bias_scale=0.0)
 
 # --------------------------------------
 # UNet Components
@@ -342,6 +491,87 @@ def test_ConvNet():
     print('- output y =', y, sep='\n')
     print('---------------------------------------$')
 
+def test_ConvResNet():
+    """Test ConvResNet architecture."""
+    print('---------------------------------------^')
+    print('Testing ConvResNet')
+    batch_size = 4
+    input_channels = 1
+    input_length = 64
+    output_size = 10
+
+    # test basic configuration without MLPResNet
+    print('Test 1: basic configuration (conv layers only)')
+    net = ConvResNet(
+        input_channels=input_channels,
+        conv_layers_params={
+            'channels_mult': [4, 8],
+            'kernels': [3, 3],
+            'activation': nn.ReLU(),
+        },
+        output_size=output_size
+    )
+    print(net)
+    x = torch.randn(batch_size, input_channels, input_length)
+    # calculate flattened size after conv layers
+    # with 2 downsampling layers (scale_factor=2 each): 64 -> 32 -> 16
+    # output channels: 8 * input_channels = 8
+    expected_flat_size = 16 * 8
+    print(f"Expected flattened size: {expected_flat_size}")
+    h = net(x)
+    print(f"Output shape (without MLPResNet): {h.shape}")
+    assert h.shape == (batch_size, expected_flat_size), f"Expected {(batch_size, expected_flat_size)}, got {h.shape}"
+
+    # test with MLPResNet
+    print('\nTest 2: with MLPResNet')
+    net = ConvResNet(
+        input_channels=input_channels,
+        conv_layers_params={
+            'channels_mult': [4, 8],
+            'kernels': [3, 3],
+            'activation': nn.ReLU(),
+        },
+        mlp_resnet_params={
+            'input_size': expected_flat_size,
+            'output_size': output_size,
+            'residual_blocks_sizes': [(16, 16, 64, 16)],
+        },
+        output_size=output_size
+    )
+    print(net)
+    x = torch.randn(batch_size, input_channels, input_length)
+    y = net(x)
+    print(f"Output shape (with MLPResNet): {y.shape}")
+    assert y.shape == (batch_size, output_size), f"Expected {(batch_size, output_size)}, got {y.shape}"
+
+    # test with hidden inputs to MLPResNet
+    print('\nTest 3: with hidden inputs')
+    hidden_input_size = 8
+    net = ConvResNet(
+        input_channels=input_channels,
+        conv_layers_params={
+            'channels_mult': [4, 8],
+            'kernels': [3, 3],
+            'activation': nn.ReLU(),
+        },
+        mlp_resnet_params={
+            'input_size': expected_flat_size,
+            'output_size': output_size,
+            'residual_blocks_sizes': [(16, 16, 64, 16), (16+hidden_input_size, 16, 64, 16)],
+        },
+        output_size=output_size
+    )
+    x = torch.randn(batch_size, input_channels, input_length)
+    h1 = torch.randn(batch_size, 1, hidden_input_size)  # hidden input to second residual block
+    y = net(x, h1=h1)
+    print(f"Output shape (with hidden input): {y.shape}")
+    assert y.shape == (batch_size, output_size), f"Expected {(batch_size, output_size)}, got {y.shape}"
+
+    print('\nAll ConvResNet tests passed!')
+    print('---------------------------------------$')
+
 if __name__ == '__main__':
     r"""Runs tests."""
     test_ConvNet()
+    print('\n')
+    test_ConvResNet()
