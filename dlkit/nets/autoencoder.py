@@ -5,6 +5,7 @@ Model for Autoencoder.
 import torch
 import torch.nn as nn
 
+
 class Autoencoder(nn.Module):
     def __init__(self, e_net, d_net, output_layer_transformation=None):
         r"""Creates the model.

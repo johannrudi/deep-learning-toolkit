@@ -10,6 +10,7 @@ import torch.nn as nn
 # Upsample Convolutional Nets
 # --------------------------------------
 
+
 class ConvUpsampleNet_Reshuffle(nn.Module):
     r"""
     Convolutional network for upsampling via reshuffling (or depth-to-space).
@@ -18,26 +19,29 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
         input_channels: number of channels
         scale_factor:   factor by which the coarse input gets scaled to produce fine outputs
     """
-    def __init__(self,
-                 input_channels,
-                 scale_factor,
-                 pre_up_layers_channels=[8, 16, 32],
-                 pre_up_layers_kernels=[3, 3, 3],
-                 pre_up_layers_activation=nn.ReLU(),
-                 pre_up_layers_kwargs={},
-                 post_up_layers_channels=[],
-                 post_up_layers_kernels=[],
-                 post_up_layers_activation=nn.ReLU(),
-                 post_up_layers_kwargs={},
-                 output_activation=None,
-                 use_dropout=False):
+
+    def __init__(
+        self,
+        input_channels,
+        scale_factor,
+        pre_up_layers_channels=[8, 16, 32],
+        pre_up_layers_kernels=[3, 3, 3],
+        pre_up_layers_activation=nn.ReLU(),
+        pre_up_layers_kwargs={},
+        post_up_layers_channels=[],
+        post_up_layers_kernels=[],
+        post_up_layers_activation=nn.ReLU(),
+        post_up_layers_kwargs={},
+        output_activation=None,
+        use_dropout=False,
+    ):
         super().__init__()
         # set from arguments
-        self.input_channels            = input_channels
-        self.scale_factor              = scale_factor
-        self.pre_up_layers_activation  = pre_up_layers_activation
+        self.input_channels = input_channels
+        self.scale_factor = scale_factor
+        self.pre_up_layers_activation = pre_up_layers_activation
         self.post_up_layers_activation = post_up_layers_activation
-        self.output_activation         = output_activation
+        self.output_activation = output_activation
         if use_dropout:
             self.dropout = nn.Dropout(use_dropout)
         else:
@@ -48,21 +52,41 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
         self.pre_up_layers = nn.ModuleList()
         for channels, kernel_size in zip(pre_up_layers_channels, pre_up_layers_kernels):
             out_channels = channels
-            layer = nn.Conv2d(in_channels, out_channels, kernel_size, **pre_up_layers_kwargs,
-                              padding=1, padding_mode='replicate')
+            layer = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size,
+                **pre_up_layers_kwargs,
+                padding=1,
+                padding_mode="replicate",
+            )
             self.pre_up_layers.append(layer)
             in_channels = out_channels
         # create upsample layer
-        self.up_layer = nn.Conv2d(in_channels, scale_factor**2, kernel_size, **pre_up_layers_kwargs,
-                                  padding=1, padding_mode='replicate')
+        self.up_layer = nn.Conv2d(
+            in_channels,
+            scale_factor**2,
+            kernel_size,
+            **pre_up_layers_kwargs,
+            padding=1,
+            padding_mode="replicate",
+        )
         # create hidden convolutional layers after upsampling
         assert len(post_up_layers_channels) == len(post_up_layers_kernels)
         in_channels = input_channels
         self.post_up_layers = nn.ModuleList()
-        for channels, kernel_size in zip(post_up_layers_channels, post_up_layers_kernels):
+        for channels, kernel_size in zip(
+            post_up_layers_channels, post_up_layers_kernels
+        ):
             out_channels = channels
-            layer = nn.Conv2d(in_channels, out_channels, kernel_size, **post_up_layers_kwargs,
-                              padding=1, padding_mode='replicate')
+            layer = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size,
+                **post_up_layers_kwargs,
+                padding=1,
+                padding_mode="replicate",
+            )
             self.post_up_layers.append(layer)
             in_channels = out_channels
         # initialize parameters
@@ -124,25 +148,28 @@ class ConvUpsampleNet_Interpolate(nn.Module):
     Args:
         input_channels: number of channels
     """
-    def __init__(self,
-                 input_channels,
-                 conv_layers_channels=[4, 4, 1],
-                 conv_layers_kernels=[3, 3, 3],
-                 conv_layers_activation=nn.ReLU(),
-                 conv_layers_kwargs={},
-                 upsample_layer_indices=[1],
-                 scale_factor=2,
-                 interp_mode='nearest',
-                 output_activation=None,
-                 use_dropout=False):
+
+    def __init__(
+        self,
+        input_channels,
+        conv_layers_channels=[4, 4, 1],
+        conv_layers_kernels=[3, 3, 3],
+        conv_layers_activation=nn.ReLU(),
+        conv_layers_kwargs={},
+        upsample_layer_indices=[1],
+        scale_factor=2,
+        interp_mode="nearest",
+        output_activation=None,
+        use_dropout=False,
+    ):
         super().__init__()
         # set from arguments
-        self.input_channels          = input_channels
-        self.upsample_layer_indices  = upsample_layer_indices
-        self.scale_factor            = scale_factor
-        self.interp_mode             = interp_mode
-        self.conv_layers_activation  = conv_layers_activation
-        self.output_activation       = output_activation
+        self.input_channels = input_channels
+        self.upsample_layer_indices = upsample_layer_indices
+        self.scale_factor = scale_factor
+        self.interp_mode = interp_mode
+        self.conv_layers_activation = conv_layers_activation
+        self.output_activation = output_activation
         if use_dropout:
             self.dropout = nn.Dropout(use_dropout)
         else:
@@ -153,8 +180,14 @@ class ConvUpsampleNet_Interpolate(nn.Module):
         self.conv_layers = nn.ModuleList()
         for channels, kernel_size in zip(conv_layers_channels, conv_layers_kernels):
             out_channels = channels
-            layer = nn.Conv2d(in_channels, out_channels, kernel_size, **conv_layers_kwargs,
-                              padding=1, padding_mode='replicate')
+            layer = nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size,
+                **conv_layers_kwargs,
+                padding=1,
+                padding_mode="replicate",
+            )
             self.conv_layers.append(layer)
             in_channels = out_channels
         # initialize parameters
@@ -171,9 +204,14 @@ class ConvUpsampleNet_Interpolate(nn.Module):
         # apply hidden convolutional layers
         for i, layer in enumerate(self.conv_layers):
             if i in self.upsample_layer_indices:
-                h = nn.functional.interpolate(h, scale_factor=self.scale_factor, mode=self.interp_mode)
+                h = nn.functional.interpolate(
+                    h, scale_factor=self.scale_factor, mode=self.interp_mode
+                )
             h = layer(h)
-            if self.conv_layers_activation is not None and i < len(self.conv_layers) - 1:
+            if (
+                self.conv_layers_activation is not None
+                and i < len(self.conv_layers) - 1
+            ):
                 h = self.conv_layers_activation(h)
             if self.dropout is not None:
                 h = self.dropout(h)
@@ -191,9 +229,11 @@ class ConvUpsampleNet_Interpolate(nn.Module):
             _set_init_parameters(layer, gain)
         _set_init_parameters(self.conv_layers[-1], _get_gain(None))
 
+
 # --------------------------------------
 # UNet Components
 # --------------------------------------
+
 
 class Downsample(nn.Module):
     """
@@ -203,23 +243,33 @@ class Downsample(nn.Module):
       input_channels   Channels in the inputs.
       output_channels  Channels in the outputs.
     """
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 kernel_size,
-                 activation=None,
-                 dropout=None,
-                 scale_factor=2,
-                 **conv_kwargs):
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        kernel_size,
+        activation=None,
+        dropout=None,
+        scale_factor=2,
+        **conv_kwargs,
+    ):
         super().__init__()
         # create convolutional layer with stride=scale_factor
-        self.layer = nn.Conv2d(input_channels, output_channels, kernel_size, **conv_kwargs,
-                               padding=1, padding_mode='replicate', stride=scale_factor)
+        self.layer = nn.Conv2d(
+            input_channels,
+            output_channels,
+            kernel_size,
+            **conv_kwargs,
+            padding=1,
+            padding_mode="replicate",
+            stride=scale_factor,
+        )
         # set from arguments
         self.input_channels = input_channels
-        self.scale_factor   = scale_factor
-        self.activation     = activation
-        self.dropout        = dropout
+        self.scale_factor = scale_factor
+        self.activation = activation
+        self.dropout = dropout
         # initialize parameters
         self.init_parameters()
 
@@ -248,31 +298,42 @@ class Upsample(nn.Module):
       input_channels   Channels in the inputs.
       output_channels  Channels in the outputs.
     """
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 kernel_size,
-                 activation=None,
-                 dropout=None,
-                 scale_factor=2,
-                 interp_mode='nearest',
-                 **conv_kwargs):
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        kernel_size,
+        activation=None,
+        dropout=None,
+        scale_factor=2,
+        interp_mode="nearest",
+        **conv_kwargs,
+    ):
         super().__init__()
         # create convolutional layer
-        self.layer = nn.Conv2d(input_channels, output_channels, kernel_size, **conv_kwargs,
-                               padding=1, padding_mode='replicate')
+        self.layer = nn.Conv2d(
+            input_channels,
+            output_channels,
+            kernel_size,
+            **conv_kwargs,
+            padding=1,
+            padding_mode="replicate",
+        )
         # set from arguments
         self.input_channels = input_channels
-        self.scale_factor   = scale_factor
-        self.interp_mode    = interp_mode
-        self.activation     = activation
-        self.dropout        = dropout
+        self.scale_factor = scale_factor
+        self.interp_mode = interp_mode
+        self.activation = activation
+        self.dropout = dropout
         # initialize parameters
         self.init_parameters()
 
     def forward(self, x):
         assert x.size(1) == self.input_channels
-        h = nn.functional.interpolate(x, scale_factor=self.scale_factor, mode=self.interp_mode)
+        h = nn.functional.interpolate(
+            x, scale_factor=self.scale_factor, mode=self.interp_mode
+        )
         h = self.layer(h)
         if self.activation is not None:
             h = self.activation(h)
@@ -289,20 +350,28 @@ class Upsample(nn.Module):
 
 
 class LevelBlock(nn.Module):
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 kernel_size,
-                 normalization=None,
-                 activation=None,
-                 dropout=None,
-                 **conv_kwargs):
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        kernel_size,
+        normalization=None,
+        activation=None,
+        dropout=None,
+        **conv_kwargs,
+    ):
         super().__init__()
         # set from arguments
         self.input_channels = input_channels
         # create convolutional layer
-        self.layer = nn.Conv2d(input_channels, output_channels, kernel_size, **conv_kwargs,
-                               padding=1, padding_mode='replicate')
+        self.layer = nn.Conv2d(
+            input_channels,
+            output_channels,
+            kernel_size,
+            **conv_kwargs,
+            padding=1,
+            padding_mode="replicate",
+        )
         # create residual/skip connection
         if input_channels == output_channels:
             self.residual_layer = nn.Identity()
@@ -310,8 +379,8 @@ class LevelBlock(nn.Module):
             self.residual_layer = nn.Conv2d(input_channels, output_channels, 1)
         # create additional layers
         self.normalization = normalization
-        self.activation    = activation
-        self.dropout       = dropout
+        self.activation = activation
+        self.dropout = dropout
         # initialize parameters
         self.init_parameters()
 
@@ -364,22 +433,39 @@ class ResBlock(nn.Module):
         self.in_layers = nn.Sequential(
             normalization(input_channels),
             nn.SiLU(),
-            nn.Conv2d(input_channels, self.output_channels, 3,
-                      padding=1, padding_mode='replicate')
+            nn.Conv2d(
+                input_channels,
+                self.output_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            ),
         )
         # create output layers
         self.out_layers = nn.Sequential(
             normalization(self.output_channels),
             nn.SiLU(),
-            _set_zero_parameters(nn.Conv2d(self.output_channels, self.output_channels, 3,
-                                           padding=1, padding_mode='replicate')),
+            _set_zero_parameters(
+                nn.Conv2d(
+                    self.output_channels,
+                    self.output_channels,
+                    3,
+                    padding=1,
+                    padding_mode="replicate",
+                )
+            ),
         )
         # create skip connection
         if self.output_channels == input_channels:
             self.skip_connection = nn.Identity()
         elif use_conv:
-            self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 3,
-                                             padding=1, padding_mode='replicate')
+            self.skip_connection = nn.Conv2d(
+                input_channels,
+                self.output_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            )
         else:
             self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 1)
 
@@ -395,20 +481,23 @@ class ResBlock(nn.Module):
         h = self.out_layers(h)
         return self.skip_connection(x) + h
 
+
 # --------------------------------------
 # Utility Functions
 # --------------------------------------
+
 
 def _get_gain(activation):
     r"""Calculates the gain to be used as an argument for initializing parameter values."""
     if activation is not None:
         activation_name = type(activation).__name__.lower()
-        if activation_name in ['silu', 'gelu']:
-            activation_name = 'relu'
+        if activation_name in ["silu", "gelu"]:
+            activation_name = "relu"
         gain = nn.init.calculate_gain(activation_name)
     else:
-        gain = nn.init.calculate_gain('conv2d')
+        gain = nn.init.calculate_gain("conv2d")
     return gain
+
 
 def _set_init_parameters(layer, gain=1.0, bias_scale=0.1):
     r"""
@@ -421,8 +510,9 @@ def _set_init_parameters(layer, gain=1.0, bias_scale=0.1):
     """
     nn.init.xavier_uniform_(layer.weight, gain=gain)
     if layer.bias is not None:
-        lim = bias_scale * gain/math.sqrt(layer.bias.size(0))
+        lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
         nn.init.uniform_(layer.bias, a=-lim, b=+lim)
+
 
 def _set_zero_parameters(layer):
     r"""
@@ -432,76 +522,83 @@ def _set_zero_parameters(layer):
         torch.nn.init.zeros_(p)
     return layer
 
+
 # --------------------------------------
 # Tests
 # --------------------------------------
 
 # TODO use doxygen for these test
 
+
 def test_ConvUpsampleNet_Reshuffle():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = ConvUpsampleNet_Reshuffle(1, 2)
     print(net)
 
-    print('Test 1:')
-    x = torch.tensor([[ [[1., -1.], [1., -1.]] ]])
+    print("Test 1:")
+    x = torch.tensor([[[[1.0, -1.0], [1.0, -1.0]]]])
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
+
 
 def test_ConvUpsampleNet_Interpolate():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = ConvUpsampleNet_Interpolate(1)
     print(net)
 
-    print('Test 1:')
-    x = torch.tensor([[ [[1., -1.], [1., -1.]] ]])
+    print("Test 1:")
+    x = torch.tensor([[[[1.0, -1.0], [1.0, -1.0]]]])
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
+
 
 def test_Upsample():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     layer = Upsample(1, 1, 3)
     print(layer)
 
-    print('Test 1:')
-    row = 4*[1.]
-    x = torch.tensor([[ [row for _ in range(4)] ]])
+    print("Test 1:")
+    row = 4 * [1.0]
+    x = torch.tensor([[[row for _ in range(4)]]])
     y = layer(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
+
 
 def test_Downsample():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     layer = Downsample(1, 1, 3)
     print(layer)
 
-    print('Test 1:')
-    row = 8*[1.]
-    x = torch.tensor([[ [row for _ in range(8)] ]])
+    print("Test 1:")
+    row = 8 * [1.0]
+    x = torch.tensor([[[row for _ in range(8)]]])
     y = layer(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
+
 
 def test_LevelBlock():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     layer = LevelBlock(1, 1, 3, activation=nn.ReLU())
     print(layer)
 
-    print('Test 1:')
-    row = 8*[1.]
-    x = torch.tensor([[ [row for _ in range(8)] ]])
+    print("Test 1:")
+    row = 8 * [1.0]
+    x = torch.tensor([[[row for _ in range(8)]]])
     y = layer(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     r"""Runs tests."""
     test_ConvUpsampleNet_Reshuffle()
     test_ConvUpsampleNet_Interpolate()

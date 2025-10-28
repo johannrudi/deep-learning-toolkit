@@ -14,11 +14,9 @@ from .mlp import MLPNet
 from typing import Optional, Any, Union, Callable
 from torch import Tensor
 
+
 class DataEmbedding(nn.Module):
-    def __init__(self,
-                 input_size: int,
-                 output_size: int,
-                 scale_outputs: bool = False):
+    def __init__(self, input_size: int, output_size: int, scale_outputs: bool = False):
         super().__init__()
         self.embedding = nn.Linear(input_size, output_size, bias=False)
         self.output_size = output_size
@@ -47,14 +45,18 @@ class DataEmbedding(nn.Module):
 
 
 class PositionalEmbedding(nn.Module):
-    def __init__(self,
-                 embedding_size: int,
-                 position_max_size: int = 5000,
-                 use_dropout: Union[bool,float] = False):
+    def __init__(
+        self,
+        embedding_size: int,
+        position_max_size: int = 5000,
+        use_dropout: Union[bool, float] = False,
+    ):
         super().__init__()
         assert position_max_size <= 1.0e4
         # compute the positional encodings once in log space
-        den = torch.exp(- torch.arange(0, embedding_size, 2) * math.log(1.0e4) / embedding_size)
+        den = torch.exp(
+            -torch.arange(0, embedding_size, 2) * math.log(1.0e4) / embedding_size
+        )
         pos = torch.arange(0, position_max_size).unsqueeze(1)
         pos_embedding = torch.zeros((position_max_size, embedding_size))
         pos_embedding[:, 0::2] = torch.sin(pos * den)
@@ -66,28 +68,30 @@ class PositionalEmbedding(nn.Module):
         else:
             self.dropout = None
         # register buffer
-        self.register_buffer('pos_embedding', pos_embedding)
+        self.register_buffer("pos_embedding", pos_embedding)
 
     def forward(self, x: Tensor):
-        y = x + self.pos_embedding[:, :x.size(1)].requires_grad_(False)
+        y = x + self.pos_embedding[:, : x.size(1)].requires_grad_(False)
         if self.dropout is not None:
             y = self.dropout(y)
         return y
 
 
 class Transformer1d0dModel(nn.Module):
-    def __init__(self,
-                 src_size: int,
-                 trg_size: int,
-                 embedding_size: int,
-                 n_head: int,
-                 n_encoder_layers: int = 6,
-                 n_decoder_layers: int = 6,
-                 feedforward_size: int = 2048,
-                 transformer_activation: Callable[[Tensor], Tensor] = nn.ReLU(),
-                 transformer_kwargs: dict = {},
-                 output_layer_activation: Optional[Any] = None,
-                 use_dropout: Union[bool,float] = False):
+    def __init__(
+        self,
+        src_size: int,
+        trg_size: int,
+        embedding_size: int,
+        n_head: int,
+        n_encoder_layers: int = 6,
+        n_decoder_layers: int = 6,
+        feedforward_size: int = 2048,
+        transformer_activation: Callable[[Tensor], Tensor] = nn.ReLU(),
+        transformer_kwargs: dict = {},
+        output_layer_activation: Optional[Any] = None,
+        use_dropout: Union[bool, float] = False,
+    ):
         r"""Creates the model.
 
         Args:
@@ -102,7 +106,9 @@ class Transformer1d0dModel(nn.Module):
         self.encoder_emb = DataEmbedding(src_size, embedding_size)
         self.decoder_emb = DataEmbedding(trg_size, embedding_size)
         # create positional embedding (for encoder data only)
-        self.encoder_pos_emb = PositionalEmbedding(embedding_size, use_dropout=use_dropout)
+        self.encoder_pos_emb = PositionalEmbedding(
+            embedding_size, use_dropout=use_dropout
+        )
         # create transformer model
         if use_dropout:
             dropout = use_dropout
@@ -116,13 +122,16 @@ class Transformer1d0dModel(nn.Module):
             dim_feedforward=feedforward_size,
             dropout=dropout,
             activation=transformer_activation,
-            batch_first=True, # tensors provided as (batch, seq, feature)
-            **transformer_kwargs
+            batch_first=True,  # tensors provided as (batch, seq, feature)
+            **transformer_kwargs,
         )
         # create MLP model for output
-        self.generator = MLPNet(embedding_size, trg_size,
-                                hidden_layers_sizes=[],
-                                output_layer_activation=output_layer_activation)
+        self.generator = MLPNet(
+            embedding_size,
+            trg_size,
+            hidden_layers_sizes=[],
+            output_layer_activation=output_layer_activation,
+        )
 
     def forward(self, x_src: Tensor, x_trg: Tensor = None, **kwargs):
         r"""Applies the model function: y = model(x_src, x_trg)
@@ -140,7 +149,7 @@ class Transformer1d0dModel(nn.Module):
         assert 1 == x_trg.size(1)
         # map inputs to space of transformer model
         x_src_emb = self.encoder_pos_emb(self.encoder_emb(x_src))
-        x_trg_emb =                      self.decoder_emb(x_trg)
+        x_trg_emb = self.decoder_emb(x_trg)
         # apply transformer
         h = self.transformer(x_src_emb, x_trg_emb, **kwargs)
         # apply output model
@@ -155,53 +164,67 @@ class Transformer1d0dModel(nn.Module):
         x_trg_emb = self.decoder_emb(x_trg)
         return self.transformer.decoder(x_trg_emb, y_src, **kwargs)
 
+
 ###############################################################################
 
 # TODO use doxygen for these test
 
+
 def test_Transformer1d0dModel():
     emb = DataEmbedding(1, 2)
     pos = PositionalEmbedding(2)
-    model = Transformer1d0dModel(1, 3, 32, 8,
-                                 n_encoder_layers=2, n_decoder_layers=2,
-                                 feedforward_size=128,
-                                 transformer_activation=nn.GELU())
+    model = Transformer1d0dModel(
+        1,
+        3,
+        32,
+        8,
+        n_encoder_layers=2,
+        n_decoder_layers=2,
+        feedforward_size=128,
+        transformer_activation=nn.GELU(),
+    )
     print(model)
 
-    print('Test 1:')
-    x = torch.tensor([[ [1.], [-1.], [1.], [-1.] ]])
+    print("Test 1:")
+    x = torch.tensor([[[1.0], [-1.0], [1.0], [-1.0]]])
     y = emb(x)
-    print('- input  x =', x)
-    print('- output y =', y)
+    print("- input  x =", x)
+    print("- output y =", y)
 
-    print('Test 2:')
-    x = torch.tensor([[ [1., 2.], [-1., -2.], [1., 2.], [-1., -2.] ]])
+    print("Test 2:")
+    x = torch.tensor([[[1.0, 2.0], [-1.0, -2.0], [1.0, 2.0], [-1.0, -2.0]]])
     y = pos(x)
-    print('- input  x =', x)
-    print('- output y =', y)
+    print("- input  x =", x)
+    print("- output y =", y)
 
-    print('Test 3:')
-    x = torch.tensor([[ [1.], [-1.], [1.], [-1.] ]])
+    print("Test 3:")
+    x = torch.tensor([[[1.0], [-1.0], [1.0], [-1.0]]])
     y = pos(emb(x))
-    print('- input  x =', x)
-    print('- output y =', y)
+    print("- input  x =", x)
+    print("- output y =", y)
 
-    print('Test 4:')
+    print("Test 4:")
     x_src = torch.randn(1, 30, 1)
     x_trg = torch.randn(1, 1, 3)
     y = model(x_src, x_trg)
-    print('- input  x_src ='); print(x_src)
-    print('- input  x_trg ='); print(x_trg)
-    print('- output y     ='); print(y)
+    print("- input  x_src =")
+    print(x_src)
+    print("- input  x_trg =")
+    print(x_trg)
+    print("- output y     =")
+    print(y)
 
-    print('Test 4:')
+    print("Test 4:")
     x_src = torch.randn(1, 6, 1)
     y = model(x_src)
-    print('- input  x_src ='); print(x_src)
-    print('- output y     ='); print(y)
+    print("- input  x_src =")
+    print(x_src)
+    print("- output y     =")
+    print(y)
 
-    print('----------------------------------------')
+    print("----------------------------------------")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     r"""Runs tests."""
     test_Transformer1d0dModel()

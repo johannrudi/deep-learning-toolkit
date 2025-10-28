@@ -13,31 +13,104 @@ import torch.nn as nn
 
 # EfficientNet-B0 configuration
 # Each tuple: (kernel_size, stride, expand_ratio, input_channels, output_channels, num_layers, se_ratio)
-MBConvConfig = namedtuple('MBConvConfig', ['kernel_size', 'stride', 'expand_ratio', 'input_channels', 'output_channels', 'num_layers', 'se_ratio'])
+MBConvConfig = namedtuple(
+    "MBConvConfig",
+    [
+        "kernel_size",
+        "stride",
+        "expand_ratio",
+        "input_channels",
+        "output_channels",
+        "num_layers",
+        "se_ratio",
+    ],
+)
+
 
 def get_efficientnet_b0_config():
     """Get EfficientNet-B0 configuration adapted for 1D with ~5x fewer parameters"""
     return [
-        MBConvConfig(kernel_size=3, stride=1, expand_ratio=1, input_channels=16, output_channels=8, num_layers=1, se_ratio=0.25),
-        MBConvConfig(kernel_size=3, stride=2, expand_ratio=4, input_channels=8, output_channels=12, num_layers=1, se_ratio=0.25),
-        MBConvConfig(kernel_size=5, stride=2, expand_ratio=4, input_channels=12, output_channels=20, num_layers=1, se_ratio=0.25),
-        MBConvConfig(kernel_size=3, stride=2, expand_ratio=4, input_channels=20, output_channels=40, num_layers=2, se_ratio=0.25),
-        MBConvConfig(kernel_size=5, stride=1, expand_ratio=4, input_channels=40, output_channels=56, num_layers=2, se_ratio=0.25),
-        MBConvConfig(kernel_size=5, stride=2, expand_ratio=4, input_channels=56, output_channels=96, num_layers=2, se_ratio=0.25),
-        MBConvConfig(kernel_size=3, stride=1, expand_ratio=4, input_channels=96, output_channels=160, num_layers=1, se_ratio=0.25),
+        MBConvConfig(
+            kernel_size=3,
+            stride=1,
+            expand_ratio=1,
+            input_channels=16,
+            output_channels=8,
+            num_layers=1,
+            se_ratio=0.25,
+        ),
+        MBConvConfig(
+            kernel_size=3,
+            stride=2,
+            expand_ratio=4,
+            input_channels=8,
+            output_channels=12,
+            num_layers=1,
+            se_ratio=0.25,
+        ),
+        MBConvConfig(
+            kernel_size=5,
+            stride=2,
+            expand_ratio=4,
+            input_channels=12,
+            output_channels=20,
+            num_layers=1,
+            se_ratio=0.25,
+        ),
+        MBConvConfig(
+            kernel_size=3,
+            stride=2,
+            expand_ratio=4,
+            input_channels=20,
+            output_channels=40,
+            num_layers=2,
+            se_ratio=0.25,
+        ),
+        MBConvConfig(
+            kernel_size=5,
+            stride=1,
+            expand_ratio=4,
+            input_channels=40,
+            output_channels=56,
+            num_layers=2,
+            se_ratio=0.25,
+        ),
+        MBConvConfig(
+            kernel_size=5,
+            stride=2,
+            expand_ratio=4,
+            input_channels=56,
+            output_channels=96,
+            num_layers=2,
+            se_ratio=0.25,
+        ),
+        MBConvConfig(
+            kernel_size=3,
+            stride=1,
+            expand_ratio=4,
+            input_channels=96,
+            output_channels=160,
+            num_layers=1,
+            se_ratio=0.25,
+        ),
     ]
+
 
 # --------------------------------------
 # Components
 # --------------------------------------
 
+
 class Swish(nn.Module):
     """Swish activation function"""
+
     def forward(self, x):
         return x * torch.sigmoid(x)
 
+
 class SqueezeExcitation1D(nn.Module):
     """Squeeze-and-Excitation block for 1D convolutions"""
+
     def __init__(self, input_channels, se_ratio=0.25):
         super().__init__()
         squeeze_channels = max(1, int(input_channels * se_ratio))
@@ -46,19 +119,23 @@ class SqueezeExcitation1D(nn.Module):
             nn.Conv1d(input_channels, squeeze_channels, 1),
             Swish(),
             nn.Conv1d(squeeze_channels, input_channels, 1),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
         return x * self.se(x)
 
+
 class MBConv1D(nn.Module):
     """Mobile Inverted Bottleneck Convolution for 1D time series"""
+
     def __init__(self, config, dropout=0.0):
         super().__init__()
         self.config = config
         self.has_se = config.se_ratio is not None and config.se_ratio > 0
-        self.use_residual = config.stride == 1 and config.input_channels == config.output_channels
+        self.use_residual = (
+            config.stride == 1 and config.input_channels == config.output_channels
+        )
 
         # Expansion phase
         expanded_channels = config.input_channels * config.expand_ratio
@@ -66,18 +143,24 @@ class MBConv1D(nn.Module):
             self.expand_conv = nn.Sequential(
                 nn.Conv1d(config.input_channels, expanded_channels, 1, bias=False),
                 nn.BatchNorm1d(expanded_channels),
-                Swish()
+                Swish(),
             )
         else:
             self.expand_conv = nn.Identity()
 
         # Depthwise convolution
         self.depthwise_conv = nn.Sequential(
-            nn.Conv1d(expanded_channels, expanded_channels, config.kernel_size,
-                     stride=config.stride, padding=config.kernel_size//2,
-                     groups=expanded_channels, bias=False),
+            nn.Conv1d(
+                expanded_channels,
+                expanded_channels,
+                config.kernel_size,
+                stride=config.stride,
+                padding=config.kernel_size // 2,
+                groups=expanded_channels,
+                bias=False,
+            ),
             nn.BatchNorm1d(expanded_channels),
-            Swish()
+            Swish(),
         )
 
         # Squeeze-and-Excitation
@@ -87,7 +170,7 @@ class MBConv1D(nn.Module):
         # Output projection
         self.project_conv = nn.Sequential(
             nn.Conv1d(expanded_channels, config.output_channels, 1, bias=False),
-            nn.BatchNorm1d(config.output_channels)
+            nn.BatchNorm1d(config.output_channels),
         )
 
         # Dropout for residual connection
@@ -120,19 +203,22 @@ class MBConv1D(nn.Module):
 
         return x
 
+
 # --------------------------------------
 # EfficientNet
 # --------------------------------------
 
+
 class EfficientNet1D(nn.Module):
     """EfficientNet adapted for 1D time series input with 2D vector output"""
+
     def __init__(
         self,
         input_channels=1,
         input_length=1000,
         num_classes=2,
         dropout_connect=0.2,
-        dropout_head=0.2
+        dropout_head=0.2,
     ):
         super().__init__()
 
@@ -142,7 +228,7 @@ class EfficientNet1D(nn.Module):
         self.stem = nn.Sequential(
             nn.Conv1d(input_channels, 16, 3, stride=2, padding=1, bias=False),
             nn.BatchNorm1d(16),
-            Swish()
+            Swish(),
         )
 
         # Mobile Inverted Bottleneck blocks
@@ -154,12 +240,15 @@ class EfficientNet1D(nn.Module):
                     block_config = stage_config
                 else:
                     block_config = stage_config._replace(
-                        input_channels=stage_config.output_channels,
-                        stride=1
+                        input_channels=stage_config.output_channels, stride=1
                     )
 
                 # Stochastic depth (drop connect)
-                dropout_block = dropout_connect * len(self.blocks) / sum(cfg.num_layers for cfg in self.config)
+                dropout_block = (
+                    dropout_connect
+                    * len(self.blocks)
+                    / sum(cfg.num_layers for cfg in self.config)
+                )
 
                 self.blocks.append(MBConv1D(block_config, dropout_block))
             out_channels = stage_config.output_channels
@@ -172,7 +261,7 @@ class EfficientNet1D(nn.Module):
             nn.AdaptiveAvgPool1d(1),
             nn.Flatten(),
             nn.Dropout(dropout_head),
-            nn.Linear(640, num_classes)
+            nn.Linear(640, num_classes),
         )
 
         # Initialize weights
@@ -182,7 +271,7 @@ class EfficientNet1D(nn.Module):
         """Initialize weights using standard techniques"""
         for m in self.modules():
             if isinstance(m, nn.Conv1d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
             elif isinstance(m, nn.BatchNorm1d):
@@ -209,11 +298,13 @@ class EfficientNet1D(nn.Module):
 
         return x
 
+
 # --------------------------------------
 # Tests
 # --------------------------------------
 
 # TODO use doxygen for these test
+
 
 # Example usage and testing
 def test_efficientnet_1d():
@@ -236,6 +327,7 @@ def test_efficientnet_1d():
     print(f"Trainable parameters: {trainable_params:,}")
 
     return model, output
+
 
 if __name__ == "__main__":
     model, output = test_efficientnet_1d()

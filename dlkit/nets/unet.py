@@ -15,16 +15,29 @@ import dlkit.nets.conv2d
 # UNet (2025)
 # --------------------------------------
 
-def _create_level_blocks(input_channels_all, output_channels_all, kernel_size,
-                         activation=None, dropout=None,
-                         with_LevelBlock=None, with_Normalization=None, **conv_kwargs):
+
+def _create_level_blocks(
+    input_channels_all,
+    output_channels_all,
+    kernel_size,
+    activation=None,
+    dropout=None,
+    with_LevelBlock=None,
+    with_Normalization=None,
+    **conv_kwargs,
+):
     block = list()
     for ch_in, ch_out in zip(input_channels_all, output_channels_all):
         block.append(
-            with_LevelBlock(ch_in, ch_out, kernel_size, **conv_kwargs,
-                            normalization=with_Normalization(ch_out),
-                            activation=activation,
-                            dropout=dropout)
+            with_LevelBlock(
+                ch_in,
+                ch_out,
+                kernel_size,
+                **conv_kwargs,
+                normalization=with_Normalization(ch_out),
+                activation=activation,
+                dropout=dropout,
+            )
         )
     return block
 
@@ -37,30 +50,33 @@ class UNetXd_2025(nn.Module):
         input_channels:  number of channels of inputs
         output_channels: number of channels of outputs
     """
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 input_conv_kernels=3,
-                 input_conv_kwargs={},
-                 down_levels_conv_channels=[2, 4, 8],
-                 down_levels_conv_kernels=3,
-                 down_levels_conv_kwargs={},
-                 coarse_level_conv_channels=[16, 16],
-                 coarse_level_conv_kernels=3,
-                 coarse_level_conv_kwargs={},
-                 up_levels_conv_channels=[8, 4, 2],
-                 up_levels_conv_kernels=3,
-                 up_levels_conv_kwargs={},
-                 output_conv_kernels=3,
-                 output_conv_kwargs={},
-                 hidden_layers_activation=nn.ReLU(),
-                 output_activation=None,
-                 use_dropout=False,
-                 # dimension dependent classes
-                 with_Downsample=None,
-                 with_Upsample=None,
-                 with_LevelBlock=None,
-                 with_Normalization=None):
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        input_conv_kernels=3,
+        input_conv_kwargs={},
+        down_levels_conv_channels=[2, 4, 8],
+        down_levels_conv_kernels=3,
+        down_levels_conv_kwargs={},
+        coarse_level_conv_channels=[16, 16],
+        coarse_level_conv_kernels=3,
+        coarse_level_conv_kwargs={},
+        up_levels_conv_channels=[8, 4, 2],
+        up_levels_conv_kernels=3,
+        up_levels_conv_kwargs={},
+        output_conv_kernels=3,
+        output_conv_kwargs={},
+        hidden_layers_activation=nn.ReLU(),
+        output_activation=None,
+        use_dropout=False,
+        # dimension dependent classes
+        with_Downsample=None,
+        with_Upsample=None,
+        with_LevelBlock=None,
+        with_Normalization=None,
+    ):
         super().__init__()
         # check dimension dependent classes
         assert with_Downsample is not None
@@ -68,9 +84,13 @@ class UNetXd_2025(nn.Module):
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # check channels
-        assert isinstance(down_levels_conv_channels , list), type(down_levels_conv_channels)
-        assert isinstance(up_levels_conv_channels   , list), type(up_levels_conv_channels)
-        assert isinstance(coarse_level_conv_channels, list), type(coarse_level_conv_channels)
+        assert isinstance(down_levels_conv_channels, list), type(
+            down_levels_conv_channels
+        )
+        assert isinstance(up_levels_conv_channels, list), type(up_levels_conv_channels)
+        assert isinstance(coarse_level_conv_channels, list), type(
+            coarse_level_conv_channels
+        )
         for l, channels in enumerate(down_levels_conv_channels):
             if not isinstance(channels, list):
                 down_levels_conv_channels[l] = [channels]
@@ -83,66 +103,78 @@ class UNetXd_2025(nn.Module):
         # check kernels
         if isinstance(down_levels_conv_kernels, list):
             assert len(down_levels_conv_kernels) == n_levels
-        else: # otherwise assume single integer
+        else:  # otherwise assume single integer
             down_levels_conv_kernels = [down_levels_conv_kernels] * n_levels
         if isinstance(up_levels_conv_kernels, list):
             assert len(up_levels_conv_kernels) == n_levels
-        else: # otherwise assume single integer
+        else:  # otherwise assume single integer
             up_levels_conv_kernels = [up_levels_conv_kernels] * n_levels
-        assert isinstance(coarse_level_conv_kernels, int), type(coarse_level_conv_kernels)
+        assert isinstance(coarse_level_conv_kernels, int), type(
+            coarse_level_conv_kernels
+        )
         # set from arguments
-        self.input_channels  = input_channels
+        self.input_channels = input_channels
         self.output_channels = output_channels
         if use_dropout:
             dropout = nn.Dropout(use_dropout)
         else:
             dropout = None
-        #TODO manage print statements
+        # TODO manage print statements
         print(f"### {down_levels_conv_channels=}")
         print(f"### {coarse_level_conv_channels=}")
         print(f"### {up_levels_conv_channels=}")
-        _indent = ''
+        _indent = ""
         #
         # create input block
         #
-        ch_in  = input_channels
+        ch_in = input_channels
         ch_out = down_levels_conv_channels[0][0]
         print(f"###{_indent} input {ch_in=}, {ch_out=}")
-        self.input_block = with_LevelBlock(ch_in, ch_out, input_conv_kernels, **input_conv_kwargs,
-                                           normalization=with_Normalization(ch_out),
-                                           activation=hidden_layers_activation,
-                                           dropout=dropout)
+        self.input_block = with_LevelBlock(
+            ch_in,
+            ch_out,
+            input_conv_kernels,
+            **input_conv_kwargs,
+            normalization=with_Normalization(ch_out),
+            activation=hidden_layers_activation,
+            dropout=dropout,
+        )
         ch_in = ch_out
         #
         # create downsample levels
         #
         ch_down_all = list()  # initialize channels of all layers (incl. downsample)
         self.down_levels = nn.ModuleList()
-        for l, (channels, kernel_size) in enumerate(zip(down_levels_conv_channels, down_levels_conv_kernels)):
-            _indent = l*'  '
+        for l, (channels, kernel_size) in enumerate(
+            zip(down_levels_conv_channels, down_levels_conv_kernels)
+        ):
+            _indent = l * "  "
             level = list()
             # add sequence of layers
-            ch_in_all  = [ch_in] + channels[:-1]   # input channels of all layers
-            ch_out_all = channels                  # output channels of all layers
+            ch_in_all = [ch_in] + channels[:-1]  # input channels of all layers
+            ch_out_all = channels  # output channels of all layers
             for ci_, co_ in zip(ch_in_all, ch_out_all):
                 print(f"###{_indent} down       level={l}, ch_in={ci_}, ch_out={co_}")
             level.extend(
                 _create_level_blocks(
-                    ch_in_all, ch_out_all, kernel_size,
+                    ch_in_all,
+                    ch_out_all,
+                    kernel_size,
                     activation=hidden_layers_activation,
                     dropout=dropout,
                     with_LevelBlock=with_LevelBlock,
                     with_Normalization=with_Normalization,
-                    **down_levels_conv_kwargs)
+                    **down_levels_conv_kwargs,
+                )
             )
             ch_in = ch_out_all[-1]
             # add downsample layer
             # <code id="v1">
-            #if l < n_levels - 1:  # if not the last level
+            # if l < n_levels - 1:  # if not the last level
             # </code
             # <code id="v2">
             if True:
-            # </code
+                # </code
                 ch_out = ch_in
                 print(f"###{_indent} downsample level={l}, {ch_in=}, {ch_out=}")
                 layer = with_Downsample(ch_in, ch_out, kernel_size)
@@ -152,64 +184,81 @@ class UNetXd_2025(nn.Module):
         #
         # create coarse level
         #
-        _indent = (l+1)*'  '
-        ch_in_all  = [ch_in] + coarse_level_conv_channels[:-1]  # input channels of all layers
-        ch_out_all = coarse_level_conv_channels                 # output channels of all layers
+        _indent = (l + 1) * "  "
+        ch_in_all = [ch_in] + coarse_level_conv_channels[
+            :-1
+        ]  # input channels of all layers
+        ch_out_all = coarse_level_conv_channels  # output channels of all layers
         for ci_, co_ in zip(ch_in_all, ch_out_all):
             print(f"###{_indent} coarse     level={l+1}, ch_in={ci_}, ch_out={co_}")
         kernel_size = coarse_level_conv_kernels
         level = _create_level_blocks(
-                ch_in_all, ch_out_all, kernel_size,
-                activation=hidden_layers_activation,
-                dropout=dropout,
-                with_LevelBlock=with_LevelBlock,
-                with_Normalization=with_Normalization,
-                **coarse_level_conv_kwargs)
+            ch_in_all,
+            ch_out_all,
+            kernel_size,
+            activation=hidden_layers_activation,
+            dropout=dropout,
+            with_LevelBlock=with_LevelBlock,
+            with_Normalization=with_Normalization,
+            **coarse_level_conv_kwargs,
+        )
         self.coarse_level = nn.Sequential(*level)
         ch_in = ch_out_all[-1]
         #
         # create upsample levels
         #
         self.up_levels = nn.ModuleList()
-        for l_inv, (channels, kernel_size) in enumerate(zip(up_levels_conv_channels, up_levels_conv_kernels)):
+        for l_inv, (channels, kernel_size) in enumerate(
+            zip(up_levels_conv_channels, up_levels_conv_kernels)
+        ):
             l = n_levels - 1 - l_inv
-            _indent = l*'  '
+            _indent = l * "  "
             level = list()
             # set channels of corresponding down level `l`
             ch_down_inv = list(reversed(down_levels_conv_channels[l]))
             # add upsample layer
             # <code id="v1">
-            #if l < n_levels - 1:  # if not the last level
+            # if l < n_levels - 1:  # if not the last level
             # </code
             # <code id="v2">
             if True:
-            # </code
+                # </code
                 ch_in += ch_down_inv[0]
                 ch_out = channels[0]
                 print(f"###{_indent} upsample   level={l}, {ch_in=} {ch_out=}")
                 layer = nn.Sequential(
-                        with_LevelBlock(ch_in, ch_out, kernel_size, **up_levels_conv_kwargs,
-                                        normalization=with_Normalization(ch_out),
-                                        activation=hidden_layers_activation,
-                                        dropout=dropout),
-                        with_Upsample(ch_out, ch_out, kernel_size)
+                    with_LevelBlock(
+                        ch_in,
+                        ch_out,
+                        kernel_size,
+                        **up_levels_conv_kwargs,
+                        normalization=with_Normalization(ch_out),
+                        activation=hidden_layers_activation,
+                        dropout=dropout,
+                    ),
+                    with_Upsample(ch_out, ch_out, kernel_size),
                 )
                 level.append(layer)
                 ch_in = ch_out
             # add sequence of layers
-            ch_in_all  = [ch_in] + channels[:-1]                        # input channels of all layers
-            ch_in_all  = [sum(c) for c in zip(ch_in_all, ch_down_inv)]  # add channels of down level
-            ch_out_all = channels                                       # output channels of all layers
+            ch_in_all = [ch_in] + channels[:-1]  # input channels of all layers
+            ch_in_all = [
+                sum(c) for c in zip(ch_in_all, ch_down_inv)
+            ]  # add channels of down level
+            ch_out_all = channels  # output channels of all layers
             for ci_, co_ in zip(ch_in_all, ch_out_all):
                 print(f"###{_indent} up         level={l}, ch_in={ci_}, ch_out={co_}")
             level.extend(
                 _create_level_blocks(
-                    ch_in_all, ch_out_all, kernel_size,
+                    ch_in_all,
+                    ch_out_all,
+                    kernel_size,
                     activation=hidden_layers_activation,
                     dropout=dropout,
                     with_LevelBlock=with_LevelBlock,
                     with_Normalization=with_Normalization,
-                    **up_levels_conv_kwargs)
+                    **up_levels_conv_kwargs,
+                )
             )
             ch_in = ch_out_all[-1]
             # add this up level
@@ -219,10 +268,15 @@ class UNetXd_2025(nn.Module):
         #
         ch_out = output_channels
         print(f"###{_indent} output {ch_in=}, {ch_out=}")
-        self.output_block = with_LevelBlock(ch_in, ch_out, output_conv_kernels, **output_conv_kwargs,
-                                            normalization=with_Normalization(ch_out),
-                                            activation=output_activation,
-                                            dropout=dropout)
+        self.output_block = with_LevelBlock(
+            ch_in,
+            ch_out,
+            output_conv_kernels,
+            **output_conv_kwargs,
+            normalization=with_Normalization(ch_out),
+            activation=output_activation,
+            dropout=dropout,
+        )
         # initialize parameters
         self.init_parameters()
 
@@ -246,7 +300,9 @@ class UNetXd_2025(nn.Module):
         # upsample levels
         for level in self.up_levels:
             for block in level:
-                h_cat = torch.cat([h, h_down.pop()], dim=1)  # concatenate along channel dimension
+                h_cat = torch.cat(
+                    [h, h_down.pop()], dim=1
+                )  # concatenate along channel dimension
                 h = block(h_cat)
         # output layer
         y = self.output_block(h)
@@ -281,19 +337,26 @@ class UNetXd_2025(nn.Module):
         # output layer
         self.output_block.init_parameters()
 
+
 # --------------------------------------
+
 
 class UNet2d_2025(UNetXd_2025):
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs,
-                         with_Downsample    = dlkit.nets.conv2d.Downsample,
-                         with_Upsample      = dlkit.nets.conv2d.Upsample,
-                         with_LevelBlock    = dlkit.nets.conv2d.LevelBlock,
-                         with_Normalization = dlkit.nets.conv2d.Normalization)
+        super().__init__(
+            *args,
+            **kwargs,
+            with_Downsample=dlkit.nets.conv2d.Downsample,
+            with_Upsample=dlkit.nets.conv2d.Upsample,
+            with_LevelBlock=dlkit.nets.conv2d.LevelBlock,
+            with_Normalization=dlkit.nets.conv2d.Normalization,
+        )
+
 
 # --------------------------------------
 # UNet (2021) <https://github.com/openai/improved-diffusion>
 # --------------------------------------
+
 
 def _zero_module(module):
     """
@@ -322,7 +385,9 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     """
     half = dim // 2
     freqs = torch.exp(
-        -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        -math.log(max_period)
+        * torch.arange(start=0, end=half, dtype=torch.float32)
+        / half
     ).to(device=timesteps.device)
     args = timesteps[:, None].float() * freqs[None]
     embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
@@ -370,6 +435,7 @@ class ResBlock2d_EmbedBlock(dlkit.nets.conv2d.ResBlock, EmbedModule):
         convolution instead of a smaller 1x1 convolution to change the
         channels in the skip connection.
     """
+
     def __init__(
         self,
         input_channels,
@@ -383,7 +449,7 @@ class ResBlock2d_EmbedBlock(dlkit.nets.conv2d.ResBlock, EmbedModule):
             input_channels,
             output_channels=output_channels,
             use_conv=use_conv,
-            normalization=normalization
+            normalization=normalization,
         )
         self.emb_channels = emb_channels
         self.use_scale_shift_norm = use_scale_shift_norm
@@ -444,7 +510,9 @@ class AttentionBlock(nn.Module):
     def __init__(self, channels, num_heads=1, normalization=None):
         super().__init__()
         self.channels = channels
-        self.num_heads = num_heads  #TODO probably num_heads need to be used in dim of self.qkv
+        self.num_heads = (
+            num_heads  # TODO probably num_heads need to be used in dim of self.qkv
+        )
 
         self.norm = normalization(channels)
         self.qkv = nn.Conv1d(channels, channels * 3, 1)
@@ -509,7 +577,7 @@ class QKVAttention(nn.Module):
         # We perform two matmuls with the same number of ops.
         # The first computes the weight matrix, the second computes
         # the combination of the value vectors.
-        matmul_ops = 2 * b * (num_spatial ** 2) * c
+        matmul_ops = 2 * b * (num_spatial**2) * c
         model.total_ops += torch.DoubleTensor([matmul_ops])
 
 
@@ -532,24 +600,27 @@ class UNetXd_2021_idd(nn.Module):
             class-conditional with `num_classes` classes.
         num_heads: the number of attention heads in each attention layer.
     """
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 internal_channels,
-                 num_res_blocks=1,
-                 attention_levels=[],
-                 channel_mult=(1, 2, 4, 8),
-                 num_classes=None,
-                 num_heads=1,
-                 num_heads_upsample=-1,
-                 time_embed_dim=None,
-                 # dimension dependent classes
-                 with_InputLayer=None,
-                 with_OutputLayer=None,
-                 with_Downsample=None,
-                 with_Upsample=None,
-                 with_LevelBlock=None,
-                 with_Normalization=None):
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        internal_channels,
+        num_res_blocks=1,
+        attention_levels=[],
+        channel_mult=(1, 2, 4, 8),
+        num_classes=None,
+        num_heads=1,
+        num_heads_upsample=-1,
+        time_embed_dim=None,
+        # dimension dependent classes
+        with_InputLayer=None,
+        with_OutputLayer=None,
+        with_Downsample=None,
+        with_Upsample=None,
+        with_LevelBlock=None,
+        with_Normalization=None,
+    ):
         super().__init__()
         # check dimension dependent classes
         assert with_InputLayer is not None
@@ -559,15 +630,15 @@ class UNetXd_2021_idd(nn.Module):
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
-        self.input_channels    = input_channels
-        self.output_channels   = output_channels
+        self.input_channels = input_channels
+        self.output_channels = output_channels
         self.internal_channels = internal_channels
-        self.num_res_blocks    = num_res_blocks
-        self.attention_levels  = attention_levels
-        self.channel_mult      = channel_mult
-        self.num_classes       = num_classes
-        self.num_heads         = num_heads
-        self.time_embed_dim    = time_embed_dim
+        self.num_res_blocks = num_res_blocks
+        self.attention_levels = attention_levels
+        self.channel_mult = channel_mult
+        self.num_classes = num_classes
+        self.num_heads = num_heads
+        self.time_embed_dim = time_embed_dim
         if -1 == num_heads_upsample:
             self.num_heads_upsample = num_heads
         else:
@@ -596,15 +667,20 @@ class UNetXd_2021_idd(nn.Module):
             print(f"### downsample {level=}")
             for _ in range(num_res_blocks):
                 layers = [
-                    with_LevelBlock(ch,
-                                    output_channels=mult*internal_channels,
-                                    normalization=with_Normalization)
+                    with_LevelBlock(
+                        ch,
+                        output_channels=mult * internal_channels,
+                        normalization=with_Normalization,
+                    )
                 ]
                 ch = mult * internal_channels
                 if level in attention_levels:
                     layers.append(
-                        AttentionBlock(ch, num_heads=self.num_heads,
-                                       normalization=with_Normalization)
+                        AttentionBlock(
+                            ch,
+                            num_heads=self.num_heads,
+                            normalization=with_Normalization,
+                        )
                     )
                 self.input_blocks.append(EmbedSequential(*layers))
                 input_block_channels.append(ch)
@@ -617,17 +693,14 @@ class UNetXd_2021_idd(nn.Module):
         #
         level += 1
         print(f"### middle {level=}")
-        layers = [
-            with_LevelBlock(ch, normalization=with_Normalization)
-        ]
+        layers = [with_LevelBlock(ch, normalization=with_Normalization)]
         if level in attention_levels:
             layers.append(
-                AttentionBlock(ch, num_heads=self.num_heads,
-                               normalization=with_Normalization)
+                AttentionBlock(
+                    ch, num_heads=self.num_heads, normalization=with_Normalization
+                )
             )
-        layers.append(
-            with_LevelBlock(ch, normalization=with_Normalization)
-        )
+        layers.append(with_LevelBlock(ch, normalization=with_Normalization))
         self.middle_block = EmbedSequential(*layers)
         #
         # create upsample blocks
@@ -637,15 +710,20 @@ class UNetXd_2021_idd(nn.Module):
             print(f"### upsample {level=}")
             for i in range(num_res_blocks + 1):
                 layers = [
-                    with_LevelBlock(ch + input_block_channels.pop(),
-                                    output_channels=mult*internal_channels,
-                                    normalization=with_Normalization)
+                    with_LevelBlock(
+                        ch + input_block_channels.pop(),
+                        output_channels=mult * internal_channels,
+                        normalization=with_Normalization,
+                    )
                 ]
                 ch = mult * internal_channels
                 if level in attention_levels:
                     layers.append(
-                        AttentionBlock(ch, num_heads=self.num_heads_upsample,
-                                       normalization=with_Normalization)
+                        AttentionBlock(
+                            ch,
+                            num_heads=self.num_heads_upsample,
+                            normalization=with_Normalization,
+                        )
                     )
                 if level and i == num_res_blocks:
                     layers.append(with_Upsample(ch, ch, 3))
@@ -669,11 +747,15 @@ class UNetXd_2021_idd(nn.Module):
         :return: an [N x C x ...] Tensor of outputs.
         """
         if timesteps is not None:
-            assert self.time_embed_dim is not None, "must specify timestep if and only if the model has time embedding"
+            assert (
+                self.time_embed_dim is not None
+            ), "must specify timestep if and only if the model has time embedding"
             assert x.size(0) == timesteps.size(0)
             assert timesteps.dim() == 1
             if y is not None:
-                assert self.num_classes is not None, "must specify y if and only if the model is class-conditional"
+                assert (
+                    self.num_classes is not None
+                ), "must specify y if and only if the model is class-conditional"
                 assert y.shape == (x.shape[0],)
         # apply embedding layers
         if timesteps is not None:
@@ -706,72 +788,131 @@ class UNetXd_2021_idd(nn.Module):
 class UNet1d_2021(UNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
         def _with_InputLayer(_input_channels, _internal_channels):
-            return nn.Conv1d(_input_channels, _internal_channels, 3,
-                             padding=1, padding_mode='replicate')
+            return nn.Conv1d(
+                _input_channels,
+                _internal_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            )
+
         def _with_OutputLayer(_internal_channels, _output_channels):
-            return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
-                                          padding=1, padding_mode='replicate'))
+            return _zero_module(
+                nn.Conv1d(
+                    _internal_channels,
+                    _output_channels,
+                    3,
+                    padding=1,
+                    padding_mode="replicate",
+                )
+            )
+
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=internal_channels)
-        super().__init__(*args,
-                         internal_channels  = internal_channels,
-                         with_InputLayer    = _with_InputLayer,
-                         with_OutputLayer   = _with_OutputLayer,
-                         with_Downsample    = dlkit.nets.conv1d.Downsample,
-                         with_Upsample      = dlkit.nets.conv1d.Upsample,
-                         with_LevelBlock    = dlkit.nets.conv1d.ResBlock,
-                         with_Normalization = _Normalization,
-                         **kwargs)
+            return dlkit.nets.conv1d.Normalization(
+                _num_channels, num_groups=internal_channels
+            )
+
+        super().__init__(
+            *args,
+            internal_channels=internal_channels,
+            with_InputLayer=_with_InputLayer,
+            with_OutputLayer=_with_OutputLayer,
+            with_Downsample=dlkit.nets.conv1d.Downsample,
+            with_Upsample=dlkit.nets.conv1d.Upsample,
+            with_LevelBlock=dlkit.nets.conv1d.ResBlock,
+            with_Normalization=_Normalization,
+            **kwargs,
+        )
 
 
 class UNet2d_2021(UNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
         def _with_InputLayer(_input_channels, _internal_channels):
-            return nn.Conv2d(_input_channels, _internal_channels, 3,
-                             padding=1, padding_mode='replicate')
+            return nn.Conv2d(
+                _input_channels,
+                _internal_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            )
+
         def _with_OutputLayer(_internal_channels, _output_channels):
-            return _zero_module(nn.Conv2d(_internal_channels, _output_channels, 3,
-                                          padding=1, padding_mode='replicate'))
+            return _zero_module(
+                nn.Conv2d(
+                    _internal_channels,
+                    _output_channels,
+                    3,
+                    padding=1,
+                    padding_mode="replicate",
+                )
+            )
+
         def _Normalization(_num_channels):
-            return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=internal_channels)
-        super().__init__(*args,
-                         internal_channels  = internal_channels,
-                         with_InputLayer    = _with_InputLayer,
-                         with_OutputLayer   = _with_OutputLayer,
-                         with_Downsample    = dlkit.nets.conv2d.Downsample,
-                         with_Upsample      = dlkit.nets.conv2d.Upsample,
-                         with_LevelBlock    = dlkit.nets.conv2d.ResBlock,
-                         with_Normalization = _Normalization,
-                         **kwargs)
+            return dlkit.nets.conv2d.Normalization(
+                _num_channels, num_groups=internal_channels
+            )
+
+        super().__init__(
+            *args,
+            internal_channels=internal_channels,
+            with_InputLayer=_with_InputLayer,
+            with_OutputLayer=_with_OutputLayer,
+            with_Downsample=dlkit.nets.conv2d.Downsample,
+            with_Upsample=dlkit.nets.conv2d.Upsample,
+            with_LevelBlock=dlkit.nets.conv2d.ResBlock,
+            with_Normalization=_Normalization,
+            **kwargs,
+        )
 
 
 class UNet2d_2021_idd(UNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
-        time_embed_dim = 4*internal_channels
+        time_embed_dim = 4 * internal_channels
+
         def _with_InputLayer(_input_channels, _internal_channels):
-            return nn.Conv2d(_input_channels, _internal_channels, 3,
-                             padding=1, padding_mode='replicate')
+            return nn.Conv2d(
+                _input_channels,
+                _internal_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            )
+
         def _with_OutputLayer(_internal_channels, _output_channels):
-            return _zero_module(nn.Conv2d(_internal_channels, _output_channels, 3,
-                                          padding=1, padding_mode='replicate'))
+            return _zero_module(
+                nn.Conv2d(
+                    _internal_channels,
+                    _output_channels,
+                    3,
+                    padding=1,
+                    padding_mode="replicate",
+                )
+            )
+
         def _ResBlock2d_EmbedBlock(_input_channels, **_kwargs):
             return ResBlock2d_EmbedBlock(_input_channels, time_embed_dim, **_kwargs)
+
         def _Normalization(_num_channels):
             return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=32)
-        super().__init__(*args,
-                         internal_channels  = internal_channels,
-                         time_embed_dim     = time_embed_dim,
-                         with_InputLayer    = _with_InputLayer,
-                         with_OutputLayer   = _with_OutputLayer,
-                         with_Downsample    = dlkit.nets.conv2d.Downsample,
-                         with_Upsample      = dlkit.nets.conv2d.Upsample,
-                         with_LevelBlock    = _ResBlock2d_EmbedBlock,
-                         with_Normalization = _Normalization,
-                         **kwargs)
+
+        super().__init__(
+            *args,
+            internal_channels=internal_channels,
+            time_embed_dim=time_embed_dim,
+            with_InputLayer=_with_InputLayer,
+            with_OutputLayer=_with_OutputLayer,
+            with_Downsample=dlkit.nets.conv2d.Downsample,
+            with_Upsample=dlkit.nets.conv2d.Upsample,
+            with_LevelBlock=_ResBlock2d_EmbedBlock,
+            with_Normalization=_Normalization,
+            **kwargs,
+        )
+
 
 # --------------------------------------
 # Encoder & Decoder Nets (2021)
 # --------------------------------------
+
 
 class EncoderNetXd_2021_idd(nn.Module):
     r"""
@@ -792,24 +933,27 @@ class EncoderNetXd_2021_idd(nn.Module):
             class-conditional with `num_classes` classes.
         num_heads: the number of attention heads in each attention layer.
     """
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 internal_channels,
-                 num_res_blocks=1,
-                 attention_levels=[],
-                 channel_mult=(1, 1, 1, 1),
-                 num_classes=None,
-                 num_heads=1,
-                 num_heads_upsample=-1,
-                 time_embed_dim=None,
-                 # dimension dependent classes
-                 with_InputLayer=None,
-                 with_OutputLayer=None,
-                 with_Downsample=None,
-                 with_Upsample=None,
-                 with_LevelBlock=None,
-                 with_Normalization=None):
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        internal_channels,
+        num_res_blocks=1,
+        attention_levels=[],
+        channel_mult=(1, 1, 1, 1),
+        num_classes=None,
+        num_heads=1,
+        num_heads_upsample=-1,
+        time_embed_dim=None,
+        # dimension dependent classes
+        with_InputLayer=None,
+        with_OutputLayer=None,
+        with_Downsample=None,
+        with_Upsample=None,
+        with_LevelBlock=None,
+        with_Normalization=None,
+    ):
         super().__init__()
         # check dimension dependent classes
         assert with_InputLayer is not None
@@ -819,15 +963,15 @@ class EncoderNetXd_2021_idd(nn.Module):
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
-        self.input_channels    = input_channels
-        self.output_channels   = output_channels
+        self.input_channels = input_channels
+        self.output_channels = output_channels
         self.internal_channels = internal_channels
-        self.num_res_blocks    = num_res_blocks
-        self.attention_levels  = attention_levels
-        self.channel_mult      = channel_mult
-        self.num_classes       = num_classes
-        self.num_heads         = num_heads
-        self.time_embed_dim    = time_embed_dim
+        self.num_res_blocks = num_res_blocks
+        self.attention_levels = attention_levels
+        self.channel_mult = channel_mult
+        self.num_classes = num_classes
+        self.num_heads = num_heads
+        self.time_embed_dim = time_embed_dim
         if -1 == num_heads_upsample:
             self.num_heads_upsample = num_heads
         else:
@@ -855,15 +999,20 @@ class EncoderNetXd_2021_idd(nn.Module):
             print(f"### downsample {level=}")
             for _ in range(num_res_blocks):
                 layers = [
-                    with_LevelBlock(ch,
-                                    output_channels=mult*internal_channels,
-                                    normalization=with_Normalization)
+                    with_LevelBlock(
+                        ch,
+                        output_channels=mult * internal_channels,
+                        normalization=with_Normalization,
+                    )
                 ]
                 ch = mult * internal_channels
                 if level in attention_levels:
                     layers.append(
-                        AttentionBlock(ch, num_heads=self.num_heads,
-                                       normalization=with_Normalization)
+                        AttentionBlock(
+                            ch,
+                            num_heads=self.num_heads,
+                            normalization=with_Normalization,
+                        )
                     )
                 self.input_blocks.append(EmbedSequential(*layers))
             if level != len(channel_mult) - 1:
@@ -874,9 +1023,7 @@ class EncoderNetXd_2021_idd(nn.Module):
         #
         level = len(channel_mult)
         print(f"### middle {level=}")
-        layers = [
-            with_LevelBlock(ch, normalization=with_Normalization)
-        ]
+        layers = [with_LevelBlock(ch, normalization=with_Normalization)]
         self.middle_block = EmbedSequential(*layers)
         #
         # create output layer
@@ -897,11 +1044,15 @@ class EncoderNetXd_2021_idd(nn.Module):
         :return: an [N x C x ...] Tensor of outputs.
         """
         if timesteps is not None:
-            assert self.time_embed_dim is not None, "must specify timestep if and only if the model has time embedding"
+            assert (
+                self.time_embed_dim is not None
+            ), "must specify timestep if and only if the model has time embedding"
             assert x.size(0) == timesteps.size(0)
             assert timesteps.dim() == 1
             if y is not None:
-                assert self.num_classes is not None, "must specify y if and only if the model is class-conditional"
+                assert (
+                    self.num_classes is not None
+                ), "must specify y if and only if the model is class-conditional"
                 assert y.shape == (x.shape[0],)
         # apply embedding layers
         if timesteps is not None:
@@ -944,24 +1095,27 @@ class DecoderNetXd_2021_idd(nn.Module):
             class-conditional with `num_classes` classes.
         num_heads: the number of attention heads in each attention layer.
     """
-    def __init__(self,
-                 input_channels,
-                 output_channels,
-                 internal_channels,
-                 num_res_blocks=1,
-                 attention_levels=[],
-                 channel_mult=(1, 1, 1, 1),
-                 num_classes=None,
-                 num_heads=1,
-                 num_heads_upsample=-1,
-                 time_embed_dim=None,
-                 # dimension dependent classes
-                 with_InputLayer=None,
-                 with_OutputLayer=None,
-                 with_Downsample=None,
-                 with_Upsample=None,
-                 with_LevelBlock=None,
-                 with_Normalization=None):
+
+    def __init__(
+        self,
+        input_channels,
+        output_channels,
+        internal_channels,
+        num_res_blocks=1,
+        attention_levels=[],
+        channel_mult=(1, 1, 1, 1),
+        num_classes=None,
+        num_heads=1,
+        num_heads_upsample=-1,
+        time_embed_dim=None,
+        # dimension dependent classes
+        with_InputLayer=None,
+        with_OutputLayer=None,
+        with_Downsample=None,
+        with_Upsample=None,
+        with_LevelBlock=None,
+        with_Normalization=None,
+    ):
         super().__init__()
         # check dimension dependent classes
         assert with_InputLayer is not None
@@ -971,15 +1125,15 @@ class DecoderNetXd_2021_idd(nn.Module):
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # set from arguments
-        self.input_channels    = input_channels
-        self.output_channels   = output_channels
+        self.input_channels = input_channels
+        self.output_channels = output_channels
         self.internal_channels = internal_channels
-        self.num_res_blocks    = num_res_blocks
-        self.attention_levels  = attention_levels
-        self.channel_mult      = channel_mult
-        self.num_classes       = num_classes
-        self.num_heads         = num_heads
-        self.time_embed_dim    = time_embed_dim
+        self.num_res_blocks = num_res_blocks
+        self.attention_levels = attention_levels
+        self.channel_mult = channel_mult
+        self.num_classes = num_classes
+        self.num_heads = num_heads
+        self.time_embed_dim = time_embed_dim
         if -1 == num_heads_upsample:
             self.num_heads_upsample = num_heads
         else:
@@ -999,14 +1153,10 @@ class DecoderNetXd_2021_idd(nn.Module):
         # create middle block
         #
         ch = channel_mult[-1] * internal_channels
-        self.input_layer = EmbedSequential(
-            with_InputLayer(input_channels, ch)
-        )
+        self.input_layer = EmbedSequential(with_InputLayer(input_channels, ch))
         level = len(channel_mult)
         print(f"### middle {level=}")
-        layers = [
-            with_LevelBlock(ch, normalization=with_Normalization)
-        ]
+        layers = [with_LevelBlock(ch, normalization=with_Normalization)]
         self.middle_block = EmbedSequential(*layers)
         #
         # create upsample blocks
@@ -1016,15 +1166,20 @@ class DecoderNetXd_2021_idd(nn.Module):
             print(f"### upsample {level=}")
             for i in range(num_res_blocks + 1):
                 layers = [
-                    with_LevelBlock(ch,
-                                    output_channels=mult*internal_channels,
-                                    normalization=with_Normalization)
+                    with_LevelBlock(
+                        ch,
+                        output_channels=mult * internal_channels,
+                        normalization=with_Normalization,
+                    )
                 ]
                 ch = mult * internal_channels
                 if level in attention_levels:
                     layers.append(
-                        AttentionBlock(ch, num_heads=self.num_heads_upsample,
-                                       normalization=with_Normalization)
+                        AttentionBlock(
+                            ch,
+                            num_heads=self.num_heads_upsample,
+                            normalization=with_Normalization,
+                        )
                     )
                 if level and i == num_res_blocks:
                     layers.append(with_Upsample(ch, ch, 3))
@@ -1048,11 +1203,15 @@ class DecoderNetXd_2021_idd(nn.Module):
         :return: an [N x C x ...] Tensor of outputs.
         """
         if timesteps is not None:
-            assert self.time_embed_dim is not None, "must specify timestep if and only if the model has time embedding"
+            assert (
+                self.time_embed_dim is not None
+            ), "must specify timestep if and only if the model has time embedding"
             assert x.size(0) == timesteps.size(0)
             assert timesteps.dim() == 1
             if y is not None:
-                assert self.num_classes is not None, "must specify y if and only if the model is class-conditional"
+                assert (
+                    self.num_classes is not None
+                ), "must specify y if and only if the model is class-conditional"
                 assert y.shape == (x.shape[0],)
         # apply embedding layers
         if timesteps is not None:
@@ -1081,42 +1240,82 @@ class DecoderNetXd_2021_idd(nn.Module):
 class EncoderNet1d_2021(EncoderNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
         def _with_InputLayer(_input_channels, _internal_channels):
-            return nn.Conv1d(_input_channels, _internal_channels, 3,
-                             padding=1, padding_mode='replicate')
+            return nn.Conv1d(
+                _input_channels,
+                _internal_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            )
+
         def _with_OutputLayer(_internal_channels, _output_channels):
-            return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
-                                          padding=1, padding_mode='replicate'))
+            return _zero_module(
+                nn.Conv1d(
+                    _internal_channels,
+                    _output_channels,
+                    3,
+                    padding=1,
+                    padding_mode="replicate",
+                )
+            )
+
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=internal_channels)
-        super().__init__(*args,
-                         internal_channels  = internal_channels,
-                         with_InputLayer    = _with_InputLayer,
-                         with_OutputLayer   = _with_OutputLayer,
-                         with_Downsample    = dlkit.nets.conv1d.Downsample,
-                         with_Upsample      = dlkit.nets.conv1d.Upsample,
-                         with_LevelBlock    = dlkit.nets.conv1d.ResBlock,
-                         with_Normalization = _Normalization,
-                         **kwargs)
+            return dlkit.nets.conv1d.Normalization(
+                _num_channels, num_groups=internal_channels
+            )
+
+        super().__init__(
+            *args,
+            internal_channels=internal_channels,
+            with_InputLayer=_with_InputLayer,
+            with_OutputLayer=_with_OutputLayer,
+            with_Downsample=dlkit.nets.conv1d.Downsample,
+            with_Upsample=dlkit.nets.conv1d.Upsample,
+            with_LevelBlock=dlkit.nets.conv1d.ResBlock,
+            with_Normalization=_Normalization,
+            **kwargs,
+        )
+
 
 class DecoderNet1d_2021(DecoderNetXd_2021_idd):
     def __init__(self, *args, internal_channels=32, **kwargs):
         def _with_InputLayer(_input_channels, _internal_channels):
-            return nn.Conv1d(_input_channels, _internal_channels, 3,
-                             padding=1, padding_mode='replicate')
+            return nn.Conv1d(
+                _input_channels,
+                _internal_channels,
+                3,
+                padding=1,
+                padding_mode="replicate",
+            )
+
         def _with_OutputLayer(_internal_channels, _output_channels):
-            return _zero_module(nn.Conv1d(_internal_channels, _output_channels, 3,
-                                          padding=1, padding_mode='replicate'))
+            return _zero_module(
+                nn.Conv1d(
+                    _internal_channels,
+                    _output_channels,
+                    3,
+                    padding=1,
+                    padding_mode="replicate",
+                )
+            )
+
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(_num_channels, num_groups=internal_channels)
-        super().__init__(*args,
-                         internal_channels  = internal_channels,
-                         with_InputLayer    = _with_InputLayer,
-                         with_OutputLayer   = _with_OutputLayer,
-                         with_Downsample    = dlkit.nets.conv1d.Downsample,
-                         with_Upsample      = dlkit.nets.conv1d.Upsample,
-                         with_LevelBlock    = dlkit.nets.conv1d.ResBlock,
-                         with_Normalization = _Normalization,
-                         **kwargs)
+            return dlkit.nets.conv1d.Normalization(
+                _num_channels, num_groups=internal_channels
+            )
+
+        super().__init__(
+            *args,
+            internal_channels=internal_channels,
+            with_InputLayer=_with_InputLayer,
+            with_OutputLayer=_with_OutputLayer,
+            with_Downsample=dlkit.nets.conv1d.Downsample,
+            with_Upsample=dlkit.nets.conv1d.Upsample,
+            with_LevelBlock=dlkit.nets.conv1d.ResBlock,
+            with_Normalization=_Normalization,
+            **kwargs,
+        )
+
 
 # --------------------------------------
 # Tests
@@ -1124,90 +1323,93 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
 
 # TODO use doxygen for these test
 
+
 def test_UNet2d_2025():
-    print('---------------------------------------^')
-    net = UNet2d_2025(1, 1,
-                      down_levels_conv_channels = [[2,2], [4,4], [8,8]],
-                      up_levels_conv_channels   = [[8,8], [4,4], [2,2]],
+    print("---------------------------------------^")
+    net = UNet2d_2025(
+        1,
+        1,
+        down_levels_conv_channels=[[2, 2], [4, 4], [8, 8]],
+        up_levels_conv_channels=[[8, 8], [4, 4], [2, 2]],
     )
     print(net)
 
-    print('Test 1:')
+    print("Test 1:")
     x = torch.ones((1, 1, 16, 16))
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
 
 def test_UNet1d_2021():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = UNet1d_2021(1, 1, channel_mult=(1, 2, 4))
     print(net)
 
-    print('Test 1:')
+    print("Test 1:")
     x = torch.ones((1, 1, 16))
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
 
 def test_UNet2d_2021():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = UNet2d_2021(1, 1, channel_mult=(1, 2, 4))
     print(net)
 
-    print('Test 1:')
+    print("Test 1:")
     x = torch.ones((1, 1, 16, 16))
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
 
 def test_UNet2d_2021_idd():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = UNet2d_2021_idd(1, 1, channel_mult=(1, 2, 4))
     print(net)
 
-    print('Test 1:')
+    print("Test 1:")
     x = torch.ones((1, 1, 16, 16))
     t = torch.tensor([0.1])
     y = net(x, t)
-    print('- input  x =', x, sep='\n')
-    print('- input  t =', t, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- input  t =", t, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
 
 def test_EncoderNet1d_2021():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = EncoderNet1d_2021(1, 1, channel_mult=(1, 1, 1))
     print(net)
 
-    print('Test 1:')
+    print("Test 1:")
     x = torch.ones((1, 1, 16))
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
 
 def test_DecoderNet1d_2021():
-    print('---------------------------------------^')
+    print("---------------------------------------^")
     net = DecoderNet1d_2021(1, 1, channel_mult=(1, 1, 1))
     print(net)
 
-    print('Test 1:')
+    print("Test 1:")
     x = torch.ones((1, 1, 4))
     y = net(x)
-    print('- input  x =', x, sep='\n')
-    print('- output y =', y, sep='\n')
-    print('---------------------------------------$')
+    print("- input  x =", x, sep="\n")
+    print("- output y =", y, sep="\n")
+    print("---------------------------------------$")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     r"""Runs tests."""
     test_UNet2d_2025()
     test_UNet1d_2021()

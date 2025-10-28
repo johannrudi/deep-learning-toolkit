@@ -7,16 +7,18 @@ from prettytable import PrettyTable
 import torch
 import torch.nn as nn
 
+
 def get_gain(activation):
     r"""Calculates the gain to be used as an argument for initializing parameter values."""
     if activation is not None:
         activation_name = type(activation).__name__.lower()
-        if activation_name in ['silu', 'gelu']:
-            activation_name = 'relu'
+        if activation_name in ["silu", "gelu"]:
+            activation_name = "relu"
         gain = nn.init.calculate_gain(activation_name)
     else:
-        gain = nn.init.calculate_gain('linear')
+        gain = nn.init.calculate_gain("linear")
     return gain
+
 
 def set_init_parameters(layer, gain=1.0, bias_scale=0.1):
     r"""
@@ -29,8 +31,9 @@ def set_init_parameters(layer, gain=1.0, bias_scale=0.1):
     """
     nn.init.xavier_uniform_(layer.weight, gain=gain)
     if layer.bias is not None:
-        lim = bias_scale * gain/math.sqrt(layer.bias.size(0))
+        lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
         nn.init.uniform_(layer.bias, a=-lim, b=+lim)
+
 
 def set_zero_parameters(layer):
     r"""
@@ -40,14 +43,15 @@ def set_zero_parameters(layer):
         torch.nn.init.zeros_(p)
     return layer
 
+
 def print_parameters(net):
     r"""
     Original source: https://stackoverflow.com/questions/49201236/check-the-total-number-of-parameters-in-a-pytorch-model
     """
-    table = PrettyTable(['Module name', 'Num. parameters', 'Trainable'])
-    table.align['Module name']     = 'l'
-    table.align['Num. parameters'] = 'r'
-    table.align['Trainable']       = 'c'
+    table = PrettyTable(["Module name", "Num. parameters", "Trainable"])
+    table.align["Module name"] = "l"
+    table.align["Num. parameters"] = "r"
+    table.align["Trainable"] = "c"
     n_trainable_params = 0
     n_nontrainable_params = 0
     for name, parameter in net.named_parameters():
@@ -59,10 +63,15 @@ def print_parameters(net):
             table.add_row([name, n_params, False])
             n_nontrainable_params += n_params
     table.add_divider()
-    table.add_row(['Total number of trainable parameters', f"{n_trainable_params}", True])
-    table.add_row(['Total number of non-trainable parameters', f"{n_nontrainable_params}", False])
+    table.add_row(
+        ["Total number of trainable parameters", f"{n_trainable_params}", True]
+    )
+    table.add_row(
+        ["Total number of non-trainable parameters", f"{n_nontrainable_params}", False]
+    )
     print(table)
     return n_trainable_params, n_nontrainable_params
+
 
 def count_trainable_parameters(net):
     r"""
@@ -70,6 +79,7 @@ def count_trainable_parameters(net):
     """
     assert isinstance(net, nn.Module)
     return sum(p.numel() for p in net.parameters() if p.requires_grad)
+
 
 def count_all_parameters(net):
     r"""
