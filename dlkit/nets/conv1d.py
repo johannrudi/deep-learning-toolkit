@@ -3,7 +3,7 @@ Networks with 1D convolutional layers.
 """
 
 from collections import OrderedDict
-import math
+import logging, math
 import torch
 import torch.nn as nn
 
@@ -133,7 +133,7 @@ class ConvResNet(nn.Module):
 
     Args:
         input_channels: number of input channels
-        conv_layers_params: configuration for convolutional layers
+        conv_resnet_params: configuration for convolutional layers
         mlp_resnet_params: parameters to pass to MLPResNet constructor
 
     Specs:
@@ -143,46 +143,67 @@ class ConvResNet(nn.Module):
     def __init__(
         self,
         input_channels,
-        conv_layers_params={},
+        conv_resnet_params={},
         mlp_resnet_params={},
     ):
         super().__init__()
         # set from arguments
         self.input_channels = input_channels
-        self.conv_layers_params = dict(conv_layers_params)
+        self.conv_resnet_params = dict(conv_resnet_params)
         self.mlp_resnet_params = dict(mlp_resnet_params)
 
         # set default convolution parameters
-        self.conv_layers_params.setdefault("channels_mult", [8, 16, 32])
-        self.conv_layers_params.setdefault("kernels", [5, 5, 5])
-        self.conv_layers_params.setdefault("activation", nn.ReLU())
-        self.conv_layers_params.setdefault("use_dropout", False)
-        self.conv_layers_params.setdefault("conv_kwargs", {})
-        assert len(self.conv_layers_params["channels_mult"]) == len(
-            self.conv_layers_params["kernels"]
+        self.conv_resnet_params.setdefault("channels_mult", [8, 16, 32])
+        self.conv_resnet_params.setdefault("kernels", [5, 5, 5])
+        self.conv_resnet_params.setdefault("activation", nn.ReLU())
+        self.conv_resnet_params.setdefault("use_dropout", False)
+        self.conv_resnet_params.setdefault("mlb_kwargs", {})
+        assert len(self.conv_resnet_params["channels_mult"]) == len(
+            self.conv_resnet_params["kernels"]
         )
 
+        # set scale factor
+        if "stride" not in self.conv_resnet_params["mlb_kwargs"]:
+            scale_factor = 0.5  # downsample
+        else:
+            scale_factor = None
+
         # create dropout layer
-        if self.conv_layers_params["use_dropout"]:
+        if self.conv_resnet_params["use_dropout"]:
             self.dropout = nn.Dropout(use_dropout)
         else:
             self.dropout = None
 
-        # create convolutional layers using Downsample
-        layers = list()
+        # create input layer
         in_channels = self.input_channels
+        out_channels = self.conv_resnet_params["channels_mult"][0] * self.input_channels
+        kernel_size = self.conv_resnet_params["kernels"][0]
+        self.input_layer = nn.Conv1d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            padding=1,
+            padding_mode="replicate",
+            stride=1,
+        )
+        in_channels = out_channels
+
+        # create convolutional layers using MultiLevelBlock
+        layers = list()
         for mult, kernel_size in zip(
-            self.conv_layers_params["channels_mult"], self.conv_layers_params["kernels"]
+            self.conv_resnet_params["channels_mult"], self.conv_resnet_params["kernels"]
         ):
             out_channels = mult * self.input_channels
             layers.append(
-                Downsample(
+                MultiLevelBlock(
                     in_channels,
-                    out_channels,
                     kernel_size,
-                    activation=self.conv_layers_params["activation"],
+                    activation=self.conv_resnet_params["activation"],
                     dropout=self.dropout,
-                    **self.conv_layers_params["conv_kwargs"],
+                    output_channels=out_channels,
+                    scale_factor=scale_factor,
+                    skip_connection=True,
+                    **self.conv_resnet_params["mlb_kwargs"],
                 )
             )
             in_channels = out_channels
@@ -210,7 +231,9 @@ class ConvResNet(nn.Module):
             h0, h1, ... (tensor, optional): input tensors to hidden dense layers
         """
         assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
-        h = x
+
+        # apply input layer
+        h = self.input_layer(x)
 
         # apply convolutional layers
         for layer in self.conv_resnet_block:
@@ -230,6 +253,8 @@ class ConvResNet(nn.Module):
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
+        # initialize input layer
+        _set_init_parameters(self.input_layer, _get_gain(None))
         # initialize convolutional block
         for layer in self.conv_resnet_block:
             layer.init_parameters()
@@ -243,7 +268,7 @@ class ConvResNet(nn.Module):
 # --------------------------------------
 
 
-class Downsample(nn.Module):
+class UNetDownsample(nn.Module):
     """
     A downsampling layer with a convolution.
 
@@ -260,53 +285,56 @@ class Downsample(nn.Module):
         activation=None,
         dropout=None,
         scale_factor=2,
-        **conv_kwargs,
+        **layer_kwargs,
     ):
         super().__init__()
         # create convolutional layer with stride=scale_factor
         # add default values only if keys don't exist
-        conv_kwargs = dict(conv_kwargs)  # copy to avoid modifying input
-        conv_kwargs.setdefault("padding", 1)
-        conv_kwargs.setdefault("padding_mode", "replicate")
-        conv_kwargs.setdefault("stride", scale_factor)
-        self.layer = nn.Conv1d(
+        self.layer_kwargs = dict(layer_kwargs)  # copy to avoid modifying input
+        self.layer_kwargs.setdefault("padding", 1)
+        self.layer_kwargs.setdefault("padding_mode", "replicate")
+        self.layer_kwargs.setdefault("stride", scale_factor)
+        self.input_channels = input_channels
+        # create layers
+        block = OrderedDict()
+        block["layer"] = nn.Conv1d(
             input_channels,
             output_channels,
             kernel_size,
-            **conv_kwargs,
+            **self.layer_kwargs,
         )
-        # set from arguments
-        self.input_channels = input_channels
-        self.scale_factor = scale_factor
-        self.activation = activation
-        self.dropout = dropout
+        if activation is not None:
+            block["activation"] = activation
+        if dropout is not None:
+            block["dropout"] = dropout
+        self.block = nn.Sequential(block)
         # initialize parameters
         self.init_parameters()
 
     def forward(self, x):
         assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
-        h = self.layer(x)
-        if self.activation is not None:
-            h = self.activation(h)
-        if self.dropout is not None:
-            h = self.dropout(h)
-        y = h
+        y = self.block(x)
         return y
 
     def init_parameters(self):
         r"""
         Initializes the values of trainable parameters.
         """
-        _set_init_parameters(self.layer, _get_gain(self.activation))
+        _set_init_parameters(self.block.layer, _get_gain(self.block.activation))
 
 
-class Upsample(nn.Module):
+class UNetUpsample(nn.Module):
     """
     An upsampling layer with a convolution.
 
     Args:
       input_channels   Channels in the inputs.
       output_channels  Channels in the outputs.
+
+    Note:
+      Mode `mode='nearest-exact'` matches Scikit-Image and PIL nearest neighbours
+      interpolation algorithms and fixes known issues with `mode='nearest'`.
+      (https://docs.pytorch.org/docs/2.9/generated/torch.nn.functional.interpolate.html)
     """
 
     def __init__(
@@ -317,27 +345,31 @@ class Upsample(nn.Module):
         activation=None,
         dropout=None,
         scale_factor=2,
-        interp_mode="nearest",
-        **conv_kwargs,
+        interp_mode="nearest-exact",
+        **layer_kwargs,
     ):
         super().__init__()
         # create convolutional layer
         # add default values only if keys don't exist
-        conv_kwargs = dict(conv_kwargs)  # copy to avoid modifying input
-        conv_kwargs.setdefault("padding", 1)
-        conv_kwargs.setdefault("padding_mode", "replicate")
-        self.layer = nn.Conv1d(
-            input_channels,
-            output_channels,
-            kernel_size,
-            **conv_kwargs,
-        )
-        # set from arguments
+        self.layer_kwargs = dict(layer_kwargs)  # copy to avoid modifying input
+        self.layer_kwargs.setdefault("padding", 1)
+        self.layer_kwargs.setdefault("padding_mode", "replicate")
         self.input_channels = input_channels
         self.scale_factor = scale_factor
         self.interp_mode = interp_mode
-        self.activation = activation
-        self.dropout = dropout
+        # create layers
+        block = OrderedDict()
+        block["layer"] = nn.Conv1d(
+            input_channels,
+            output_channels,
+            kernel_size,
+            **self.layer_kwargs,
+        )
+        if activation is not None:
+            block["activation"] = activation
+        if dropout is not None:
+            block["dropout"] = dropout
+        self.block = nn.Sequential(block)
         # initialize parameters
         self.init_parameters()
 
@@ -346,31 +378,21 @@ class Upsample(nn.Module):
         h = nn.functional.interpolate(
             x, scale_factor=self.scale_factor, mode=self.interp_mode
         )
-        h = self.layer(h)
-        if self.activation is not None:
-            h = self.activation(h)
-        if self.dropout is not None:
-            h = self.dropout(h)
-        y = h
+        y = self.block(h)
         return y
 
     def init_parameters(self):
         r"""
         Initializes the values of trainable parameters.
         """
-        _set_init_parameters(self.layer, _get_gain(self.activation))
-
-
-# TODO
-# class LevelBlock(nn.Module):
+        _set_init_parameters(self.block.layer, _get_gain(self.block.activation))
 
 
 def Normalization(num_channels, num_groups=1):
     return nn.GroupNorm(num_groups, num_channels)
 
 
-# TODO replace by implementation of LevelBlock
-class ResBlock(nn.Module):
+class UNetResBlock(nn.Module):
     """
     A residual block that can optionally change the number of channels.
 
@@ -442,6 +464,249 @@ class ResBlock(nn.Module):
         h = self.in_layers(x)
         h = self.out_layers(h)
         return self.skip_connection(x) + h
+
+
+# --------------------------------------
+# Universal-Design Multi-Level Components
+# --------------------------------------
+
+
+class MultiLevelBlock(nn.Module):
+    """
+    A multi-level block with convolutional layers following a universal design.
+
+    Args:
+      input_channels   Channels in the inputs.
+      output_channels  Channels in the outputs.
+    """
+
+    def __init__(
+        self,
+        input_channels,
+        kernel_size,
+        normalization=None,
+        normalization_layer_channels=None,
+        activation=None,
+        activation_layer_channels=None,
+        output_channels=None,
+        dropout=None,
+        scale_factor=None,
+        skip_connection=False,
+        interp_mode="nearest-exact",
+        logger=logging.getLogger("dlkit.nets.conv1d.MultiLevelBlock"),
+        **layer_kwargs,
+    ):
+        super().__init__()
+        # set default values to layer_kwargs if keys don't exist
+        self.layer_kwargs = dict(layer_kwargs)  # copy to avoid modifying input
+        self.layer_kwargs.setdefault("padding", 1)
+        self.layer_kwargs.setdefault("padding_mode", "replicate")
+        self.padding = self.layer_kwargs["padding"]
+        # set attributes from arguments
+        self.input_channels = input_channels
+        self.interp_mode = interp_mode
+        if scale_factor is not None:
+            assert (
+                "stride" not in layer_kwargs or scale_factor == layer_kwargs["stride"]
+            ), f"Invalid args: Cannot set both scale_factor={scale_factor} and stride={layer_kwargs['stride']}."
+            if 1 <= scale_factor:
+                self.layer_kwargs["stride"] = 1
+            elif 0 < scale_factor:
+                self.layer_kwargs["stride"] = int(1 / scale_factor)
+            else:
+                raise ValueError(
+                    f"Invalid arg: scale_factor={scale_factor} cannot be non-positive."
+                )
+            self.scale_factor = float(scale_factor)
+        elif "stride" in layer_kwargs:
+            self.scale_factor = 1.0 / layer_kwargs["stride"]
+        else:
+            self.scale_factor = 1.0
+        # init channels
+        chl = [input_channels]
+        # set up normalization
+        if normalization_layer_channels or normalization_layer_channels is None:
+            if normalization_layer_channels is None:
+                normalization_layer_channels = chl[-1]
+            chl.append(normalization_layer_channels)
+        if normalization is None:
+            normalization = nn.GroupNorm(1, chl[-1])
+        if (not normalization) != (not normalization_layer_channels):
+            logger.warning(
+                f"Incoherent args: {normalization=}, {normalization_layer_channels=}"
+            )
+        # set up activation
+        if activation_layer_channels or activation_layer_channels is None:
+            if activation_layer_channels is None:
+                activation_layer_channels = 4 * chl[-1]
+            chl.append(activation_layer_channels)
+        if activation is None:
+            activation = nn.ReLU()
+        # set output channels
+        if output_channels is not None:
+            chl.append(output_channels)
+        else:
+            chl.append(input_channels)
+        # create layers
+        block = OrderedDict()
+        block["layer_0"] = nn.Conv1d(chl[0], chl[1], kernel_size, **self.layer_kwargs)
+        if normalization:
+            block["normalization"] = normalization
+        if normalization_layer_channels:
+            block["layer_1"] = nn.Conv1d(chl[1], chl[2], 1)
+        if activation:
+            block["activation"] = activation
+        if dropout:
+            block["dropout"] = dropout
+        if activation_layer_channels:
+            block["layer_2"] = nn.Conv1d(chl[2], chl[3], 1)
+        self.block = nn.Sequential(block)
+        # create skip connection
+        if skip_connection:
+            self.skip_interp_mode = interp_mode
+            if chl[0] == chl[-1]:
+                self.skip_connection = nn.Identity()
+            else:
+                self.skip_connection = nn.Conv1d(chl[0], chl[-1], 1)
+        else:
+            self.skip_connection = None
+        # initialize parameters
+        self.init_parameters()
+
+    def forward(self, *x):
+        channel_dim, size_dim = 1, 2
+        # concatenate along channel dimension
+        if 1 < len(x):
+            h = torch.cat(x, dim=channel_dim)
+        else:
+            assert 1 == len(x)
+            h = x[0]
+        assert (
+            h.size(channel_dim) == self.input_channels
+        ), f"Expect {self.input_channels=}, got {h.size(channel_dim)=}"
+        # scale up
+        if 1.0 < self.scale_factor:
+            h = nn.functional.interpolate(
+                h, scale_factor=self.scale_factor, mode=self.interp_mode
+            )
+        # apply block
+        hb = self.block(h)
+        # apply skip connection (optional)
+        if self.skip_connection is not None:
+            # scale down
+            if self.scale_factor < 1.0:
+                hs_size = int(math.ceil(h.size(size_dim) * self.scale_factor)) + 2 * (
+                    self.padding - 1
+                )
+                h = nn.functional.interpolate(
+                    h, size=hs_size, mode=self.skip_interp_mode
+                )
+            hs = self.skip_connection(h)
+            y = 0.5 * hs + 0.5 * hb
+        else:
+            y = hb
+        return y
+
+    def init_parameters(self):
+        r"""
+        Initializes the values of trainable parameters.
+        """
+        if hasattr(self.block, "activation"):
+            gain = _get_gain(self.block.activation)
+        else:
+            gain = _get_gain(None)
+        _set_init_parameters(self.block.layer_0, gain)
+        if hasattr(self.block, "layer_1"):
+            _set_init_parameters(self.block.layer_1, gain)
+        if hasattr(self.block, "layer_2"):
+            _set_init_parameters(self.block.layer_2, gain)
+        if hasattr(self, "skip_connection") and isinstance(
+            self.skip_connection, nn.Conv1d
+        ):
+            _set_init_parameters(self.skip_connection)
+
+
+class DownsampleBlock(MultiLevelBlock):
+    """
+    Downsampling based on the universal-design multi-level block.
+
+    Args:
+      input_channels   Channels in the inputs.
+      output_channels  Channels in the outputs.
+    """
+
+    def __init__(
+        self,
+        input_channels,
+        kernel_size,
+        scale_factor=0.5,
+        skip_connection=True,
+        interp_mode="nearest-exact",
+        **mlb_kwargs,
+    ):
+        super().__init__(
+            input_channels,
+            kernel_size,
+            scale_factor=scale_factor,
+            skip_connection=skip_connection,
+            interp_mode=interp_mode,
+            logger=logging.getLogger("dlkit.nets.conv1d.DownsampleBlock"),
+            **mlb_kwargs,
+        )
+
+
+class UpsampleBlock(MultiLevelBlock):
+    """
+    Upsampling based on the universal-design multi-level block.
+
+    Args:
+      input_channels   Channels in the inputs.
+      output_channels  Channels in the outputs.
+    """
+
+    def __init__(
+        self,
+        input_channels,
+        kernel_size,
+        scale_factor=2,
+        skip_connection=True,
+        interp_mode="nearest-exact",
+        **mlb_kwargs,
+    ):
+        super().__init__(
+            input_channels,
+            kernel_size,
+            scale_factor=scale_factor,
+            skip_connection=skip_connection,
+            interp_mode=interp_mode,
+            logger=logging.getLogger("dlkit.nets.conv1d.UpsampleBlock"),
+            **mlb_kwargs,
+        )
+
+
+class LevelBlock(MultiLevelBlock):
+    """
+    Residual block based on the universal-design multi-level block.
+
+    Args:
+      input_channels   Channels in the inputs.
+      output_channels  Channels in the outputs.
+    """
+
+    def __init__(
+        self,
+        input_channels,
+        kernel_size,
+        skip_connection=True,
+        **mlb_kwargs,
+    ):
+        super().__init__(
+            input_channels,
+            kernel_size,
+            skip_connection=skip_connection,
+            logger=logging.getLogger("dlkit.nets.conv1d.LevelBlock"),
+            **mlb_kwargs,
+        )
 
 
 # --------------------------------------
@@ -529,13 +794,14 @@ def test_ConvResNet():
     input_channels = 1
     input_length = 64
     output_size = 10
+    channels_mult = [4, 8]
 
     # test basic configuration without MLPResNet
     print("Test 1: basic configuration (conv layers only)")
     net = ConvResNet(
         input_channels=input_channels,
-        conv_layers_params={
-            "channels_mult": [4, 8],
+        conv_resnet_params={
+            "channels_mult": channels_mult,
             "kernels": [3, 3],
             "activation": nn.ReLU(),
         },
@@ -543,12 +809,16 @@ def test_ConvResNet():
     print(net)
     x = torch.randn(batch_size, input_channels, input_length)
     # calculate size after conv layers with 2 downsampling layers (scale_factor=2)
-    # and output channels = 8 * input_channels = 8
-    expected_out_size = (batch_size, 8, input_length // 4)
+    # and output channels = input_channels * channels_mult[-1]
+    expected_out_size = (
+        batch_size,
+        input_channels * channels_mult[-1],
+        input_length // 4,
+    )
     expected_flat_size = (batch_size, expected_out_size[1] * expected_out_size[2])
     print(f"Expected output size: {expected_out_size}")
     y = net(x)
-    print(f"Output size: {y.shape}")
+    print(f"Output size: {y.size()}")
     assert (
         y.size() == expected_out_size
     ), f"Expected {expected_out_size}, got {y.size()}"
@@ -557,7 +827,7 @@ def test_ConvResNet():
     print("\nTest 2: with MLPResNet")
     net = ConvResNet(
         input_channels=input_channels,
-        conv_layers_params={
+        conv_resnet_params={
             "channels_mult": [4, 8],
             "kernels": [3, 3],
             "activation": nn.ReLU(),
@@ -583,7 +853,7 @@ def test_ConvResNet():
     hidden_input_size = 8
     net = ConvResNet(
         input_channels=input_channels,
-        conv_layers_params={
+        conv_resnet_params={
             "channels_mult": [4, 8],
             "kernels": [3, 3],
             "activation": nn.ReLU(),
@@ -610,8 +880,197 @@ def test_ConvResNet():
     print("---------------------------------------$")
 
 
+def test_MultiLevelBlock():
+    """Test MultiLevelBlock module."""
+    print("---------------------------------------^")
+    batch_size = 4
+    input_channels = 16
+    input_length = 64
+
+    x = torch.randn(batch_size, input_channels, input_length)
+
+    #
+    # Test Block
+    #
+
+    expected_out_size = (batch_size, input_channels, input_length)
+
+    # test basic configuration without skip connection
+    print("Test 1: basic configuration (no skip connection)")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+    )
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    # test single-layer configuration
+    print("\nTest 2: single-layer configuration")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        normalization=False,
+        normalization_layer_channels=False,
+        activation_layer_channels=False,
+    )
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    # test with custom channels and normalization
+    print("\nTest 3: with custom channels and normalization")
+    output_channels = 32
+    normalization_layer_channels = 8
+    activation_layer_channels = 64
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        normalization=nn.GroupNorm(2, normalization_layer_channels),
+        normalization_layer_channels=normalization_layer_channels,
+        activation=nn.SiLU(),
+        activation_layer_channels=activation_layer_channels,
+        output_channels=output_channels,
+    )
+    expected_out_size = (batch_size, output_channels, input_length)
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    # test with skip connection
+    print("\nTest 4: with skip connection")
+    output_channels = 32
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        output_channels=output_channels,
+        skip_connection=True,
+    )
+    expected_out_size = (batch_size, output_channels, input_length)
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    # test with dropout
+    print("\nTest 5: with dropout")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        dropout=nn.Dropout(0.1, inplace=False),
+        skip_connection=True,
+    )
+    expected_out_size = (batch_size, input_channels, input_length)
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    #
+    # Test Downsample
+    #
+
+    expected_out_size = (batch_size, input_channels, input_length // 2)
+
+    # test single-layer downsample
+    print("\nTest 6: single-layer downsample (no skip connection)")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        scale_factor=0.5,
+        normalization=False,
+        normalization_layer_channels=False,
+        activation_layer_channels=False,
+    )
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    # test downsample with skip connection
+    print("\nTest 7: downsample with skip connection")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        scale_factor=0.5,
+        skip_connection=True,
+    )
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    #
+    # Test Upsample
+    #
+
+    expected_out_size = (batch_size, input_channels, input_length * 2)
+
+    # test single-layer upsample
+    print("\nTest 8: single-layer upsample (no skip connection)")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        scale_factor=2.0,
+        normalization=False,
+        normalization_layer_channels=False,
+        activation_layer_channels=False,
+    )
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    # test upsample with skip connection
+    print("\nTest 9: upsample with skip connection")
+    net = MultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        scale_factor=2.0,
+        skip_connection=True,
+    )
+    print(net)
+    print(f"Expected output size: {expected_out_size}")
+    y = net(x)
+    print(f"Output size: {y.size()}")
+    assert (
+        y.size() == expected_out_size
+    ), f"Expected {expected_out_size}, got {y.size()}"
+
+    print("---------------------------------------$")
+
+
 if __name__ == "__main__":
     r"""Runs tests."""
     test_ConvNet()
     print("\n")
     test_ConvResNet()
+    print("\n")
+    test_MultiLevelBlock()
