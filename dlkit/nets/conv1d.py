@@ -523,14 +523,14 @@ class MultiLevelBlock(nn.Module):
         else:
             self.scale_factor = 1.0
         # init channels
-        chl = [input_channels]
+        ch = [input_channels]
         # set up normalization
         if normalization_layer_channels or normalization_layer_channels is None:
             if normalization_layer_channels is None:
-                normalization_layer_channels = chl[-1]
-            chl.append(normalization_layer_channels)
+                normalization_layer_channels = ch[-1]
+            ch.append(normalization_layer_channels)
         if normalization is None:
-            normalization = nn.GroupNorm(1, chl[-1])
+            normalization = nn.GroupNorm(1, ch[-1])
         if (not normalization) != (not normalization_layer_channels):
             logger.warning(
                 f"Incoherent args: {normalization=}, {normalization_layer_channels=}"
@@ -538,36 +538,40 @@ class MultiLevelBlock(nn.Module):
         # set up activation
         if activation_layer_channels or activation_layer_channels is None:
             if activation_layer_channels is None:
-                activation_layer_channels = 4 * chl[-1]
-            chl.append(activation_layer_channels)
+                activation_layer_channels = 4 * ch[-1]
+            ch.append(activation_layer_channels)
         if activation is None:
             activation = nn.ReLU()
         # set output channels
         if output_channels is not None:
-            chl.append(output_channels)
+            ch.append(output_channels)
         else:
-            chl.append(input_channels)
+            ch.append(input_channels)
         # create layers
+        i = 0
         block = OrderedDict()
-        block["layer_0"] = nn.Conv1d(chl[0], chl[1], kernel_size, **self.layer_kwargs)
+        block["layer_0"] = nn.Conv1d(ch[i], ch[i+1], kernel_size, **self.layer_kwargs)
+        i += 1
         if normalization:
             block["normalization"] = normalization
         if normalization_layer_channels:
-            block["layer_1"] = nn.Conv1d(chl[1], chl[2], 1)
+            block["layer_1"] = nn.Conv1d(ch[i], ch[i+1], 1)
+            i += 1
         if activation:
             block["activation"] = activation
         if dropout:
             block["dropout"] = dropout
         if activation_layer_channels:
-            block["layer_2"] = nn.Conv1d(chl[2], chl[3], 1)
+            block["layer_2"] = nn.Conv1d(ch[i], ch[i+1], 1)
+            i += 1
         self.block = nn.Sequential(block)
         # create skip connection
         if skip_connection:
             self.skip_interp_mode = interp_mode
-            if chl[0] == chl[-1]:
+            if ch[0] == ch[-1]:
                 self.skip_connection = nn.Identity()
             else:
-                self.skip_connection = nn.Conv1d(chl[0], chl[-1], 1)
+                self.skip_connection = nn.Conv1d(ch[0], ch[-1], 1)
         else:
             self.skip_connection = None
         # initialize parameters
