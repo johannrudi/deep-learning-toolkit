@@ -189,7 +189,7 @@ class MLPNet_MultIn(MLPNet):
         h = self.input_layer(h)
         # apply hidden layers
         for block_idx, block in enumerate(self.hidden_blocks):
-            h_in = h_kwargs.get(f"h{block_idx}", None)
+            h_in = h_kwargs.get(f"h{block_idx}")
             if h_in is not None:
                 h = torch.cat((h, torch.flatten(h_in, 1)), dim=1)
             assert (
@@ -392,6 +392,8 @@ class ResidualBlock(nn.Module):
             self.residual_block.layer_1, _get_gain(self.residual_block.activation)
         )
         _set_init_parameters(self.residual_block.layer_2, _get_gain(None))
+        if self.skip_connection is not None:
+            _set_init_parameters(self.skip_connection, _get_gain(None))
 
 
 class MLPResNet(nn.Module):
@@ -527,7 +529,11 @@ class MLPResNet(nn.Module):
             block_embed_size = getattr(block, f"embedding_size", None)
             block_input_size = getattr(block, f"input_size", None)
             assert (block_embed_size is None) ^ (block_input_size is None)
-            h_in = h_kwargs.get(f"h{block_idx}", None)
+            # get hidden input
+            h_in = h_kwargs.get(f"h{block_idx}")
+            if h_in is None:
+                h_in = h_kwargs.get("h_all")
+            # apply residual block
             if h_in is not None:
                 assert h_in.dim() in [2, 3], f"{h_in.dim()=}"
                 assert h_in.size(0) == batch_size, f"{h_in.size(0)=}, {batch_size}"
@@ -631,7 +637,7 @@ def test_MLPNet():
     print("- input  x =", x)
     print("- output y =", y)
 
-    print("Test 2:")
+    print("\nTest 2:")
     net = MLPNet(4, 3, input_layer_activation=nn.SiLU())
     print(net)
     x = torch.randn(8, 4)
@@ -641,7 +647,7 @@ def test_MLPNet():
     print("- output y =")
     print(y)
 
-    print("Test 3:")
+    print("\nTest 3:")
     net = MLPNet(4, 3, output_layer_activation=nn.Sigmoid())
     print(net)
     x = torch.randn(10000, 4)
@@ -663,7 +669,7 @@ def test_MLPNet_MultIn():
     print("- input  x1 =", x1)
     print("- output y  =", y)
 
-    print("Test 2:")
+    print("\nTest 2:")
     net = MLPNet_MultIn(
         4 + 2,
         3,
@@ -699,13 +705,13 @@ def test_ResidualBlock():
     print("- input  x =", x)
     print("- output y =", y)
 
-    print("Test 2:")
+    print("\nTest 2:")
     x = torch.randn(1, 2, 4)
     y = net(x)
     print("- input  x =", x)
     print("- output y =", y)
 
-    print("Test 3:")
+    print("\nTest 3:")
     net = ResidualBlock(4 + 4, 3)
     print(net)
     x0 = torch.tensor([[[1.0, -1.0, 1.0, -1.0]]])
@@ -715,7 +721,7 @@ def test_ResidualBlock():
     print("- input  x1 =", x1)
     print("- output y  =", y)
 
-    print("Test 4:")
+    print("\nTest 4:")
     net = AttentionBlock(embedding_size=6, attention_layer_n_heads=3)
     print(net)
     x = torch.randn(1, 6, 4)
@@ -727,9 +733,11 @@ def test_ResidualBlock():
 
 def test_MLPResNet():
     print("---------------------------------------^")
-    print("Test 1:")
+    print("Test 1: single input network")
     net = MLPResNet(
-        4, 10, residual_blocks_sizes=2 * [(16, 32, 128, 16)] + [(16, 16, 64, 8)]
+        4,
+        10,
+        residual_blocks_sizes=2 * [(16, 32, 128, 16)] + [(16, 16, 64, 8)],
     )
     print(net)
     x = torch.tensor([[1.0, -1.0, 1.0, -1.0]])
@@ -737,8 +745,12 @@ def test_MLPResNet():
     print("- input  x =", x)
     print("- output y =", y)
 
-    print("Test 2:")
-    net = MLPResNet((4 + 2, 8), 10, residual_blocks_sizes=2 * [(20, 30, 60, 10)])
+    print("\nTest 2: multi-input and hidden layer input")
+    net = MLPResNet(
+        (4 + 2, 8),
+        10,
+        residual_blocks_sizes=2 * [(20, 30, 60, 10)],
+    )
     print(net)
     x0 = torch.tensor([[1.0, -1.0, 1.0, -1.0]])
     x1 = torch.tensor([[2.0, -2.0]])
@@ -751,7 +763,7 @@ def test_MLPResNet():
     print("- input  h1 =", h1)
     print("- output y  =", y)
 
-    print("Test 3:")
+    print("\nTest 3: with attention blocks")
     net = MLPResNet(
         4,
         10,
