@@ -37,6 +37,7 @@ def trace_handler(prof, device=None, log_profile_dir="."):
     print(f"</profile_result>", "\n")
 
     # write trace file
+    os.makedirs(log_profile_dir, exist_ok=True)
     trace_path = os.path.join(log_profile_dir, f"prof_step_{prof.step_num}.json")
     prof.export_chrome_trace(trace_path)
 
