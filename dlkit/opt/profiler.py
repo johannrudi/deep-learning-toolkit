@@ -23,6 +23,8 @@ def trace_handler(prof, device=None, log_profile_dir="."):
 
     alternative handler: torch.profiler.tensorboard_trace_handler(log_profile_dir)
     """
+    os.makedirs(log_profile_dir, exist_ok=True)
+
     # generate tables
     table = f"<profile_result step={prof.step_num}>\n"
     table += get_table(prof, "cpu_time_total")
@@ -41,7 +43,6 @@ def trace_handler(prof, device=None, log_profile_dir="."):
     print(table)
 
     # write trace file
-    os.makedirs(log_profile_dir, exist_ok=True)
     trace_path = os.path.join(log_profile_dir, f"trace_prof_step_{prof.step_num}.json")
     prof.export_chrome_trace(trace_path)
 
