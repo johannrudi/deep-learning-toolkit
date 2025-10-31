@@ -4,7 +4,7 @@ import logging, os
 import torch
 
 
-def print_table(prof, sort_by, row_limit=10):
+def get_table(prof, sort_by, row_limit=10):
     """Prints a table with metrics into stdout.
 
     Options for sort_by:
@@ -13,10 +13,9 @@ def print_table(prof, sort_by, row_limit=10):
     - [self_ +] f"{device}_time_total"
     - "self_cpu_memory_usage"
     """
-    output = prof.key_averages().table(sort_by=sort_by, row_limit=row_limit)
-    print(f"<{sort_by}>")
-    print(output.strip())
-    print(f"</{sort_by}>")
+    table = prof.key_averages().table(sort_by=sort_by, row_limit=row_limit)
+    table = f"<{sort_by}>\n{table.strip()}\n</{sort_by}>\n"
+    return table
 
 
 def trace_handler(prof, device=None, log_profile_dir="."):
@@ -24,21 +23,26 @@ def trace_handler(prof, device=None, log_profile_dir="."):
 
     alternative handler: torch.profiler.tensorboard_trace_handler(log_profile_dir)
     """
-    # print tables
-    print(f"<profile_result step={prof.step_num}>")
-    print_table(prof, "cpu_time_total")
-    print_table(prof, "self_cpu_time_total")
+    # generate tables
+    table = f"<profile_result step={prof.step_num}>\n"
+    table += get_table(prof, "cpu_time_total")
+    table += get_table(prof, "self_cpu_time_total")
     if device:
-        print_table(prof, f"{device}_time_total")
-        print_table(prof, f"self_{device}_time_total")
-    print_table(prof, "self_cpu_memory_usage")
+        table += get_table(prof, f"{device}_time_total")
+        table += get_table(prof, f"self_{device}_time_total")
+    table += get_table(prof, "self_cpu_memory_usage")
     if device:
-        print_table(prof, f"self_{device}_memory_usage")
-    print(f"</profile_result>", "\n")
+        table += get_table(prof, f"self_{device}_memory_usage")
+    table += f"</profile_result>\n"
+    # write file and print
+    table_path = os.path.join(log_profile_dir, f"table_prof_step_{prof.step_num}.txt")
+    with open(table_path, "w") as f:
+        f.write(table)
+    print(table)
 
     # write trace file
     os.makedirs(log_profile_dir, exist_ok=True)
-    trace_path = os.path.join(log_profile_dir, f"prof_step_{prof.step_num}.json")
+    trace_path = os.path.join(log_profile_dir, f"trace_prof_step_{prof.step_num}.json")
     prof.export_chrome_trace(trace_path)
 
 

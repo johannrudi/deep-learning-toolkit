@@ -44,7 +44,7 @@ def set_zero_parameters(layer):
     return layer
 
 
-def print_parameters(net):
+def get_parameters(net):
     r"""
     Original source: https://stackoverflow.com/questions/49201236/check-the-total-number-of-parameters-in-a-pytorch-model
     """
@@ -69,8 +69,7 @@ def print_parameters(net):
     table.add_row(
         ["Total number of non-trainable parameters", f"{n_nontrainable_params}", False]
     )
-    print(table)
-    return n_trainable_params, n_nontrainable_params
+    return n_trainable_params, n_nontrainable_params, table
 
 
 def count_trainable_parameters(net):
