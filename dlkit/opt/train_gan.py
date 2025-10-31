@@ -335,9 +335,13 @@ def train_batches(
     max_batches=None,
 ):
     """Runs training loop over batches."""
-    train_batch_dlog = _dlog_train_batch_initialize(len(dataloader))
+    if max_batches is None:
+        max_batches = len(dataloader)
+    train_batch_dlog = _dlog_train_batch_initialize(max_batches)
     # <code id="training_loop_over_batches">
     for batch_idx, data in enumerate(dataloader):
+        if max_batches <= batch_idx:
+            break
         # initialize batch
         if batch_initialize_fn:
             batch_initialize_fn(batch_idx)
@@ -407,8 +411,6 @@ def train_batches(
         # finalize batch
         if batch_finalize_fn:
             batch_finalize_fn(batch_idx)
-        if max_batches and max_batches <= (batch_idx + 1):
-            break
     # </code>
 
     # finalize and return log
