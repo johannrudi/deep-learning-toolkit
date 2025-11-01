@@ -497,11 +497,25 @@ class MultiLevelBlock(nn.Module):
         **layer_kwargs,
     ):
         super().__init__()
+        # define the padding s.t. `input_size == output_size` after convolution
+        if 1 == kernel_size % 2:
+            self._padding_const_size = (
+                (kernel_size - 1) // 2,
+                (kernel_size - 1) // 2,
+            )
+        else:
+            self._padding_const_size = (
+                (kernel_size - 1) // 2,
+                (kernel_size - 1) // 2 + 1,
+            )
         # set default values to layer_kwargs if keys don't exist
         self.layer_kwargs = dict(layer_kwargs)  # copy to avoid modifying input
-        self.layer_kwargs.setdefault("padding", 1)
         self.layer_kwargs.setdefault("padding_mode", "replicate")
-        self.padding = self.layer_kwargs["padding"]
+        self.layer_kwargs.setdefault("padding", self._padding_const_size)
+        if isinstance(self.layer_kwargs["padding"], int):
+            self.padding = tuple(2 * [self.layer_kwargs["padding"]])
+        else:
+            self.padding = self.layer_kwargs["padding"]
         # set attributes from arguments
         self.input_channels = input_channels
         self.interp_mode = interp_mode
@@ -550,19 +564,19 @@ class MultiLevelBlock(nn.Module):
         # create layers
         i = 0
         block = OrderedDict()
-        block["layer_0"] = nn.Conv1d(ch[i], ch[i+1], kernel_size, **self.layer_kwargs)
+        block["layer_0"] = nn.Conv1d(ch[i], ch[i + 1], kernel_size, **self.layer_kwargs)
         i += 1
         if normalization:
             block["normalization"] = normalization
         if normalization_layer_channels:
-            block["layer_1"] = nn.Conv1d(ch[i], ch[i+1], 1)
+            block["layer_1"] = nn.Conv1d(ch[i], ch[i + 1], 1)
             i += 1
         if activation:
             block["activation"] = activation
         if dropout:
             block["dropout"] = dropout
         if activation_layer_channels:
-            block["layer_2"] = nn.Conv1d(ch[i], ch[i+1], 1)
+            block["layer_2"] = nn.Conv1d(ch[i], ch[i + 1], 1)
             i += 1
         self.block = nn.Sequential(block)
         # create skip connection
@@ -599,8 +613,10 @@ class MultiLevelBlock(nn.Module):
         if self.skip_connection is not None:
             # scale down
             if self.scale_factor < 1.0:
-                hs_size = int(math.ceil(h.size(size_dim) * self.scale_factor)) + 2 * (
-                    self.padding - 1
+                hs_size = (
+                    int(math.ceil(h.size(size_dim) * self.scale_factor))
+                    + sum(self.padding)
+                    - sum(self._padding_const_size)
                 )
                 h = nn.functional.interpolate(
                     h, size=hs_size, mode=self.skip_interp_mode
