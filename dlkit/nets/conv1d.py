@@ -164,50 +164,52 @@ class ConvResNet(nn.Module):
 
         # set scale factor
         if "stride" not in self.conv_resnet_params["mlb_kwargs"]:
-            scale_factor = 0.5  # downsample
+            scale_factor = 0.5  # downsample by factor 1/2
         else:
             scale_factor = None
 
-        # create dropout layer
+        # set activation
+        activation = self.conv_resnet_params["activation"]
+
+        # set up dropout
         if self.conv_resnet_params["use_dropout"]:
-            self.dropout = nn.Dropout(use_dropout)
+            dropout = nn.Dropout(use_dropout)
         else:
-            self.dropout = None
+            dropout = None
 
         # create input layer
         in_channels = self.input_channels
         out_channels = self.conv_resnet_params["channels_mult"][0] * self.input_channels
         kernel_size = self.conv_resnet_params["kernels"][0]
-        self.input_layer = nn.Conv1d(
-            in_channels,
-            out_channels,
-            kernel_size,
-            padding=1,
-            padding_mode="replicate",
-            stride=1,
-        )
+        self.input_layer = nn.Conv1d(in_channels, out_channels, 1)
         in_channels = out_channels
 
-        # create convolutional layers using MultiLevelBlock
+        # create convolutional residual blocks using MultiLevelBlock
         layers = list()
         for mult, kernel_size in zip(
             self.conv_resnet_params["channels_mult"], self.conv_resnet_params["kernels"]
         ):
+            # create normalization
+            normalization = nn.GroupNorm(self.input_channels, in_channels)
+            # create convolution block
             out_channels = mult * self.input_channels
             layers.append(
                 MultiLevelBlock(
                     in_channels,
                     kernel_size,
-                    activation=self.conv_resnet_params["activation"],
-                    dropout=self.dropout,
+                    normalization=normalization,
+                    normalization_layer_channels=in_channels,
+                    activation=activation,
+                    activation_layer_channels=4 * in_channels,
                     output_channels=out_channels,
+                    dropout=dropout,
                     scale_factor=scale_factor,
                     skip_connection=True,
                     **self.conv_resnet_params["mlb_kwargs"],
                 )
             )
             in_channels = out_channels
-        self.conv_resnet_block = nn.Sequential(*layers)
+        self.conv_resnet = nn.Sequential(*layers)
 
         # create dense layers using MLPResNet if parameters provided
         if self.mlp_resnet_params:
@@ -216,9 +218,9 @@ class ConvResNet(nn.Module):
                 raise ValueError(
                     "mlp_resnet_params must have 'input_size' (flattened conv output size)"
                 )
-            self.mlp_resnet_block = MLPResNet(**self.mlp_resnet_params)
+            self.mlp_resnet = MLPResNet(**self.mlp_resnet_params)
         else:
-            self.mlp_resnet_block = None
+            self.mlp_resnet = None
 
         # initialize parameters
         self.init_parameters()
@@ -236,18 +238,18 @@ class ConvResNet(nn.Module):
         h = self.input_layer(x)
 
         # apply convolutional layers
-        for layer in self.conv_resnet_block:
+        for layer in self.conv_resnet:
             h = layer(h)
 
         # return if nothing to do
-        if self.mlp_resnet_block is None:
+        if self.mlp_resnet is None:
             return h
 
         # flatten for dense layers
         h = torch.flatten(h, 1)
 
         # apply dense residual network if configured
-        y = self.mlp_resnet_block(h, **h_kwargs)
+        y = self.mlp_resnet(h, **h_kwargs)
 
         return y
 
@@ -256,11 +258,11 @@ class ConvResNet(nn.Module):
         # initialize input layer
         _set_init_parameters(self.input_layer, _get_gain(None))
         # initialize convolutional block
-        for layer in self.conv_resnet_block:
+        for layer in self.conv_resnet:
             layer.init_parameters()
         # initialize dense block
-        if self.mlp_resnet_block is not None:
-            self.mlp_resnet_block.init_parameters()
+        if self.mlp_resnet is not None:
+            self.mlp_resnet.init_parameters()
 
 
 # --------------------------------------
