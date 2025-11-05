@@ -145,6 +145,7 @@ class ConvResNet(nn.Module):
         input_channels,
         conv_resnet_params={},
         mlp_resnet_params={},
+        with_Conv=nn.Conv1d,
     ):
         super().__init__()
         # set from arguments
@@ -181,7 +182,7 @@ class ConvResNet(nn.Module):
         in_channels = self.input_channels
         out_channels = self.conv_resnet_params["channels_mult"][0] * self.input_channels
         kernel_size = self.conv_resnet_params["kernels"][0]
-        self.input_layer = nn.Conv1d(in_channels, out_channels, 1)
+        self.input_layer = with_Conv(in_channels, out_channels, 1, groups=in_channels)
         in_channels = out_channels
 
         # create convolutional residual blocks using MultiLevelBlock
@@ -219,6 +220,36 @@ class ConvResNet(nn.Module):
                     "mlp_resnet_params must have 'input_size' (flattened conv output size)"
                 )
             self.mlp_resnet = MLPResNet(**self.mlp_resnet_params)
+            ###DEV
+            # from dlkit.nets.mlp import LinearFiber
+            # # create contraction layer for space
+            # if isinstance(self.mlp_resnet_params["input_size"], int):
+            #     in_fiber_size = self.mlp_resnet_params["input_size"] // out_channels
+            # else:
+            #     in_fiber_size = self.mlp_resnet_params["input_size"][0] // out_channels
+            # self.mlp_space_l0 = LinearFiber(
+            #     ndim=2,
+            #     input_fiber_size=in_fiber_size,
+            #     output_fiber_size=128,
+            # )
+            # self.mlp_activation = activation
+            # self.mlp_space_l1 = LinearFiber(
+            #     ndim=2,
+            #     input_fiber_size=128,
+            #     output_fiber_size=1,
+            # )
+            # if isinstance(self.mlp_resnet_params["input_size"], int):
+            #     in_size = out_channels
+            # else:
+            #     in_size = (
+            #         out_channels +
+            #         self.mlp_resnet_params["residual_blocks_sizes"][0][0] -
+            #         self.mlp_resnet_params["input_size"][1]
+            #     )
+            # out_size = self.mlp_resnet_params["output_size"]
+            # self.mlp_output_l0 = nn.Linear(in_size, 128)
+            # self.mlp_output_l1 = nn.Linear(128, out_size)
+            ###/DEV
         else:
             self.mlp_resnet = None
 
@@ -250,6 +281,18 @@ class ConvResNet(nn.Module):
 
         # apply dense residual network if configured
         y = self.mlp_resnet(h, **h_kwargs)
+
+        ###DEV
+        # h = self.mlp_space_l1(self.mlp_activation(self.mlp_space_l0(h)))
+        # h = torch.flatten(h, 1)
+        # h_in = h_kwargs.get(f"h{0}")
+        # if h_in is None:
+        #     h_in = h_kwargs.get("h_all")
+        # if h_in is not None:
+        #     h_in = torch.flatten(h_in, 1)
+        #     h = torch.cat([h, h_in], dim=1)
+        # y = self.mlp_output_l1(self.mlp_activation(self.mlp_output_l0(h)))
+        ###/DEV
 
         return y
 
@@ -496,46 +539,46 @@ class MultiLevelBlock(nn.Module):
         skip_connection=False,
         interp_mode="nearest-exact",
         logger=logging.getLogger("dlkit.nets.conv1d.MultiLevelBlock"),
-        **layer_kwargs,
+        with_Conv=nn.Conv1d,
+        **conv_kwargs,
     ):
         super().__init__()
+        self.conv_kwargs = dict(conv_kwargs)  # copy to avoid modifying input args
+        # set default padding mode (if key does not exist)
+        self.conv_kwargs.setdefault("padding_mode", "replicate")
+        # set default padding size (if key does not exist)
+        # Note: Conv1d expects an int padding; a 2-tuple causes channel padding
+        #   when padding_mode != 'zeros'; use symmetric integer padding for the conv
+        #   layer and keep the 2-tuple separately for size bookkeeping
+        self.conv_kwargs.setdefault("padding", kernel_size // 2)
+        assert (
+            isinstance(self.conv_kwargs["padding"], int)
+        ), f"Expected type int, got {type(self.conv_kwargs["padding"])}"
+        # store a 2-tuple version of padding for internal calculations (left, right)
+        self._padding = (self.conv_kwargs["padding"], self.conv_kwargs["padding"])
         # define the padding s.t. `input_size == output_size` after convolution
-        if 1 == kernel_size % 2:
-            self._padding_const_size = (
-                (kernel_size - 1) // 2,
-                (kernel_size - 1) // 2,
-            )
-        else:
-            self._padding_const_size = (
-                (kernel_size - 1) // 2,
-                (kernel_size - 1) // 2 + 1,
-            )
-        # set default values to layer_kwargs if keys don't exist
-        self.layer_kwargs = dict(layer_kwargs)  # copy to avoid modifying input
-        self.layer_kwargs.setdefault("padding_mode", "replicate")
-        self.layer_kwargs.setdefault("padding", self._padding_const_size)
-        if isinstance(self.layer_kwargs["padding"], int):
-            self.padding = tuple(2 * [self.layer_kwargs["padding"]])
-        else:
-            self.padding = self.layer_kwargs["padding"]
+        self._padding_const_size = (
+            (kernel_size - 1) // 2,
+            (kernel_size - 1) // 2 + (1 - kernel_size % 2),
+        )
         # set attributes from arguments
         self.input_channels = input_channels
         self.interp_mode = interp_mode
         if scale_factor is not None:
             assert (
-                "stride" not in layer_kwargs or scale_factor == layer_kwargs["stride"]
-            ), f"Invalid args: Cannot set both scale_factor={scale_factor} and stride={layer_kwargs['stride']}."
+                "stride" not in conv_kwargs or scale_factor == conv_kwargs["stride"]
+            ), f"Invalid args: Cannot set both scale_factor={scale_factor} and stride={conv_kwargs['stride']}."
             if 1 <= scale_factor:
-                self.layer_kwargs["stride"] = 1
+                self.conv_kwargs["stride"] = 1
             elif 0 < scale_factor:
-                self.layer_kwargs["stride"] = int(1 / scale_factor)
+                self.conv_kwargs["stride"] = int(1 / scale_factor)
             else:
                 raise ValueError(
                     f"Invalid arg: scale_factor={scale_factor} cannot be non-positive."
                 )
             self.scale_factor = float(scale_factor)
-        elif "stride" in layer_kwargs:
-            self.scale_factor = 1.0 / layer_kwargs["stride"]
+        elif "stride" in conv_kwargs:
+            self.scale_factor = 1.0 / conv_kwargs["stride"]
         else:
             self.scale_factor = 1.0
         # init channels
@@ -566,19 +609,19 @@ class MultiLevelBlock(nn.Module):
         # create layers
         i = 0
         block = OrderedDict()
-        block["layer_0"] = nn.Conv1d(ch[i], ch[i + 1], kernel_size, **self.layer_kwargs)
+        block["layer_0"] = with_Conv(ch[i], ch[i + 1], kernel_size, **self.conv_kwargs)
         i += 1
         if normalization:
             block["normalization"] = normalization
         if normalization_layer_channels:
-            block["layer_1"] = nn.Conv1d(ch[i], ch[i + 1], 1)
+            block["layer_1"] = with_Conv(ch[i], ch[i + 1], 1)
             i += 1
         if activation:
             block["activation"] = activation
         if dropout:
             block["dropout"] = dropout
         if activation_layer_channels:
-            block["layer_2"] = nn.Conv1d(ch[i], ch[i + 1], 1)
+            block["layer_2"] = with_Conv(ch[i], ch[i + 1], 1)
             i += 1
         self.block = nn.Sequential(block)
         # create skip connection
@@ -587,7 +630,7 @@ class MultiLevelBlock(nn.Module):
             if ch[0] == ch[-1]:
                 self.skip_connection = nn.Identity()
             else:
-                self.skip_connection = nn.Conv1d(ch[0], ch[-1], 1)
+                self.skip_connection = with_Conv(ch[0], ch[-1], 1)
         else:
             self.skip_connection = None
         # initialize parameters
@@ -617,7 +660,7 @@ class MultiLevelBlock(nn.Module):
             if self.scale_factor < 1.0:
                 hs_size = (
                     int(math.ceil(h.size(size_dim) * self.scale_factor))
-                    + sum(self.padding)
+                    + sum(self._padding)
                     - sum(self._padding_const_size)
                 )
                 h = nn.functional.interpolate(
@@ -642,8 +685,8 @@ class MultiLevelBlock(nn.Module):
             _set_init_parameters(self.block.layer_1, gain)
         if hasattr(self.block, "layer_2"):
             _set_init_parameters(self.block.layer_2, gain)
-        if hasattr(self, "skip_connection") and isinstance(
-            self.skip_connection, nn.Conv1d
+        if self.skip_connection is not None and not isinstance(
+            self.skip_connection, nn.Identity
         ):
             _set_init_parameters(self.skip_connection)
 
@@ -734,6 +777,10 @@ class LevelBlock(MultiLevelBlock):
 # --------------------------------------
 # Utility Functions
 # --------------------------------------
+
+
+def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
+    return int( (in_length + 2*padding - dilation*(kernel- 1) - 1) / stride + 1 )
 
 
 def _get_gain(activation):
@@ -1093,6 +1140,6 @@ if __name__ == "__main__":
     r"""Runs tests."""
     test_ConvNet()
     print("\n")
-    test_ConvResNet()
-    print("\n")
     test_MultiLevelBlock()
+    print("\n")
+    test_ConvResNet()
