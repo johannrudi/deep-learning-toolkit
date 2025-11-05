@@ -580,6 +580,67 @@ class MLPResNet(nn.Module):
 
 
 # --------------------------------------
+# LinearFiber Layer
+# --------------------------------------
+
+class LinearFiber(nn.Module):
+    r"""Linear layer applied to fibers of a tensor.
+
+    Args:
+        input_size (tuple|list): size of input vectors
+        output_size (tuple|list): size of output vectors (if None, `output_size = input_size`)
+        fiber_dim (int): dimension of the input tensor to which a linear layer is applied
+
+    Sources:
+    The initial idea is from the use of permutations + linear layers to replace
+    pointwise convolutions. This was done for ConvNeXt.
+    """
+
+    def __init__(
+        self,
+        ndim,
+        input_fiber_size,
+        output_fiber_size=None,
+        fiber_dim=None,
+        layer_kwargs={},
+    ):
+        super().__init__()
+        # set output size
+        if output_fiber_size is None:
+            output_fiber_size = input_fiber_size
+        # set fiber dimension (fiber_dim=-1 is the batch dimension)
+        if fiber_dim is None:
+            fiber_dim = ndim - 1
+        assert -1 <= fiber_dim and fiber_dim < ndim
+        # set indices: move fiber_dim to last position for input (add 1 for batch dimension)
+        self.prepermute_idx = list(range(ndim + 1))
+        self.prepermute_idx.pop(fiber_dim + 1)
+        self.prepermute_idx.append(fiber_dim + 1)
+        # set indices: move last position back to fiber_dim for output
+        self.postpermute_idx = list(range(ndim))
+        self.postpermute_idx.insert(fiber_dim + 1, ndim)
+        # create layer
+        self.layer = nn.Linear(
+            input_fiber_size,
+            output_fiber_size,
+            **layer_kwargs,
+        )
+        # initialize parameters
+        self.init_parameters()
+
+    def forward(self, x):
+        h = x.permute(*self.prepermute_idx)
+        h = self.layer(h)
+        y = h.permute(*self.postpermute_idx)
+        return y
+
+    def init_parameters(self, gain=None):
+        r"""Initializes the values of trainable parameters."""
+        if gain is None:
+            gain = _get_gain(None)
+        _set_init_parameters(self.layer, gain)
+
+# --------------------------------------
 # Utility Functions
 # --------------------------------------
 
@@ -779,9 +840,40 @@ def test_MLPResNet():
     print("---------------------------------------$")
 
 
+def test_LinearFiber():
+    print("---------------------------------------^")
+    print("Test 1: 3D tensor with default fiber_dim")
+    x = torch.randn(8, 2, 3, 4)
+    net = LinearFiber(ndim=3, input_fiber_size=x.size(3), output_fiber_size=5)
+    expected_size = (8, 2, 3, 5)
+    print(net)
+    y = net(x)
+    print(f"- input  x size: {x.size()}")
+    print(f"- output y size: {y.size()}")
+    assert y.size() == expected_size, f"Expected {expected_size}, got {y.size()}"
+
+    x = torch.randn(8, 2, 3, 4)
+    for i in range(x.ndim):
+        fiber_dim = i - 1
+        print(f"\nTest {i + 2}: 3D tensor with fiber_dim={fiber_dim}")
+        net = LinearFiber(ndim=3, input_fiber_size=x.size(i), output_fiber_size=10,
+                          fiber_dim=fiber_dim)
+        expected_size = list(x.size())
+        expected_size[i] = 10
+        expected_size = tuple(expected_size)
+        print(net)
+        y = net(x)
+        print(f"- input  x size: {x.size()}")
+        print(f"- output y size: {y.size()}")
+        assert y.size() == expected_size, f"Expected {expected_size}, got {y.size()}"
+
+    print("---------------------------------------$")
+
+
 if __name__ == "__main__":
     r"""Runs tests."""
     test_MLPNet()
     test_MLPNet_MultIn()
     test_ResidualBlock()
     test_MLPResNet()
+    test_LinearFiber()
