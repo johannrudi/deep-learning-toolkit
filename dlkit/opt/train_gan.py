@@ -1,72 +1,21 @@
 """Training loops for generative adversarial networks."""
 
-import logging, math, os, timeit
+import logging, pathlib, timeit
 import numpy as np
 import torch
-from tqdm import tqdm
 from datetime import datetime
+from tqdm import tqdm
 
-
-def _checkpoint_path(checkpoint_dir, n_epochs, prefix, epoch):
-    n_digits = int(math.ceil(math.log10(1.01 * n_epochs)))
-    fmt = "{}_e{:0" + str(n_digits) + "d}.pt"
-    filename = fmt.format(prefix, epoch)
-    return os.path.join(checkpoint_dir, filename)
-
-
-def _checkpoint_save(model, filepath, epoch, optimizer):
-    torch.save(
-        {
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-        },
-        filepath,
-    )
-
-
-def _dlog_train_epoch_initialize(n_epochs, save_list=True):
-    dlog = {}
-    for key in [
-        "g_loss_mean",
-        "g_loss_std",
-        "d_loss_mean",
-        "d_loss_std",
-        "d_loss_g_mean",
-        "d_loss_g_std",
-        "d_reg_mean",
-        "d_reg_std",
-        "d_grad_norm_mean",
-        "d_grad_norm_std",
-    ]:
-        if save_list:
-            dlog[key] = np.empty((n_epochs,))
-        else:
-            dlog[key] = None
-    dlog["batch_dlog"] = []
-    return dlog
-
-
-def _dlog_train_epoch_update(dlog, epoch_idx, batch_dlog):
-    for key in [
-        "g_loss_mean",
-        "g_loss_std",
-        "d_loss_mean",
-        "d_loss_std",
-        "d_loss_g_mean",
-        "d_loss_g_std",
-        "d_reg_mean",
-        "d_reg_std",
-        "d_grad_norm_mean",
-        "d_grad_norm_std",
-    ]:
-        if dlog[key] is not None:
-            dlog[key][epoch_idx] = batch_dlog[key]
-    dlog["batch_dlog"].append(batch_dlog)
-
-
-def _dlog_train_epoch_finalize(dlog, time_train):
-    dlog["time_train"] = time_train
+from dlkit.opt.train_utils import (
+    checkpoint_path,
+    checkpoint_save,
+    train_dlog_epoch_initialize,
+    train_dlog_epoch_update,
+    train_dlog_epoch_finalize,
+    train_dlog_batch_initialize,
+    train_dlog_batch_update,
+    train_dlog_batch_finalize,
+)
 
 
 def train_epochs(
@@ -95,15 +44,28 @@ def train_epochs(
     turns off checkpointing. Checkpointing will create a new dir under
     `checkpoint_dir/` followed by a directory with date and time of training start.
     """
-    epoch_dlog = _dlog_train_epoch_initialize(n_epochs)
+    DLOG_TAGS = [
+        "g_loss_mean",
+        "g_loss_std",
+        "d_loss_mean",
+        "d_loss_std",
+        "d_loss_g_mean",
+        "d_loss_g_std",
+        "d_reg_mean",
+        "d_reg_std",
+        "d_grad_norm_mean",
+        "d_grad_norm_std",
+    ]
+    epoch_dlog = train_dlog_epoch_initialize(n_epochs, DLOG_TAGS)
+
     # set checkpoint directory; create if it doesn't exist
     if checkpoint_epochs is not None:
         assert 1 <= checkpoint_epochs, checkpoint_epochs
         assert checkpoint_dir is not None
         checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
-        checkpoint_dir = os.path.join(checkpoint_dir, checkpoint_time)
-        if not os.path.exists(checkpoint_dir):
-            os.makedirs(checkpoint_dir)
+        checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
+        checkpoint_dir_.mkdir(parents=True, exist_ok=True)
+
     # <code id="training_loop_over_epochs">
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs), desc="epochs"):
@@ -112,16 +74,16 @@ def train_epochs(
             for tag_, net_, opt_ in zip(
                 ["g", "d"], [g_net, d_net], [g_optimizer, d_optimizer]
             ):
-                path = _checkpoint_path(
-                    checkpoint_dir, n_epochs, prefix=tag_ + "-net", epoch=epoch_idx
+                path = checkpoint_path(
+                    checkpoint_dir_, n_epochs, prefix=f"{tag_}-net", epoch=epoch_idx
                 )
-                logger.debug(
-                    "epoch {:6d}, save checkpoint to {}".format(epoch_idx, path)
-                )
-                _checkpoint_save(net_, path, epoch=epoch_idx, optimizer=opt_)
+                logger.debug(f"epoch {epoch_idx:6d}, save checkpoint to '{path}'")
+                checkpoint_save(net_, path, epoch=epoch_idx, optimizer=opt_)
+
         # call validation function
         if validation_fn is not None:
             validation_fn(epoch_idx, g_net, d_net)
+
         # train on batches
         batch_dlog = train_batches(
             epoch_idx,
@@ -137,11 +99,12 @@ def train_epochs(
             device=device,
             logger=logger,
         )
+
         # update the learning rate schedulers
         if g_lr_scheduler is not None:
             g_lr_current = g_lr_scheduler.get_last_lr()
             if 1 == len(g_lr_current):
-                g_lr_current = "{:.6e}".format(g_lr_current[0])
+                g_lr_current = f"{g_lr_current[0]:.6e}"
             else:
                 g_lr_current = str(g_lr_current)
             g_lr_scheduler.step()
@@ -150,7 +113,7 @@ def train_epochs(
         if d_lr_scheduler is not None:
             d_lr_current = d_lr_scheduler.get_last_lr()
             if 1 == len(d_lr_current):
-                d_lr_current = "{:.6e}".format(d_lr_current[0])
+                d_lr_current = f"{d_lr_current[0]:.6e}"
             else:
                 d_lr_current = str(d_lr_current)
             d_lr_scheduler.step()
@@ -158,89 +121,52 @@ def train_epochs(
             d_lr_current = "n/a"
         if g_lr_scheduler is not None or d_lr_scheduler is not None:
             logger.debug(
-                "epoch {:6d}, g_learning_rate {}, d_learning_rate {}".format(
-                    epoch_idx, g_lr_current, d_lr_current
-                )
+                f"epoch {epoch_idx:6d}, g_learning_rate {g_lr_current}, d_learning_rate {d_lr_current}"
             )
+
         # log
-        _dlog_train_epoch_update(epoch_dlog, epoch_idx, batch_dlog)
+        train_dlog_epoch_update(epoch_dlog, epoch_idx, DLOG_TAGS, batch_dlog)
         logger.info(
-            "epoch {:6d}, d_loss_mean {:.6e} std {:.3e}, g_loss_mean {:.6e} std {:.3e}".format(
-                epoch_idx,
-                batch_dlog["d_loss_mean"],
-                batch_dlog["d_loss_std"],
-                batch_dlog["g_loss_mean"],
-                batch_dlog["g_loss_std"],
-            )
+            f"epoch {epoch_idx:6d}, "
+            f"d_loss mean {batch_dlog['d_loss_mean']:.6e} std {batch_dlog['d_loss_std']:.3e}, "
+            f"g_loss mean {batch_dlog['g_loss_mean']:.6e} std {batch_dlog['g_loss_std']:.3e}"
         )
+
     # save checkpoint---after training
     if checkpoint_epochs is not None:
         for tag_, net_, opt_ in zip(
             ["g", "d"], [g_net, d_net], [g_optimizer, d_optimizer]
         ):
-            path = _checkpoint_path(
-                checkpoint_dir, n_epochs, prefix=tag_ + "-net", epoch=n_epochs
+            path = checkpoint_path(
+                checkpoint_dir_, n_epochs, prefix=f"{tag_}-net", epoch=n_epochs
             )
-            logger.debug("epoch {:6d}, save checkpoint to {}".format(n_epochs, path))
-            _checkpoint_save(net_, path, epoch=n_epochs, optimizer=opt_)
+            logger.debug(f"epoch {n_epochs:6d}, save checkpoint to '{path}'")
+            checkpoint_save(net_, path, epoch=n_epochs, optimizer=opt_)
+
     # call validation function---after training
     if validation_fn is not None:
         validation_fn(n_epochs, g_net, d_net)
     time_train = timeit.default_timer() - time_train
     # </code>
-    # finalize and return log
-    _dlog_train_epoch_finalize(epoch_dlog, time_train)
+
+    # finalize log
+    train_dlog_epoch_finalize(epoch_dlog, time_train)
+
+    # print statistics
+    n_steps = n_epochs * len(dataloader)
+    n_samples = n_steps * dataloader.batch_size
     logger.info(
-        "training time {:g} sec, time/epoch {:g} sec".format(
-            time_train, time_train / n_epochs
-        )
+        f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
     )
+    logger.info(
+        f"training time {time_train:g} sec, time/epoch {time_train / n_epochs:g} sec"
+    )
+    logger.info(
+        f"time/step {time_train / n_steps:g} sec, samples/sec {n_samples / time_train:g} sec"
+    )
+
+    # return log
     return epoch_dlog
-
-
-def _dlog_train_batch_initialize(n_batches, save_list=False):
-    dlog = {"n_batches": n_batches}
-    for key in ["g_loss", "d_loss", "d_loss_g", "d_reg", "d_grad_norm"]:
-        if save_list:
-            dlog[key] = np.empty((n_batches,))
-        else:
-            dlog[key] = None
-        dlog[key + "_mean_n"] = 0
-        dlog[key + "_mean"] = 0.0
-        dlog[key + "_sq_mean"] = 0.0
-        dlog[key + "_std"] = None
-    return dlog
-
-
-def _dlog_train_batch_update(dlog, batch_idx, values):
-    for key in ["g_loss", "d_loss", "d_loss_g", "d_reg", "d_grad_norm"]:
-        if key in values:
-            val = values[key]
-        else:
-            val = np.nan
-        if dlog[key] is not None:
-            dlog[key][batch_idx] = val
-        if not np.isnan(val):
-            dlog[key + "_mean_n"] += 1
-            dlog[key + "_mean"] += val
-            dlog[key + "_sq_mean"] += val * val
-
-
-def _dlog_train_batch_finalize(dlog):
-    for key in ["g_loss", "d_loss", "d_loss_g", "d_reg", "d_grad_norm"]:
-        assert dlog[key + "_std"] is None
-        assert not np.isnan(dlog[key + "_mean"])
-        assert not np.isnan(dlog[key + "_sq_mean"])
-        if 0 < dlog[key + "_mean_n"]:
-            dlog[key + "_mean"] *= 1.0 / dlog[key + "_mean_n"]
-            dlog[key + "_sq_mean"] *= 1.0 / dlog[key + "_mean_n"]
-            dlog[key + "_std"] = np.sqrt(
-                dlog[key + "_sq_mean"] - dlog[key + "_mean"] ** 2
-            )
-        else:
-            dlog[key + "_mean"] = 0.0
-            dlog[key + "_sq_mean"] = 0.0
-            dlog[key + "_std"] = 0.0
 
 
 def _train_step_discriminator(
@@ -258,16 +184,18 @@ def _train_step_discriminator(
     # sample from latent space for generator
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
+
     # generate outputs with `g_net`
     x_gen = g_net(y_data, z).detach()
+
     # evalutate discriminator (begin AD)
     d_optimizer.zero_grad()
     d_outputs_gen = d_net(x_gen, y_data)
     d_outputs_data = d_net(x_data, y_data)
+
     # evaluate discriminator loss
-    d_loss, d_loss_g = loss_fn(
-        d_outputs_gen, d_outputs_data
-    )  # output must have correct sign for minimization
+    # Note: output must have correct sign for minimization
+    d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
     d_reg_dlog = dict()
     if d_reg_fn is not None:
         d_reg = d_reg_fn(
@@ -280,9 +208,11 @@ def _train_step_discriminator(
     else:
         d_reg = torch.tensor(0.0)
     loss = d_loss + d_reg
+
     # calculate derivatives (end AD) and update network parameters
     loss.backward()
     d_optimizer.step()
+
     # output values
     if dlog_item is not None:
         dlog_item["d_loss"] = d_loss.item()
@@ -294,23 +224,34 @@ def _train_step_discriminator(
 
 
 def _train_step_generator(
-    y_data, z_sample_fn, g_net, d_net, g_optimizer, loss_fn, dlog_item=None
+    y_data,
+    z_sample_fn,
+    g_net,
+    d_net,
+    g_optimizer,
+    loss_fn,
+    dlog_item=None,
 ):
     """Trains generator network."""
     # sample from latent space for generator
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
+
     # generate outputs with `g_net` (begin AD)
     g_optimizer.zero_grad()
     x_gen = g_net(y_data, z)
+
     # evalutate discriminator
     d_outputs_gen = d_net(x_gen, y_data)
+
     # evaluate discriminator loss
     g_loss, _ = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
     loss = g_loss
+
     # calculate derivatives (end AD) and update network parameters
     loss.backward()
     g_optimizer.step()
+
     # output values
     if dlog_item is not None:
         dlog_item["g_loss"] = g_loss.item()
@@ -335,9 +276,17 @@ def train_batches(
     max_batches=None,
 ):
     """Runs training loop over batches."""
+    DLOG_TAGS = [
+        "g_loss",
+        "d_loss",
+        "d_loss_g",
+        "d_reg",
+        "d_grad_norm",
+    ]
     if max_batches is None:
         max_batches = len(dataloader)
-    train_batch_dlog = _dlog_train_batch_initialize(max_batches)
+    batch_dlog = train_dlog_batch_initialize(max_batches, DLOG_TAGS, save_list=False)
+
     # <code id="training_loop_over_batches">
     for batch_idx, data in enumerate(dataloader):
         if max_batches <= batch_idx:
@@ -374,11 +323,9 @@ def train_batches(
         # if we skip training the generator for this batch
         if 0 < batch_idx % d_opt_multiplier:
             # log
-            _dlog_train_batch_update(train_batch_dlog, batch_idx, dlog_item)
+            train_dlog_batch_update(batch_dlog, batch_idx, dlog_item)
             logger.debug(
-                "batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss N/A".format(
-                    batch_idx, d_loss_reg_v, dlog_item["d_loss"]
-                )
+                f"batch {batch_idx:6d}, d_loss_reg {d_loss_reg_v:.6e}, d_loss {dlog_item['d_loss']:.6e}, g_loss N/A"
             )
             continue
 
@@ -401,11 +348,9 @@ def train_batches(
         )
 
         # log
-        _dlog_train_batch_update(train_batch_dlog, batch_idx, dlog_item)
+        train_dlog_batch_update(batch_dlog, batch_idx, dlog_item)
         logger.debug(
-            "batch {:6d}, d_loss_reg {:.6e}, d_loss {:.6e}, g_loss {:.6e}".format(
-                batch_idx, d_loss_reg_v, dlog_item["d_loss"], g_loss_v
-            )
+            f"batch {batch_idx:6d}, d_loss_reg {d_loss_reg_v:.6e}, d_loss {dlog_item['d_loss']:.6e}, g_loss {g_loss_v:.6e}"
         )
 
         # finalize batch
@@ -414,5 +359,5 @@ def train_batches(
     # </code>
 
     # finalize and return log
-    _dlog_train_batch_finalize(train_batch_dlog)
-    return train_batch_dlog
+    train_dlog_batch_finalize(batch_dlog, DLOG_TAGS)
+    return batch_dlog
