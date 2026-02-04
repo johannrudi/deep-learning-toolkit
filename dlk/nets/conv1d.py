@@ -9,7 +9,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from dlkit.nets.mlp import MLPResNet
+from dlk.nets.mlp import MLPResNet
 
 # --------------------------------------
 # Convolutional Nets
@@ -224,7 +224,7 @@ class ConvResNet(nn.Module):
                 )
             self.mlp_resnet = MLPResNet(**self.mlp_resnet_params)
             ###DEV
-            # from dlkit.nets.mlp import LinearFiber
+            # from dlk.nets.mlp import LinearFiber
             # # create contraction layer for space
             # if isinstance(self.mlp_resnet_params["input_size"], int):
             #     in_fiber_size = self.mlp_resnet_params["input_size"] // out_channels
@@ -541,7 +541,7 @@ class MultiLevelBlock(nn.Module):
         scale_factor=None,
         skip_connection=False,
         interp_mode="nearest-exact",
-        logger=logging.getLogger("dlkit.nets.conv1d.MultiLevelBlock"),
+        logger=logging.getLogger("dlk.nets.conv1d.MultiLevelBlock"),
         with_Conv=nn.Conv1d,
         **conv_kwargs,
     ):
@@ -718,7 +718,7 @@ class DownsampleBlock(MultiLevelBlock):
             scale_factor=scale_factor,
             skip_connection=skip_connection,
             interp_mode=interp_mode,
-            logger=logging.getLogger("dlkit.nets.conv1d.DownsampleBlock"),
+            logger=logging.getLogger("dlk.nets.conv1d.DownsampleBlock"),
             **mlb_kwargs,
         )
 
@@ -747,7 +747,7 @@ class UpsampleBlock(MultiLevelBlock):
             scale_factor=scale_factor,
             skip_connection=skip_connection,
             interp_mode=interp_mode,
-            logger=logging.getLogger("dlkit.nets.conv1d.UpsampleBlock"),
+            logger=logging.getLogger("dlk.nets.conv1d.UpsampleBlock"),
             **mlb_kwargs,
         )
 
@@ -772,7 +772,7 @@ class LevelBlock(MultiLevelBlock):
             input_channels,
             kernel_size,
             skip_connection=skip_connection,
-            logger=logging.getLogger("dlkit.nets.conv1d.LevelBlock"),
+            logger=logging.getLogger("dlk.nets.conv1d.LevelBlock"),
             **mlb_kwargs,
         )
 

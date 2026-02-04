@@ -1,21 +1,21 @@
 """Training loops for generative adversarial networks."""
 
-import logging, pathlib, timeit
+import logging
+import pathlib
+import timeit
+from datetime import datetime
+
 import numpy as np
 import torch
-from datetime import datetime
 from tqdm import tqdm
 
-from dlkit.opt.train_utils import (
-    checkpoint_path,
-    checkpoint_save,
-    train_dlog_epoch_initialize,
-    train_dlog_epoch_update,
-    train_dlog_epoch_finalize,
-    train_dlog_batch_initialize,
-    train_dlog_batch_update,
-    train_dlog_batch_finalize,
-)
+from dlk.opt.train_utils import (checkpoint_path, checkpoint_save,
+                                 train_dlog_batch_finalize,
+                                 train_dlog_batch_initialize,
+                                 train_dlog_batch_update,
+                                 train_dlog_epoch_finalize,
+                                 train_dlog_epoch_initialize,
+                                 train_dlog_epoch_update)
 
 
 def train_epochs(
@@ -33,7 +33,7 @@ def train_epochs(
     g_lr_scheduler=None,
     d_lr_scheduler=None,
     device=None,
-    logger=logging.getLogger("dlkit.opt.train_epochs"),
+    logger=logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs=None,
     checkpoint_dir="checkpoints",
 ):
@@ -270,7 +270,7 @@ def train_batches(
     d_reg_fn=None,
     d_opt_multiplier=1,
     device=None,
-    logger=logging.getLogger("dlkit.opt.train_batches"),
+    logger=logging.getLogger("dlk.opt.train_batches"),
     batch_initialize_fn=None,
     batch_finalize_fn=None,
     max_batches=None,

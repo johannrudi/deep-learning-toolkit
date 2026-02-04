@@ -1,6 +1,8 @@
 """Profiling of training steps."""
 
-import logging, os
+import logging
+import os
+
 import torch
 
 
@@ -104,7 +106,7 @@ def profile_train_epochs(
             dataloader,
             optimizer,
             loss_fn,
-            logger=logging.getLogger("dlkit.opt.profile_train_epochs"),
+            logger=logging.getLogger("dlk.opt.profile_train_epochs"),
             epoch_finalize_fn=epoch_finalize_fn,
             **train_epochs_fn_kwargs,
         )
@@ -120,7 +122,7 @@ def profile_train_batches(
     optimizer,
     loss_fn,
     log_profile_dir=".",
-    logger=logging.getLogger("dlkit.opt.profile_train_batches"),
+    logger=logging.getLogger("dlk.opt.profile_train_batches"),
 ):
     """Profiles training over batches.
 

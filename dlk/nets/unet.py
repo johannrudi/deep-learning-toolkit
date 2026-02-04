@@ -2,14 +2,14 @@
 UNet
 """
 
+import math
 from abc import abstractmethod
 
-import math
 import torch
 import torch.nn as nn
 
-import dlkit.nets.conv1d
-import dlkit.nets.conv2d
+import dlk.nets.conv1d
+import dlk.nets.conv2d
 
 # --------------------------------------
 # UNet (2025)
@@ -346,10 +346,10 @@ class UNet2d_2025(UNetXd_2025):
         super().__init__(
             *args,
             **kwargs,
-            with_Downsample=dlkit.nets.conv2d.Downsample,
-            with_Upsample=dlkit.nets.conv2d.Upsample,
-            with_LevelBlock=dlkit.nets.conv2d.LevelBlock,
-            with_Normalization=dlkit.nets.conv2d.Normalization,
+            with_Downsample=dlk.nets.conv2d.Downsample,
+            with_Upsample=dlk.nets.conv2d.Upsample,
+            with_LevelBlock=dlk.nets.conv2d.LevelBlock,
+            with_Normalization=dlk.nets.conv2d.Normalization,
         )
 
 
@@ -424,7 +424,7 @@ class EmbedSequential(EmbedModule, nn.Sequential):
         return x
 
 
-class ResBlock2d_EmbedBlock(dlkit.nets.conv2d.ResBlock, EmbedModule):
+class ResBlock2d_EmbedBlock(dlk.nets.conv2d.ResBlock, EmbedModule):
     """
     A residual block that can optionally change the number of channels.
 
@@ -808,7 +808,7 @@ class UNet1d_2021(UNetXd_2021_idd):
             )
 
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(
+            return dlk.nets.conv1d.Normalization(
                 _num_channels, num_groups=internal_channels
             )
 
@@ -817,9 +817,9 @@ class UNet1d_2021(UNetXd_2021_idd):
             internal_channels=internal_channels,
             with_InputLayer=_with_InputLayer,
             with_OutputLayer=_with_OutputLayer,
-            with_Downsample=dlkit.nets.conv1d.UNetDownsample,
-            with_Upsample=dlkit.nets.conv1d.UNetUpsample,
-            with_LevelBlock=dlkit.nets.conv1d.UNetResBlock,
+            with_Downsample=dlk.nets.conv1d.UNetDownsample,
+            with_Upsample=dlk.nets.conv1d.UNetUpsample,
+            with_LevelBlock=dlk.nets.conv1d.UNetResBlock,
             with_Normalization=_Normalization,
             **kwargs,
         )
@@ -848,7 +848,7 @@ class UNet2d_2021(UNetXd_2021_idd):
             )
 
         def _Normalization(_num_channels):
-            return dlkit.nets.conv2d.Normalization(
+            return dlk.nets.conv2d.Normalization(
                 _num_channels, num_groups=internal_channels
             )
 
@@ -857,9 +857,9 @@ class UNet2d_2021(UNetXd_2021_idd):
             internal_channels=internal_channels,
             with_InputLayer=_with_InputLayer,
             with_OutputLayer=_with_OutputLayer,
-            with_Downsample=dlkit.nets.conv2d.Downsample,
-            with_Upsample=dlkit.nets.conv2d.Upsample,
-            with_LevelBlock=dlkit.nets.conv2d.ResBlock,
+            with_Downsample=dlk.nets.conv2d.Downsample,
+            with_Upsample=dlk.nets.conv2d.Upsample,
+            with_LevelBlock=dlk.nets.conv2d.ResBlock,
             with_Normalization=_Normalization,
             **kwargs,
         )
@@ -893,7 +893,7 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
             return ResBlock2d_EmbedBlock(_input_channels, time_embed_dim, **_kwargs)
 
         def _Normalization(_num_channels):
-            return dlkit.nets.conv2d.Normalization(_num_channels, num_groups=32)
+            return dlk.nets.conv2d.Normalization(_num_channels, num_groups=32)
 
         super().__init__(
             *args,
@@ -901,8 +901,8 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
             time_embed_dim=time_embed_dim,
             with_InputLayer=_with_InputLayer,
             with_OutputLayer=_with_OutputLayer,
-            with_Downsample=dlkit.nets.conv2d.Downsample,
-            with_Upsample=dlkit.nets.conv2d.Upsample,
+            with_Downsample=dlk.nets.conv2d.Downsample,
+            with_Upsample=dlk.nets.conv2d.Upsample,
             with_LevelBlock=_ResBlock2d_EmbedBlock,
             with_Normalization=_Normalization,
             **kwargs,
@@ -1260,7 +1260,7 @@ class EncoderNet1d_2021(EncoderNetXd_2021_idd):
             )
 
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(
+            return dlk.nets.conv1d.Normalization(
                 _num_channels, num_groups=internal_channels
             )
 
@@ -1269,9 +1269,9 @@ class EncoderNet1d_2021(EncoderNetXd_2021_idd):
             internal_channels=internal_channels,
             with_InputLayer=_with_InputLayer,
             with_OutputLayer=_with_OutputLayer,
-            with_Downsample=dlkit.nets.conv1d.UNetDownsample,
-            with_Upsample=dlkit.nets.conv1d.UNetUpsample,
-            with_LevelBlock=dlkit.nets.conv1d.UNetResBlock,
+            with_Downsample=dlk.nets.conv1d.UNetDownsample,
+            with_Upsample=dlk.nets.conv1d.UNetUpsample,
+            with_LevelBlock=dlk.nets.conv1d.UNetResBlock,
             with_Normalization=_Normalization,
             **kwargs,
         )
@@ -1300,7 +1300,7 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
             )
 
         def _Normalization(_num_channels):
-            return dlkit.nets.conv1d.Normalization(
+            return dlk.nets.conv1d.Normalization(
                 _num_channels, num_groups=internal_channels
             )
 
@@ -1309,9 +1309,9 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
             internal_channels=internal_channels,
             with_InputLayer=_with_InputLayer,
             with_OutputLayer=_with_OutputLayer,
-            with_Downsample=dlkit.nets.conv1d.UNetDownsample,
-            with_Upsample=dlkit.nets.conv1d.UNetUpsample,
-            with_LevelBlock=dlkit.nets.conv1d.UNetResBlock,
+            with_Downsample=dlk.nets.conv1d.UNetDownsample,
+            with_Upsample=dlk.nets.conv1d.UNetUpsample,
+            with_LevelBlock=dlk.nets.conv1d.UNetResBlock,
             with_Normalization=_Normalization,
             **kwargs,
         )

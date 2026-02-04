@@ -1,20 +1,20 @@
 """Training loops for feed-forward networks."""
 
-import logging, pathlib, timeit
-import torch
+import logging
+import pathlib
+import timeit
 from datetime import datetime
+
+import torch
 from tqdm import tqdm
 
-from dlkit.opt.train_utils import (
-    checkpoint_path,
-    checkpoint_save,
-    train_dlog_epoch_initialize,
-    train_dlog_epoch_update,
-    train_dlog_epoch_finalize,
-    train_dlog_batch_initialize,
-    train_dlog_batch_update,
-    train_dlog_batch_finalize,
-)
+from dlk.opt.train_utils import (checkpoint_path, checkpoint_save,
+                                 train_dlog_batch_finalize,
+                                 train_dlog_batch_initialize,
+                                 train_dlog_batch_update,
+                                 train_dlog_epoch_finalize,
+                                 train_dlog_epoch_initialize,
+                                 train_dlog_epoch_update)
 
 
 def train_epochs(
@@ -28,7 +28,7 @@ def train_epochs(
     device=None,
     inputs_transform_fn=None,
     targets_transform_fn=None,
-    logger=logging.getLogger("dlkit.opt.train_epochs"),
+    logger=logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs=None,
     checkpoint_dir="checkpoints",
     epoch_initialize_fn=None,
@@ -147,7 +147,7 @@ def train_batches(
     device=None,
     inputs_transform_fn=None,
     targets_transform_fn=None,
-    logger=logging.getLogger("dlkit.opt.train_batches"),
+    logger=logging.getLogger("dlk.opt.train_batches"),
     batch_initialize_fn=None,
     batch_finalize_fn=None,
     max_batches=None,

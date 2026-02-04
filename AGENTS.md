@@ -20,12 +20,12 @@ pip install -e ".[dev]"
 
 ### Run tests for specific network modules
 ```bash
-python -m dlkit.nets.mlp
-python -m dlkit.nets.transformer1d
-python -m dlkit.nets.unet
-python -m dlkit.nets.conv1d
-python -m dlkit.nets.conv2d
-python -m dlkit.nets.efficientnet
+python -m dlk.nets.mlp
+python -m dlk.nets.transformer1d
+python -m dlk.nets.unet
+python -m dlk.nets.conv1d
+python -m dlk.nets.conv2d
+python -m dlk.nets.efficientnet
 ```
 
 Note: Tests are embedded in network modules as `test_*` functions called from `if __name__ == '__main__'` blocks. There is no separate test directory or pytest framework configured.
@@ -34,7 +34,7 @@ Note: Tests are embedded in network modules as `test_*` functions called from `i
 
 ### Package Structure
 
-- **`dlkit/nets/`**: Neural network architectures
+- **`dlk/nets/`**: Neural network architectures
   - `mlp.py`: Multilayer Perceptron (MLPNet, MLPNet_MultIn, MLPResNet with residual and attention blocks)
   - `autoencoder.py`: Generic autoencoder wrapper for encoder/decoder pairs
   - `conv1d.py`, `conv2d.py`: 1D/2D convolutional networks and UNet components (Downsample, Upsample)
@@ -43,16 +43,16 @@ Note: Tests are embedded in network modules as `test_*` functions called from `i
   - `efficientnet.py`: EfficientNet architecture
   - `util.py`: Shared utilities (parameter initialization, parameter counting, printing)
 
-- **`dlkit/opt/`**: Training and optimization
+- **`dlk/opt/`**: Training and optimization
   - `train.py`: Training loops (`train_epochs`, `train_batches`) with checkpointing and validation hooks
   - `train_gan.py`: GAN-specific training loops
   - `scheduler.py`: Learning rate schedulers (multi-stage: linear warmup, constant, cosine annealing)
 
-- **`dlkit/loss/`**: Loss functions
+- **`dlk/loss/`**: Loss functions
   - `gaussian.py`: Gaussian loss with covariance (using low-rank SVD approximation)
   - `wasserstein.py`: Wasserstein loss and gradient penalty for GANs
 
-- **`dlkit/log/`**: Logging utilities
+- **`dlk/log/`**: Logging utilities
   - `log_util.py`: Structured logging setup with file handlers, console output, and library filtering (e.g., suppress matplotlib debug logs)
 
 ### Key Design Patterns
