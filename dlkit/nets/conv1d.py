@@ -2,8 +2,10 @@
 Networks with 1D convolutional layers.
 """
 
+import logging
+import math
 from collections import OrderedDict
-import logging, math
+
 import torch
 import torch.nn as nn
 
@@ -173,7 +175,8 @@ class ConvResNet(nn.Module):
         activation = self.conv_resnet_params["activation"]
 
         # set up dropout
-        if self.conv_resnet_params["use_dropout"]:
+        use_dropout = self.conv_resnet_params["use_dropout"]
+        if use_dropout:
             dropout = nn.Dropout(use_dropout)
         else:
             dropout = None
@@ -551,9 +554,9 @@ class MultiLevelBlock(nn.Module):
         #   when padding_mode != 'zeros'; use symmetric integer padding for the conv
         #   layer and keep the 2-tuple separately for size bookkeeping
         self.conv_kwargs.setdefault("padding", kernel_size // 2)
-        assert (
-            isinstance(self.conv_kwargs["padding"], int)
-        ), f"Expected type int, got {type(self.conv_kwargs["padding"])}"
+        assert isinstance(
+            self.conv_kwargs["padding"], int
+        ), f"Expected type int, got {type(self.conv_kwargs['padding'])}"
         # store a 2-tuple version of padding for internal calculations (left, right)
         self._padding = (self.conv_kwargs["padding"], self.conv_kwargs["padding"])
         # define the padding s.t. `input_size == output_size` after convolution
@@ -780,7 +783,7 @@ class LevelBlock(MultiLevelBlock):
 
 
 def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
-    return int( (in_length + 2*padding - dilation*(kernel- 1) - 1) / stride + 1 )
+    return int((in_length + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1)
 
 
 def _get_gain(activation):
