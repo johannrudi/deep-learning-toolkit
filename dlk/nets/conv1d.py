@@ -193,18 +193,24 @@ class ConvResNet(nn.Module):
         for mult, kernel_size in zip(
             self.conv_resnet_params["channels_mult"], self.conv_resnet_params["kernels"]
         ):
-            # create normalization
-            normalization = nn.GroupNorm(self.input_channels, in_channels)
+            # set defaul normalization, normalization channels, and activation channels
+            # fmt: off
+            if "normalization" not in self.conv_resnet_params["mlb_kwargs"]:
+                self.conv_resnet_params["mlb_kwargs"]["normalization"] = nn.GroupNorm(
+                    self.input_channels, in_channels
+                )
+            if ( "normalization_layer_channels" not in self.conv_resnet_params["mlb_kwargs"]):
+                self.conv_resnet_params["mlb_kwargs"][ "normalization_layer_channels" ] = in_channels
+            if "activation_layer_channels" not in self.conv_resnet_params["mlb_kwargs"]:
+                self.conv_resnet_params["mlb_kwargs"]["activation_layer_channels"] = 4 * in_channels
+            # fmt: on
             # create convolution block
             out_channels = mult * self.input_channels
             layers.append(
                 MultiLevelBlock(
                     in_channels,
                     kernel_size,
-                    normalization=normalization,
-                    normalization_layer_channels=in_channels,
                     activation=activation,
-                    activation_layer_channels=4 * in_channels,
                     output_channels=out_channels,
                     dropout=dropout,
                     scale_factor=scale_factor,
