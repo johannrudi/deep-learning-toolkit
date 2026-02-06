@@ -3,20 +3,24 @@ Utility Functions
 """
 
 import math
-from prettytable import PrettyTable
+
 import torch
 import torch.nn as nn
+from prettytable import PrettyTable
 
 
-def get_gain(activation):
+def get_gain(activation, default="linear"):
     r"""Calculates the gain to be used as an argument for initializing parameter values."""
     if activation is not None:
         activation_name = type(activation).__name__.lower()
         if activation_name in ["silu", "gelu"]:
             activation_name = "relu"
-        gain = nn.init.calculate_gain(activation_name)
+        try:
+            gain = nn.init.calculate_gain(activation_name)
+        except ValueError:
+            gain = nn.init.calculate_gain(default)
     else:
-        gain = nn.init.calculate_gain("linear")
+        gain = nn.init.calculate_gain(default)
     return gain
 
 

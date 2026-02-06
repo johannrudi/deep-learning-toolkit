@@ -10,6 +10,12 @@ import torch
 import torch.nn as nn
 
 from dlk.nets.mlp import MLPResNet
+from dlk.nets.util import get_gain, set_init_parameters, set_zero_parameters
+
+
+def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
+    return int((in_length + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1)
+
 
 # --------------------------------------
 # Convolutional Nets
@@ -116,17 +122,17 @@ class ConvNet(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize hidden convolutional layers
-        gain = _get_gain(self.hidden_conv_layers_activation)
+        gain = get_gain(self.hidden_conv_layers_activation, default="conv1d")
         for layer in self.hidden_conv_layers:
-            _set_init_parameters(layer, gain)
+            set_init_parameters(layer, gain)
         # initialize hidden dense layers
-        gain = _get_gain(self.hidden_dense_layers_activation)
+        gain = get_gain(self.hidden_dense_layers_activation, default="conv1d")
         for layer in self.hidden_dense_layers:
-            _set_init_parameters(layer, gain)
+            set_init_parameters(layer, gain)
         # initialize output layer
-        gain = _get_gain(self.output_layer_activation)
+        gain = get_gain(self.output_layer_activation, default="conv1d")
         if self.output_layer is not None:
-            _set_init_parameters(self.output_layer, gain, bias_scale=0.0)
+            set_init_parameters(self.output_layer, gain, bias_scale=0.0)
 
 
 class ConvResNet(nn.Module):
@@ -308,7 +314,7 @@ class ConvResNet(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize input layer
-        _set_init_parameters(self.input_layer, _get_gain(None))
+        set_init_parameters(self.input_layer, get_gain(None, default="conv1d"))
         # initialize convolutional block
         for layer in self.conv_resnet:
             layer.init_parameters()
@@ -374,7 +380,9 @@ class UNetDownsample(nn.Module):
         r"""
         Initializes the values of trainable parameters.
         """
-        _set_init_parameters(self.block.layer, _get_gain(self.block.activation))
+        set_init_parameters(
+            self.block.layer, get_gain(self.block.activation, default="conv1d")
+        )
 
 
 class UNetUpsample(nn.Module):
@@ -439,7 +447,9 @@ class UNetUpsample(nn.Module):
         r"""
         Initializes the values of trainable parameters.
         """
-        _set_init_parameters(self.block.layer, _get_gain(self.block.activation))
+        set_init_parameters(
+            self.block.layer, get_gain(self.block.activation, default="conv1d")
+        )
 
 
 def Normalization(num_channels, num_groups=1):
@@ -483,7 +493,7 @@ class UNetResBlock(nn.Module):
         self.out_layers = nn.Sequential(
             normalization(self.output_channels),
             nn.SiLU(),
-            _set_zero_parameters(
+            set_zero_parameters(
                 nn.Conv1d(
                     self.output_channels,
                     self.output_channels,
@@ -686,18 +696,18 @@ class MultiLevelBlock(nn.Module):
         Initializes the values of trainable parameters.
         """
         if hasattr(self.block, "activation"):
-            gain = _get_gain(self.block.activation)
+            gain = get_gain(self.block.activation, default="conv1d")
         else:
-            gain = _get_gain(None)
-        _set_init_parameters(self.block.layer_0, gain)
+            gain = get_gain(None, default="conv1d")
+        set_init_parameters(self.block.layer_0, gain)
         if hasattr(self.block, "layer_1"):
-            _set_init_parameters(self.block.layer_1, gain)
+            set_init_parameters(self.block.layer_1, gain)
         if hasattr(self.block, "layer_2"):
-            _set_init_parameters(self.block.layer_2, gain)
+            set_init_parameters(self.block.layer_2, gain)
         if self.skip_connection is not None and not isinstance(
             self.skip_connection, nn.Identity
         ):
-            _set_init_parameters(self.skip_connection)
+            set_init_parameters(self.skip_connection)
 
 
 class DownsampleBlock(MultiLevelBlock):
@@ -781,56 +791,6 @@ class LevelBlock(MultiLevelBlock):
             logger=logging.getLogger("dlk.nets.conv1d.LevelBlock"),
             **mlb_kwargs,
         )
-
-
-# --------------------------------------
-# Utility Functions
-# --------------------------------------
-
-
-def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
-    return int((in_length + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1)
-
-
-def _get_gain(activation):
-    r"""
-    Calculates the gain to be used as an argument for initializing parameter values.
-
-    Args:
-        activation: Object of activation function or None
-    """
-    if activation is not None:
-        activation_name = type(activation).__name__.lower()
-        if activation_name in ["silu", "gelu"]:
-            activation_name = "relu"
-        gain = nn.init.calculate_gain(activation_name)
-    else:
-        gain = nn.init.calculate_gain("conv1d")
-    return gain
-
-
-def _set_init_parameters(layer, gain=1.0, bias_scale=0.1):
-    r"""
-    Initializes the trainable parameters of a layer.
-
-    Args:
-        layer:      Layer of a network to be initialized (of type nn.Module)
-        gain:       Gain to use for sampling initial parameters
-        bias_scale: Scaling of uniform distribution for initializing the bias
-    """
-    nn.init.xavier_uniform_(layer.weight, gain=gain)
-    if layer.bias is not None:
-        lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
-        nn.init.uniform_(layer.bias, a=-lim, b=+lim)
-
-
-def _set_zero_parameters(layer):
-    r"""
-    Zeros the parameters of a layer.
-    """
-    for p in layer.parameters():
-        torch.nn.init.zeros_(p)
-    return layer
 
 
 # --------------------------------------

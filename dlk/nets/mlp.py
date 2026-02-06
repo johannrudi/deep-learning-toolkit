@@ -4,11 +4,12 @@ Multilayer Perceptron Networks.
 - wiki: <https://en.wikipedia.org/wiki/Multilayer_perceptron>
 """
 
-import math
 from collections import OrderedDict
 
 import torch
 import torch.nn as nn
+
+from dlk.nets.util import get_gain, set_init_parameters
 
 # --------------------------------------
 # MLP Nets
@@ -94,23 +95,23 @@ class MLPNet(nn.Module):
         r"""Initializes the values of trainable parameters."""
         # initialize input layer
         if isinstance(self.input_layer, nn.Sequential):
-            gain = _get_gain(self.input_layer.activation)
-            _set_init_parameters(self.input_layer.layer, gain)
+            gain = get_gain(self.input_layer.activation)
+            set_init_parameters(self.input_layer.layer, gain)
         else:
-            _set_init_parameters(self.input_layer, _get_gain(None))
+            set_init_parameters(self.input_layer, get_gain(None))
         # initialize hidden layers
         for block in self.hidden_blocks:
             try:
-                gain = _get_gain(block.activation)
+                gain = get_gain(block.activation)
             except:
-                gain = _get_gain(None)
-            _set_init_parameters(block.layer, gain)
+                gain = get_gain(None)
+            set_init_parameters(block.layer, gain)
         # initialize output layer
         if isinstance(self.output_layer, nn.Sequential):
-            gain = _get_gain(self.output_layer.activation)
-            _set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
+            gain = get_gain(self.output_layer.activation)
+            set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
         else:
-            _set_init_parameters(self.output_layer, _get_gain(None), bias_scale=0.0)
+            set_init_parameters(self.output_layer, get_gain(None), bias_scale=0.0)
 
 
 class MLPNet_MultIn(MLPNet):
@@ -307,10 +308,10 @@ class AttentionBlock(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize layers
-        _set_init_parameters(
-            self.attention_block.layer_0, _get_gain(self.attention_block.activation)
+        set_init_parameters(
+            self.attention_block.layer_0, get_gain(self.attention_block.activation)
         )
-        _set_init_parameters(self.attention_block.layer_1, _get_gain(None))
+        set_init_parameters(self.attention_block.layer_1, get_gain(None))
 
 
 class ResidualBlock(nn.Module):
@@ -393,13 +394,13 @@ class ResidualBlock(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize layers
-        _set_init_parameters(self.residual_block.layer_0, _get_gain(None))
-        _set_init_parameters(
-            self.residual_block.layer_1, _get_gain(self.residual_block.activation)
+        set_init_parameters(self.residual_block.layer_0, get_gain(None))
+        set_init_parameters(
+            self.residual_block.layer_1, get_gain(self.residual_block.activation)
         )
-        _set_init_parameters(self.residual_block.layer_2, _get_gain(None))
+        set_init_parameters(self.residual_block.layer_2, get_gain(None))
         if self.skip_connection is not None:
-            _set_init_parameters(self.skip_connection, _get_gain(None))
+            set_init_parameters(self.skip_connection, get_gain(None))
 
 
 class MLPResNet(nn.Module):
@@ -573,57 +574,16 @@ class MLPResNet(nn.Module):
         r"""Initializes the values of trainable parameters."""
         # initialize input layer
         if isinstance(self.input_layer, nn.Sequential):
-            gain = _get_gain(self.input_layer.activation)
-            _set_init_parameters(self.input_layer.layer, gain)
+            gain = get_gain(self.input_layer.activation)
+            set_init_parameters(self.input_layer.layer, gain)
         else:
-            _set_init_parameters(self.input_layer, _get_gain(None))
+            set_init_parameters(self.input_layer, get_gain(None))
         # initialize output layer
         if isinstance(self.output_layer, nn.Sequential):
-            gain = _get_gain(self.output_layer.activation)
-            _set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
+            gain = get_gain(self.output_layer.activation)
+            set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
         else:
-            _set_init_parameters(self.output_layer, _get_gain(None), bias_scale=0.0)
-
-
-# --------------------------------------
-# Utility Functions
-# --------------------------------------
-
-
-def _get_gain(activation):
-    r"""Calculates the gain to be used as an argument for initializing parameter values."""
-    if activation is not None:
-        activation_name = type(activation).__name__.lower()
-        if activation_name in ["silu", "gelu"]:
-            activation_name = "relu"
-        gain = nn.init.calculate_gain(activation_name)
-    else:
-        gain = nn.init.calculate_gain("linear")
-    return gain
-
-
-def _set_init_parameters(layer, gain=1.0, bias_scale=0.1):
-    r"""
-    Initializes the trainable parameters of a layer.
-
-    Args:
-        layer:      Layer of a network to be initialized (of type nn.Module)
-        gain:       Gain to use for sampling initial parameters
-        bias_scale: Scaling of uniform distribution for initializing the bias
-    """
-    nn.init.xavier_uniform_(layer.weight, gain=gain)
-    if layer.bias is not None:
-        lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
-        nn.init.uniform_(layer.bias, a=-lim, b=+lim)
-
-
-def _set_zero_parameters(layer):
-    r"""
-    Zeros the parameters of a layer.
-    """
-    for p in layer.parameters():
-        torch.nn.init.zeros_(p)
-    return layer
+            set_init_parameters(self.output_layer, get_gain(None), bias_scale=0.0)
 
 
 # --------------------------------------

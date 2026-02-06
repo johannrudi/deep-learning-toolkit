@@ -3,8 +3,11 @@ Networks with 2D convolutional layers.
 """
 
 import math
+
 import torch
 import torch.nn as nn
+
+from dlk.nets.util import get_gain, set_init_parameters, set_zero_parameters
 
 # --------------------------------------
 # Convolutional Nets
@@ -111,17 +114,17 @@ class ConvNet(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize hidden convolutional layers
-        gain = _get_gain(self.hidden_conv_layers_activation)
+        gain = get_gain(self.hidden_conv_layers_activation, default="conv2d")
         for layer in self.hidden_conv_layers:
-            _set_init_parameters(layer, gain)
+            set_init_parameters(layer, gain)
         # initialize hidden dense layers
-        gain = _get_gain(self.hidden_dense_layers_activation)
+        gain = get_gain(self.hidden_dense_layers_activation, default="conv2d")
         for layer in self.hidden_dense_layers:
-            _set_init_parameters(layer, gain)
+            set_init_parameters(layer, gain)
         # initialize output layer
-        gain = _get_gain(self.output_layer_activation)
+        gain = get_gain(self.output_layer_activation, default="conv2d")
         if self.output_layer is not None:
-            _set_init_parameters(self.output_layer, gain, bias_scale=0.0)
+            set_init_parameters(self.output_layer, gain, bias_scale=0.0)
 
 
 # --------------------------------------
@@ -245,18 +248,20 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
         # initialize hidden convolutional layers before upsampling
-        gain = _get_gain(self.pre_up_layers_activation)
+        gain = get_gain(self.pre_up_layers_activation, default="conv2d")
         for layer in self.pre_up_layers:
-            _set_init_parameters(layer, gain)
+            set_init_parameters(layer, gain)
         # initialize hidden convolutional layers after upsampling
         if self.post_up_layers:
-            gain = _get_gain(self.post_up_layers_activation)
-            _set_init_parameters(self.up_layer, gain)
+            gain = get_gain(self.post_up_layers_activation, default="conv2d")
+            set_init_parameters(self.up_layer, gain)
             for layer in self.post_up_layers[:-1]:
-                _set_init_parameters(layer, gain)
-            _set_init_parameters(self.post_up_layers[-1], _get_gain(None))
+                set_init_parameters(layer, gain)
+            set_init_parameters(
+                self.post_up_layers[-1], get_gain(None, default="conv2d")
+            )
         else:
-            _set_init_parameters(self.up_layer, _get_gain(None))
+            set_init_parameters(self.up_layer, get_gain(None, default="conv2d"))
 
 
 class ConvUpsampleNet_Interpolate(nn.Module):
@@ -342,10 +347,10 @@ class ConvUpsampleNet_Interpolate(nn.Module):
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
-        gain = _get_gain(self.conv_layers_activation)
+        gain = get_gain(self.conv_layers_activation, default="conv2d")
         for layer in self.conv_layers[:-1]:
-            _set_init_parameters(layer, gain)
-        _set_init_parameters(self.conv_layers[-1], _get_gain(None))
+            set_init_parameters(layer, gain)
+        set_init_parameters(self.conv_layers[-1], get_gain(None, default="conv2d"))
 
 
 # --------------------------------------
@@ -405,7 +410,7 @@ class Downsample(nn.Module):
         r"""
         Initializes the values of trainable parameters.
         """
-        _set_init_parameters(self.layer, _get_gain(self.activation))
+        set_init_parameters(self.layer, get_gain(self.activation, default="conv2d"))
 
 
 class Upsample(nn.Module):
@@ -464,7 +469,7 @@ class Upsample(nn.Module):
         r"""
         Initializes the values of trainable parameters.
         """
-        _set_init_parameters(self.layer, _get_gain(self.activation))
+        set_init_parameters(self.layer, get_gain(self.activation, default="conv2d"))
 
 
 class LevelBlock(nn.Module):
@@ -516,9 +521,9 @@ class LevelBlock(nn.Module):
 
     def init_parameters(self):
         r"""Initializes the values of trainable parameters."""
-        _set_zero_parameters(self.layer)
+        set_zero_parameters(self.layer)
         if not isinstance(self.residual_layer, nn.Identity):
-            _set_init_parameters(self.residual_layer, _get_gain(None))
+            set_init_parameters(self.residual_layer, get_gain(None, default="conv2d"))
 
 
 def Normalization(num_channels, num_groups=1):
@@ -563,7 +568,7 @@ class ResBlock(nn.Module):
         self.out_layers = nn.Sequential(
             normalization(self.output_channels),
             nn.SiLU(),
-            _set_zero_parameters(
+            set_zero_parameters(
                 nn.Conv2d(
                     self.output_channels,
                     self.output_channels,
@@ -598,47 +603,6 @@ class ResBlock(nn.Module):
         h = self.in_layers(x)
         h = self.out_layers(h)
         return self.skip_connection(x) + h
-
-
-# --------------------------------------
-# Utility Functions
-# --------------------------------------
-
-
-def _get_gain(activation):
-    r"""Calculates the gain to be used as an argument for initializing parameter values."""
-    if activation is not None:
-        activation_name = type(activation).__name__.lower()
-        if activation_name in ["silu", "gelu"]:
-            activation_name = "relu"
-        gain = nn.init.calculate_gain(activation_name)
-    else:
-        gain = nn.init.calculate_gain("conv2d")
-    return gain
-
-
-def _set_init_parameters(layer, gain=1.0, bias_scale=0.1):
-    r"""
-    Initializes the trainable parameters of a layer.
-
-    Args:
-        layer:      Layer of a network to be initialized (of type nn.Module)
-        gain:       Gain to use for sampling initial parameters
-        bias_scale: Scaling of uniform distribution for initializing the bias
-    """
-    nn.init.xavier_uniform_(layer.weight, gain=gain)
-    if layer.bias is not None:
-        lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
-        nn.init.uniform_(layer.bias, a=-lim, b=+lim)
-
-
-def _set_zero_parameters(layer):
-    r"""
-    Zeros the parameters of a layer.
-    """
-    for p in layer.parameters():
-        torch.nn.init.zeros_(p)
-    return layer
 
 
 # --------------------------------------
