@@ -241,6 +241,7 @@ class AttentionBlock(nn.Module):
         activation=nn.ReLU(),
         block_kwargs={},
         use_dropout=False,
+        use_spectral_norm=False,
     ):
         super().__init__()
         # set from arguments
@@ -263,10 +264,15 @@ class AttentionBlock(nn.Module):
         if use_dropout:
             block["dropout"] = nn.Dropout(use_dropout)
         block["layer_1"] = nn.Linear(al_size, out_size, **block_kwargs)
+        if use_spectral_norm:
+            for i in range(2):
+                block[f"layer_{i}"] = nn.utils.spectral_norm(block[f"layer_{i}"])
         self.attention_block = nn.Sequential(block)
         # create skip connection
         if in_size != out_size:
             self.skip_connection = nn.Linear(in_size, out_size, **block_kwargs)
+            if use_spectral_norm:
+                self.skip_connection = nn.utils.spectral_norm(self.skip_connection)
         else:
             self.skip_connection = None
         # initialize parameters
@@ -331,6 +337,7 @@ class ResidualBlock(nn.Module):
         activation=nn.ReLU(),
         layer_kwargs={},
         use_dropout=False,
+        use_spectral_norm=False,
     ):
         super().__init__()
         # set from arguments
@@ -349,10 +356,15 @@ class ResidualBlock(nn.Module):
         if use_dropout:
             block["dropout"] = nn.Dropout(use_dropout)
         block["layer_2"] = nn.Linear(al_size, out_size, **layer_kwargs)
+        if use_spectral_norm:
+            for i in range(3):
+                block[f"layer_{i}"] = nn.utils.spectral_norm(block[f"layer_{i}"])
         self.residual_block = nn.Sequential(block)
         # create skip connection
         if in_size != out_size:
             self.skip_connection = nn.Linear(in_size, out_size, **layer_kwargs)
+            if use_spectral_norm:
+                self.skip_connection = nn.utils.spectral_norm(self.skip_connection)
         else:
             self.skip_connection = None
         # initialize parameters
@@ -426,6 +438,7 @@ class MLPResNet(nn.Module):
         residual_blocks_activation=nn.ReLU(),
         residual_blocks_kwargs={},
         use_dropout=False,
+        use_spectral_norm=False,
         output_layer_activation=None,
         output_layer_kwargs={},
     ):
@@ -475,6 +488,7 @@ class MLPResNet(nn.Module):
                         activation=attention_blocks_activation,
                         block_kwargs=attention_blocks_kwargs,
                         use_dropout=use_dropout,
+                        use_spectral_norm=use_spectral_norm,
                     )
                 )
             blocks.append(
@@ -486,6 +500,7 @@ class MLPResNet(nn.Module):
                     activation=residual_blocks_activation,
                     layer_kwargs=residual_blocks_kwargs,
                     use_dropout=use_dropout,
+                    use_spectral_norm=use_spectral_norm,
                 )
             )
         self.blocks = nn.Sequential(*blocks)
