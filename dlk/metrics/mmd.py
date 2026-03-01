@@ -12,7 +12,7 @@ def rbf_kernel(x: torch.Tensor, y: torch.Tensor, sigma: float) -> torch.Tensor:
 
 
 @torch.no_grad()
-def mmd_rbf(
+def mmd2_rbf(
     x: torch.Tensor,
     y: torch.Tensor,
     sigma: float | None = None,
@@ -53,12 +53,12 @@ def mmd_rbf(
 
 
 @torch.no_grad()
-def mmd_rbf_multi_sigma(
+def mmd2_rbf_multi_sigma(
     x: torch.Tensor,
     y: torch.Tensor,
     sigmas: list[float] | None = None,
     biased: bool = True,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, list]:
     """
     Multi-kernel MMD^2 using a sum/average of RBF kernels with different bandwidths.
     """
@@ -66,7 +66,12 @@ def mmd_rbf_multi_sigma(
     if sigmas is None:
         sigmas = [0.1, 0.2, 0.4, 0.8]
 
-    mmd2 = torch.Tensor([0.0])
+    mmd2_single = []
+    mmd2_multi = torch.Tensor([0.0])
     for s in sigmas:
-        mmd2 = mmd2 + mmd_rbf(x, y, sigma=s, biased=biased)
-    return mmd2 / len(sigmas)
+        mmd2 = mmd2_rbf(x, y, sigma=s, biased=biased)
+        mmd2_single.append(mmd2)
+        mmd2_multi = mmd2_multi + mmd2
+    mmd2_multi = mmd2_multi / len(sigmas)
+
+    return mmd2_multi, mmd2_single

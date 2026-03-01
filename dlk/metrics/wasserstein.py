@@ -4,7 +4,7 @@ from dlk.metrics.utils import pairwise_distances
 
 
 @torch.no_grad()
-def sinkhorn_wasserstein_2d(
+def sinkhorn_cost(
     x: torch.Tensor,
     y: torch.Tensor,
     epsilon: float = 0.1,
@@ -12,11 +12,10 @@ def sinkhorn_wasserstein_2d(
     p: int = 1,
 ) -> torch.Tensor:
     """
-    Entropic OT cost between two empirical measures with uniform weights.
-    Returns scalar cost.
+    Entropic OT cost OT_eps(P,Q) between uniform empirical measures.
+    Returns scalar OT cost (biased for eps>0).
     """
-    device = x.device
-    dtype = x.dtype
+    device, dtype = x.device, x.dtype
     x = x.to(device=device, dtype=dtype)
     y = y.to(device=device, dtype=dtype)
 
@@ -40,3 +39,25 @@ def sinkhorn_wasserstein_2d(
     P = torch.exp((f[:, None] + g[None, :] - C) / epsilon)
     cost = torch.sum(P * C)
     return cost
+
+
+@torch.no_grad()
+def sinkhorn_divergence(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    epsilon: float = 0.1,
+    n_iters: int = 300,
+    p: int = 1,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Sinkhorn divergence:
+        S_eps(P,Q) = OT_eps(P,Q) - 0.5*OT_eps(P,P) - 0.5*OT_eps(Q,Q)
+
+    Nonnegative, symmetric, and S_eps(P,P)=0 (up to numerical error).
+    """
+    _xy = sinkhorn_cost(x, y, epsilon=epsilon, n_iters=n_iters, p=p)
+    _xx = sinkhorn_cost(x, x, epsilon=epsilon, n_iters=n_iters, p=p)
+    _yy = sinkhorn_cost(y, y, epsilon=epsilon, n_iters=n_iters, p=p)
+    divergence = _xy - 0.5 * _xx - 0.5 * _yy
+    cost = _xy
+    return divergence, cost
