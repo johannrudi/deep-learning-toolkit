@@ -1,39 +1,39 @@
-"""Training loops for feed-forward networks."""
+"""Training loops for supervised learning."""
 
 import logging
 import pathlib
 import timeit
+from collections.abc import Callable
 from datetime import datetime
 
 import torch
 from tqdm import tqdm
 
-from dlk.opt.train_utils import (checkpoint_path, checkpoint_save,
-                                 train_dlog_batch_finalize,
-                                 train_dlog_batch_initialize,
-                                 train_dlog_batch_update,
-                                 train_dlog_epoch_finalize,
-                                 train_dlog_epoch_initialize,
-                                 train_dlog_epoch_update)
+from dlk.opt.utils import (checkpoint_path, checkpoint_save,
+                           train_dlog_batch_finalize,
+                           train_dlog_batch_initialize,
+                           train_dlog_batch_update, train_dlog_epoch_finalize,
+                           train_dlog_epoch_initialize,
+                           train_dlog_epoch_update)
 
 
 def train_epochs(
-    n_epochs,
-    net,
-    dataloader,
-    optimizer,
-    loss_fn,
-    validation_fn=None,
+    n_epochs: int,
+    net: torch.nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_fn: Callable,
+    validation_fn: Callable | None = None,
     lr_scheduler=None,
-    device=None,
-    inputs_transform_fn=None,
-    targets_transform_fn=None,
-    logger=logging.getLogger("dlk.opt.train_epochs"),
-    checkpoint_epochs=None,
-    checkpoint_dir="checkpoints",
-    epoch_initialize_fn=None,
-    epoch_finalize_fn=None,
-):
+    device: torch.device | None = None,
+    inputs_transform_fn: Callable | None = None,
+    targets_transform_fn: Callable | None = None,
+    logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
+    checkpoint_epochs: int | None = None,
+    checkpoint_dir: str = "checkpoints",
+    epoch_initialize_fn: Callable | None = None,
+    epoch_finalize_fn: Callable | None = None,
+) -> dict:
     """Runs training loop over epochs.
 
     Checkpointing saves model and optimizer states at every epoch divisible
@@ -51,7 +51,7 @@ def train_epochs(
         checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
         checkpoint_dir_.mkdir(parents=True, exist_ok=True)
 
-    # <code id="training_loop_over_epochs">
+    # <training_loop_over_epochs>
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs), desc="epochs"):
         # initialize epoch
@@ -116,14 +116,16 @@ def train_epochs(
     if validation_fn is not None:
         validation_fn(n_epochs, net)
     time_train = timeit.default_timer() - time_train
-    # </code>
+    # </training_loop_over_epochs>
 
     # finalize log
     train_dlog_epoch_finalize(epoch_dlog, time_train)
 
     # print statistics
     n_steps = n_epochs * len(dataloader)
-    n_samples = n_steps * dataloader.batch_size
+    n_samples = (
+        n_steps * dataloader.batch_size if dataloader.batch_size is not None else 0
+    )
     logger.info(
         f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
     )
@@ -139,25 +141,25 @@ def train_epochs(
 
 
 def train_batches(
-    epoch_idx,
-    net,
-    dataloader,
-    optimizer,
-    loss_fn,
-    device=None,
-    inputs_transform_fn=None,
-    targets_transform_fn=None,
-    logger=logging.getLogger("dlk.opt.train_batches"),
-    batch_initialize_fn=None,
-    batch_finalize_fn=None,
-    max_batches=None,
-):
+    epoch_idx: int,
+    net: torch.nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    loss_fn: Callable,
+    device: torch.device | None = None,
+    inputs_transform_fn: Callable | None = None,
+    targets_transform_fn: Callable | None = None,
+    logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
+    batch_initialize_fn: Callable | None = None,
+    batch_finalize_fn: Callable | None = None,
+    max_batches: int | None = None,
+) -> dict:
     """Runs training loop over batches."""
     if max_batches is None:
         max_batches = len(dataloader)
     batch_dlog = train_dlog_batch_initialize(max_batches, ["loss"], save_list=False)
 
-    # <code id="training_loop_over_batches">
+    # <training_loop_over_batches>
     for batch_idx, data in enumerate(dataloader):
         if max_batches <= batch_idx:
             break
@@ -193,12 +195,12 @@ def train_batches(
         # log
         loss_v = loss.item()
         train_dlog_batch_update(batch_dlog, batch_idx, {"loss": loss_v})
-        logger.debug(f"batch {batch_idx:4d}, loss {loss_v:.6e}")
+        logger.debug(f"epoch {epoch_idx:4d}, batch {batch_idx:4d}, loss {loss_v:.6e}")
 
         # finalize batch
         if batch_finalize_fn:
             batch_finalize_fn(batch_idx)
-    # </code>
+    # </training_loop_over_batches>
 
     # finalize and return log
     train_dlog_batch_finalize(batch_dlog, ["loss"])
