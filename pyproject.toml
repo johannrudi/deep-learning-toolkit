@@ -1,11 +1,10 @@
 [project]
 name =  "deep-learning-toolkit"
 version = "0.1.0"
-description = "DL-Kit: Deep Learning tool-Kit"
+description = "DL-Kit: Deep Learning Toolkit"
 readme = "README.md"
 authors = [
     { name = "Johann Rudi", email = "jrudi@vt.edu" },
-    { name = "Harrison J Goldwyn", email = "Harrison.Goldwyn@nrel.gov" },
 ]
 license = { file = "LICENSE" }
 classifiers = [
@@ -39,12 +38,12 @@ requires-python = ">=3.8"
 dev = ["black>=25", "build", "bumpver", "pip-tools", "pytest>=8", "twine"]
 
 #[project.urls]
-#Homepage = "https://github.com/johannrudi/cg-kit"
+#Homepage = "https://github.com/johannrudi/dl-kit"
 #Documentation = "" #TODO
-#Issues = "https://github.com/johannrudi/cg-kit/issues"
+#Issues = "https://github.com/johannrudi/dl-kit/issues"
 
 #[project.scripts]
-#cgkit = "cgkit.__main__:main"
+#dlk = "dlk.__main__:main"
 
 [build-system]
 requires = ["setuptools>=61.0.0", "wheel"]
