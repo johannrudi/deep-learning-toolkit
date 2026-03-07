@@ -8,7 +8,7 @@
 ## Tests
 
 - run `make format` to format Python files in `dlk` with `black`
-- run `make py_compile` to compile Python files in `dlk` and subdirectories
+- run `make compile` to compile Python files in `dlk` and subdirectories
 - run `make test` to run `pytest` across the codebase
 - run `python -m dlk.nets.mlp`
 - run `python -m dlk.nets.transformer1d`

@@ -33,7 +33,15 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-dev = ["black>=25", "build", "bumpver", "pip-tools", "pytest>=8", "twine"]
+dev = [
+    "black>=25",
+    "build",
+    "bumpver",
+    "pip-tools",
+    "pytest>=8",
+    "twine",
+]
+# TODO: add isort to dev dependencies
 
 #[project.urls]
 #Homepage = "https://github.com/johannrudi/dl-kit"
