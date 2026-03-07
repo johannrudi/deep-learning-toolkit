@@ -158,7 +158,7 @@ def _serialize_toml(params: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def load_parameters(filepath: str | pathlib.Path) -> dict[str, Any]:
+def load(filepath: str | pathlib.Path) -> dict[str, Any]:
     """Load parameters from a JSON, TOML, or YAML file.
 
     Args:
@@ -188,7 +188,7 @@ def load_parameters(filepath: str | pathlib.Path) -> dict[str, Any]:
     return params if params is not None else {}
 
 
-def save_parameters(
+def save(
     params: dict[str, Any],
     save_dir: str | pathlib.Path,
     filename: str | None = None,
@@ -253,13 +253,8 @@ def update_runconfig_params_from_args(
 
     # copy arguments to runconfig parameters
     for key, value in list(vars(args).items()):
-        if key not in runconfig_params:
-            print(f"Warning: parameter {repr(key)} does not exist and is ignored")
-            continue
-
         if value is None:
             continue
-
         runconfig_params[key] = value
 
 
@@ -303,9 +298,9 @@ def _update_existing_nested_parameters(
         params[key] = value
 
 
-def update_parameters_from_json(
-    json_params: str,
+def update_from_json(
     params: dict[str, Any],
+    json_params: str,
 ) -> None:
     """Update existing parameters from a JSON string.
 
@@ -330,9 +325,9 @@ def update_parameters_from_json(
     _update_existing_nested_parameters(params=params, updates=updates)
 
 
-def update_parameters_from_toml(
-    toml_params: str,
+def update_from_toml(
     params: dict[str, Any],
+    toml_params: str,
 ) -> None:
     """Update existing parameters from a TOML string.
 
@@ -344,16 +339,11 @@ def update_parameters_from_toml(
         None: Updates ``params`` in place.
 
     Raises:
-        ValueError: If ``toml_params`` cannot be parsed as a TOML dictionary.
+        ValueError: If ``toml_params`` cannot be parsed as TOML.
     """
     try:
         updates = toml.loads(toml_params)
     except toml.TOMLDecodeError as error:
         raise ValueError("toml_params is not valid TOML.") from error
-
-    if not isinstance(updates, dict):
-        raise ValueError("toml_params must decode to a dictionary.")
-        # TODO: this error is not raised in a unit test.
-        # can this even happen that the loaded toml is not a dict?
 
     _update_existing_nested_parameters(params=params, updates=updates)
