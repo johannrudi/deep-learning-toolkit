@@ -1,6 +1,6 @@
 [project]
 name =  "deep-learning-toolkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "DL-Kit: Deep Learning Toolkit"
 readme = "README.md"
 authors = [
@@ -15,9 +15,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
@@ -29,10 +26,11 @@ keywords = [
 dependencies = [
     "numpy>=2",
     "prettytable>=3",
+    "pytest>=8",
     "torch>=2",
     "tqdm>=4",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 
 [project.optional-dependencies]
 dev = ["black>=25", "build", "bumpver", "pip-tools", "pytest>=8", "twine"]
