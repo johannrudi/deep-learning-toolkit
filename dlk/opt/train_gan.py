@@ -6,20 +6,15 @@ import timeit
 from collections.abc import Callable
 from datetime import datetime
 
-import numpy as np
 import torch
 from tqdm import tqdm
 
-from dlk.opt.utils import (
-    checkpoint_path,
-    checkpoint_save,
-    train_dlog_batch_finalize,
-    train_dlog_batch_initialize,
-    train_dlog_batch_update,
-    train_dlog_epoch_finalize,
-    train_dlog_epoch_initialize,
-    train_dlog_epoch_update,
-)
+from dlk.opt.utils import (checkpoint_path, checkpoint_save,
+                           train_dlog_batch_finalize,
+                           train_dlog_batch_initialize,
+                           train_dlog_batch_update, train_dlog_epoch_finalize,
+                           train_dlog_epoch_initialize,
+                           train_dlog_epoch_update)
 
 DLOG_BASENAMES = [
     "g_loss",
@@ -211,9 +206,10 @@ def _train_step_discriminator(
     d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
     d_reg_dlog = dict()
     if d_reg_fn is not None:
+        random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
         d_reg = d_reg_fn(
             d_net,
-            x_gen[np.random.randint(0, x_gen.size(0))],
+            x_gen[random_idx],
             x_data,
             y_data,
             dlog=d_reg_dlog,

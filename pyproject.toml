@@ -24,7 +24,6 @@ keywords = [
     "pytorch",
 ]
 dependencies = [
-    "numpy>=2",
     "prettytable>=3",
     "pytest>=8",
     "torch>=2",
