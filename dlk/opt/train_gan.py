@@ -9,12 +9,16 @@ from datetime import datetime
 import torch
 from tqdm import tqdm
 
-from dlk.opt.utils import (checkpoint_path, checkpoint_save,
-                           train_dlog_batch_finalize,
-                           train_dlog_batch_initialize,
-                           train_dlog_batch_update, train_dlog_epoch_finalize,
-                           train_dlog_epoch_initialize,
-                           train_dlog_epoch_update)
+from dlk.opt.utils import (
+    checkpoint_path,
+    checkpoint_save,
+    train_dlog_batch_finalize,
+    train_dlog_batch_initialize,
+    train_dlog_batch_update,
+    train_dlog_epoch_finalize,
+    train_dlog_epoch_initialize,
+    train_dlog_epoch_update,
+)
 
 DLOG_BASENAMES = [
     "g_loss",

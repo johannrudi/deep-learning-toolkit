@@ -6,13 +6,13 @@ Models with transformer layers.
 """
 
 import math
+from typing import Any, Callable, Optional, Union
+
 import torch
 import torch.nn as nn
+from torch import Tensor
 
 from .mlp import MLPNet
-
-from typing import Optional, Any, Union, Callable
-from torch import Tensor
 
 
 class DataEmbedding(nn.Module):

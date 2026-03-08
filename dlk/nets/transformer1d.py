@@ -3,6 +3,7 @@ Networks with 1D transformer layers.
 """
 
 import math
+
 import torch
 import torch.nn as nn
 

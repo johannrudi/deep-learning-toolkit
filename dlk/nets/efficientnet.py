@@ -2,8 +2,9 @@
 EfficientNet-type architecture for time series data.
 """
 
-from collections import namedtuple
 import math
+from collections import namedtuple
+
 import torch
 import torch.nn as nn
 
