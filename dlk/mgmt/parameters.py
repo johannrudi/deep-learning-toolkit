@@ -235,29 +235,6 @@ def save(
             yaml.safe_dump(params, f, default_flow_style=False, sort_keys=False)
 
 
-def update_runconfig_params_from_args(
-    runconfig_params: dict[str, Any],
-    args: argparse.Namespace | None,
-) -> None:
-    """Update run configuration parameters from parsed command line arguments.
-
-    Args:
-        runconfig_params (dict): Mutable run configuration dictionary to update.
-        args (argparse.Namespace | None): Parsed command line arguments.
-
-    Returns:
-        None: Updates ``runconfig_params`` in place.
-    """
-    if not args:
-        return
-
-    # copy arguments to runconfig parameters
-    for key, value in list(vars(args).items()):
-        if value is None:
-            continue
-        runconfig_params[key] = value
-
-
 def _update_existing_nested_parameters(
     params: dict[str, Any],
     updates: dict[str, Any],
@@ -347,3 +324,84 @@ def update_from_toml(
         raise ValueError("toml_params is not valid TOML.") from error
 
     _update_existing_nested_parameters(params=params, updates=updates)
+
+
+def update_runconfig_params_from_args(
+    runconfig_params: dict[str, Any],
+    args: argparse.Namespace | None,
+) -> None:
+    """Update run configuration parameters from parsed command line arguments.
+
+    Args:
+        runconfig_params (dict): Mutable run configuration dictionary to update.
+        args (argparse.Namespace | None): Parsed command line arguments.
+
+    Returns:
+        None: Updates ``runconfig_params`` in place.
+    """
+    if not args:
+        return
+
+    # copy arguments to runconfig parameters
+    for key, value in list(vars(args).items()):
+        if value is None:
+            continue
+        runconfig_params[key] = value
+
+
+def add_args_to_parser(
+    parser: argparse.ArgumentParser,
+    default_params_path: str | None = "params.toml",
+    default_save_dir: str | None = "runs",
+    default_mode: str = "train_eval",
+) -> None:
+    """Add command line arguments to a parser."""
+    parser.add_argument(
+        "-p",
+        "--params",
+        default=default_params_path,
+        help="Path to a file with parameters (JSON, TOML, or, YAML)",
+    )
+    parser.add_argument(
+        "-j",
+        "--json_params",
+        default=None,
+        help="JSON string to override parameters from the `--params` file",
+    )
+    parser.add_argument(
+        "-t",
+        "--toml_params",
+        default=None,
+        help="TOML string to override parameters from the `--params` file",
+    )
+    parser.add_argument(
+        "-s",
+        "--save_dir",
+        default=default_save_dir,
+        help="Directory for saving the network and all outputs",
+    )
+    parser.add_argument(
+        "-l",
+        "--load_dir",
+        default=None,
+        help="Directory for loading a network",
+    )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        choices=[
+            "train",
+            "predict",
+            "eval",
+            "train_eval",
+            "train_predict",
+            "train_profile",
+        ],  # TODO: get choices from Mode class
+        default=default_mode,
+        help=(
+            "Can train, predict, eval, and combine train_eval (default)."
+            + "  eval runs on available checkpoints."
+            + "  train_eval runs train, predict, and eval."
+            + "  train_profile runs profiling of a few training steps."
+        ),
+    )
