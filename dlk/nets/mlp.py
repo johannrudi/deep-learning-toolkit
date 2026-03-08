@@ -9,7 +9,7 @@ from collections import OrderedDict
 import torch
 import torch.nn as nn
 
-from dlk.nets.util import get_gain, set_init_parameters
+from dlk.nets.utils import get_gain, set_init_parameters
 
 # --------------------------------------
 # MLP Nets

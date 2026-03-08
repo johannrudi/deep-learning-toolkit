@@ -2,12 +2,10 @@
 Networks with 2D convolutional layers.
 """
 
-import math
-
 import torch
 import torch.nn as nn
 
-from dlk.nets.util import get_gain, set_init_parameters, set_zero_parameters
+from dlk.nets.utils import get_gain, set_init_parameters, set_zero_parameters
 
 # --------------------------------------
 # Convolutional Nets

@@ -10,7 +10,7 @@ import torch
 import torch.nn as nn
 
 from dlk.nets.mlp import MLPResNet
-from dlk.nets.util import get_gain, set_init_parameters, set_zero_parameters
+from dlk.nets.utils import get_gain, set_init_parameters, set_zero_parameters
 
 
 def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
