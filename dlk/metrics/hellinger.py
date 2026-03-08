@@ -1,3 +1,5 @@
+"""Compute Hellinger distances via estimating densities with histograms or KDE."""
+
 from collections.abc import Sequence
 from numbers import Real
 
