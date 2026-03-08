@@ -351,8 +351,7 @@ def update_runconfig_params_from_args(
 
 def add_args_to_parser(
     parser: argparse.ArgumentParser,
-    default_params_path: str | None = "params.toml",
-    default_save_dir: str | None = "runs",
+    default_params_path: str = "configs/params.toml",
     default_mode: str = "train_eval",
 ) -> None:
     """Add command line arguments to a parser."""
@@ -360,7 +359,10 @@ def add_args_to_parser(
         "-p",
         "--params",
         default=default_params_path,
-        help="Path to a file with parameters (JSON, TOML, or, YAML)",
+        help=(
+            f"Path to a file with parameters (default: {default_params_path})."
+            + " Supported file types are JSON, TOML, and YAML."
+        ),
     )
     parser.add_argument(
         "-j",
@@ -377,7 +379,7 @@ def add_args_to_parser(
     parser.add_argument(
         "-s",
         "--save_dir",
-        default=default_save_dir,
+        default=None,
         help="Directory for saving the network and all outputs",
     )
     parser.add_argument(
@@ -396,12 +398,15 @@ def add_args_to_parser(
             "train_eval",
             "train_predict",
             "train_profile",
-        ],  # TODO: get choices from Mode class
+        ],
         default=default_mode,
         help=(
-            "Can train, predict, eval, and combine train_eval (default)."
-            + "  eval runs on available checkpoints."
-            + "  train_eval runs train, predict, and eval."
-            + "  train_profile runs profiling of a few training steps."
+            f"Strings corresponding to enum in `dlk.mode.Mode` class (default: {default_mode}),"
+            + " for example:"
+            + " trains runs on training;"
+            + " eval runs on available checkpoints;"
+            + " train_eval runs train, predict, and eval;"
+            + " train_profile runs profiling of a few training steps."
+            + " Combinations like train_eval are possible."
         ),
     )
