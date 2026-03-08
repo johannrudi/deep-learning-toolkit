@@ -1,14 +1,13 @@
 import pathlib
+from typing import Any
 
 import pytest
 
-from dlk.config.parameters import (load, save, update_from_json,
-                                   update_from_toml)
+from dlk.mgmt.parameters import load, save, update_from_json, update_from_toml
 
 
-# TODO: add typing annotation here; and for all arguments "example_params" below
 @pytest.fixture
-def example_params():
+def example_params() -> dict[str, Any]:
     return {
         "train": {
             "lr": 1e-3,
@@ -23,7 +22,7 @@ def example_params():
 
 def test_save_with_default_format(
     tmp_path: pathlib.Path,
-    example_params,
+    example_params: dict[str, Any],
 ) -> None:
     """Save parameters when no format is provided."""
     save(params=example_params, save_dir=tmp_path)
@@ -46,7 +45,7 @@ def test_save_with_requested_format(
     parameter_format: str,
     expected_filename: str,
     tmp_path: pathlib.Path,
-    example_params,
+    example_params: dict[str, Any],
 ) -> None:
     """Write parameters in the requested format and keep load compatibility."""
     save(
@@ -90,7 +89,7 @@ def test_save_raises_for_none_values_in_toml(
 
 def test_update_parameters_from_json_updates_nested_keys_and_warns_for_unknown(
     capsys: pytest.CaptureFixture[str],
-    example_params,
+    example_params: dict[str, Any],
 ) -> None:
     """Update nested parameters in place and warn on unknown key paths."""
     json_params = """\
@@ -109,7 +108,6 @@ def test_update_parameters_from_json_updates_nested_keys_and_warns_for_unknown(
     params = example_params.copy()
     update_from_json(params, json_params)
 
-    # TODO: check if two dictionaries can be compared with "=="
     assert params == {
         "train": {
             "lr": 1e-2,
@@ -144,7 +142,7 @@ def test_update_parameters_from_json_raises_for_non_dict_json() -> None:
 
 def test_update_parameters_from_toml_updates_nested_keys_and_warns_for_unknown(
     capsys: pytest.CaptureFixture[str],
-    example_params,
+    example_params: dict[str, Any],
 ) -> None:
     """Update nested parameters from TOML and warn on unknown key paths."""
     toml_params = """
