@@ -60,6 +60,6 @@ Training functions return detailed logging dictionaries (`dlog`) containing:
 
 ### Additional components of the package
 
-- `dlk/log/`: Logging
+- `dlk/mgmt/`: Management of configuration parameter loading/saving, logging, etc.
 - `dlk/loss/`: Loss functions
 - `dlk/metrics/`: Metrics for evaluating trained nets
