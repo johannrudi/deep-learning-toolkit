@@ -1,10 +1,26 @@
+"""Provide Wasserstein GAN loss and gradient-penalty utilities for critic training."""
+
+from collections.abc import Callable
+
 import torch
 
 
-def wasserstein_loss_fn(d_outputs_gen, d_outputs_data):
-    """Calculates Wasserstein loss for adversarial training.
+def wasserstein_loss_fn(
+    d_outputs_gen: torch.Tensor | None,
+    d_outputs_data: torch.Tensor | None,
+) -> tuple[torch.Tensor | float, torch.Tensor | float]:
+    """Calculate the Wasserstein critic loss and generator score term.
 
-    D_loss = - E[ D(data) ] + E[ D(gen) ]
+    D_loss = -E[D(data)] + E[D(gen)].
+
+    Args:
+        d_outputs_gen: Critic outputs evaluated on generated samples.
+        d_outputs_data: Critic outputs evaluated on real samples.
+
+    Returns:
+        A tuple containing:
+            - Critic loss value to minimize.
+            - Generator score term E[D(gen)].
     """
     loss_gen = torch.mean(d_outputs_gen) if d_outputs_gen is not None else 0.0
     loss_data = torch.mean(d_outputs_data) if d_outputs_data is not None else 0.0
@@ -13,13 +29,24 @@ def wasserstein_loss_fn(d_outputs_gen, d_outputs_data):
 
 
 def gradient_norm_sq(
-    d_net,
-    x_gen,
-    x_data,
-    y_data=None,
-    device=None,
-):
-    """Computes the penalty term for Lipschitz continuity."""
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None = None,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Compute the squared gradient norm used by Wasserstein penalties.
+
+    Args:
+        d_net: Critic network used to score interpolated samples.
+        x_gen: Generated samples from the model.
+        x_data: Real data samples.
+        y_data: Optional conditional inputs passed to the critic.
+        device: Device used to sample interpolation coefficients.
+
+    Returns:
+        Per-sample squared L2 norm of critic gradients.
+    """
     batch_size, *other_dims = x_data.size()
     epsilon = torch.rand([batch_size] + [1] * len(other_dims), device=device)
     epsilon = epsilon.expand(-1, *other_dims)
@@ -55,11 +82,31 @@ def gradient_norm_sq(
 
 
 def gradient_penalty_lip(
-    d_net, x_gen, x_data, y_data, lip=1.0, eps=0.0, device=None, dlog=None
-):
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None,
+    lip: float = 1.0,
+    eps: float = 0.0,
+    device: torch.device | None = None,
+    dlog: dict[str, float] | None = None,
+) -> torch.Tensor:
     """Computes the regularization term for the critic network.
 
     This penalizes gradients greater `k` to achieve k-Lipschitz continuity.
+
+    Args:
+        d_net: Critic network used to score interpolated samples.
+        x_gen: Generated samples from the model.
+        x_data: Real data samples.
+        y_data: Optional conditional inputs passed to the critic.
+        lip: Target Lipschitz constant.
+        eps: Numerical margin added before thresholding.
+        device: Device used to sample interpolation coefficients.
+        dlog: Optional dictionary for logging summary statistics.
+
+    Returns:
+        Scalar gradient penalty term.
     """
     grad_norm_sq = gradient_norm_sq(d_net, x_gen, x_data, y_data=y_data, device=device)
     grad_norm = torch.sqrt(grad_norm_sq.detach())  # only for logging purposes
@@ -71,11 +118,29 @@ def gradient_penalty_lip(
     return grad_penalty
 
 
-def gradient_penalty_opt(d_net, x_gen, x_data, y_data, device=None, dlog=None):
+def gradient_penalty_opt(
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None,
+    device: torch.device | None = None,
+    dlog: dict[str, float] | None = None,
+) -> torch.Tensor:
     """Computes the regularization term for the critic network.
 
     This achieves the optimal Kantorovich potential in the Kantorovich–Rubinstein
     duality.
+
+    Args:
+        d_net: Critic network used to score interpolated samples.
+        x_gen: Generated samples from the model.
+        x_data: Real data samples.
+        y_data: Optional conditional inputs passed to the critic.
+        device: Device used to sample interpolation coefficients.
+        dlog: Optional dictionary for logging summary statistics.
+
+    Returns:
+        Scalar gradient penalty term.
     """
     grad_norm_sq = gradient_norm_sq(d_net, x_gen, x_data, y_data=y_data, device=device)
     grad_norm = torch.sqrt(grad_norm_sq)

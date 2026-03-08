@@ -1,3 +1,8 @@
+"""Module for Gaussian loss functions.
+
+Note: This code is under development.
+"""
+
 import torch
 
 
