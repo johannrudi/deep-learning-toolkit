@@ -12,7 +12,8 @@ TEST   := test
 
 # set Python tools
 PY_FORMAT := black
-PY_COMPILE := python -m py_compile
+PY_IMPORT_FORMAT := isort
+PY_COMPILE := python -m compileall -q -f
 PY_TEST := pytest
 PY_TESTV := pytest -v
 
@@ -24,11 +25,11 @@ PACKAGE_DIR := dlk
 .PHONY: format py_compile test
 
 format:
-	@$(FORMAT) dlk
+	$(PY_IMPORT_FORMAT) $(PACKAGE_DIR)
+	$(PY_FORMAT) $(PACKAGE_DIR)
 
 compile:
-	@printf "Run '$(PY_COMPILE)' for each '.py' file in the '$(PACKAGE_DIR)' directory\n"
-	@find $(PACKAGE_DIR) -type f -name "*.py" -print0 | xargs -0 -r $(PY_COMPILE)
+	$(PY_COMPILE) $(PACKAGE_DIR)
 
 test: compile
 	@$(PY_TEST)

@@ -36,11 +36,11 @@ dev = [
     "black>=25",
     "build",
     "bumpver",
+    "isort>=5",
     "pip-tools",
     "pytest>=8",
     "twine",
 ]
-# TODO: add isort to dev dependencies
 
 #[project.urls]
 #Homepage = "https://github.com/johannrudi/dl-kit"
@@ -57,3 +57,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 exclude = ["_*"]
 namespaces = false  # do not add folders without `__init__.py` file
+
+[tool.isort]
+profile = "black"
