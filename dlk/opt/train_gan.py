@@ -1,15 +1,20 @@
-"""Training loops for adversarial learning with Generative Adversarial Nets."""
+"""Train GAN models across epochs and batches with checkpointing and structured logging."""
 
 import logging
 import pathlib
 import timeit
 from collections.abc import Callable
 from datetime import datetime
+from typing import Protocol, TypeAlias
 
 import torch
 from tqdm import tqdm
 
 from dlk.opt.utils import (
+    BatchHookFn,
+    EpochHookFn,
+    LRScheduler,
+    TrainLog,
     checkpoint_path,
     checkpoint_save,
     train_dlog_batch_finalize,
@@ -33,41 +38,100 @@ DLOG_BASENAMES = [
 ]
 
 
+class DiscriminatorRegularizerFn(Protocol):
+    """Protocol for discriminator regularizers that optionally emit logs."""
+
+    def __call__(
+        self,
+        d_net: torch.nn.Module,
+        x_gen: torch.Tensor,
+        x_data: torch.Tensor,
+        y_data: torch.Tensor,
+        *,
+        dlog: dict[str, float] | None = None,
+    ) -> torch.Tensor:
+        """Return a scalar regularization penalty for discriminator updates."""
+        ...
+
+
+# Reusable types
+LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
+GANLossFn: TypeAlias = Callable[
+    [torch.Tensor | None, torch.Tensor], tuple[torch.Tensor, torch.Tensor]
+]
+GANValidationFn: TypeAlias = Callable[[int, torch.nn.Module, torch.nn.Module], None]
+
+
 def train_epochs(
     n_epochs: int,
     g_net: torch.nn.Module,
     d_net: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
-    z_sample_fn: Callable,
+    z_sample_fn: LatentSampleFn,
     g_optimizer: torch.optim.Optimizer,
     d_optimizer: torch.optim.Optimizer,
-    loss_fn: Callable,
-    d_reg_fn: Callable | None = None,
+    loss_fn: GANLossFn,
+    d_reg_fn: DiscriminatorRegularizerFn | None = None,
     d_opt_pre: int = 1,
     d_opt_post: int = 1,
     g_opt_freq: int = 1,
-    validation_fn: Callable | None = None,
-    g_lr_scheduler=None,
-    d_lr_scheduler=None,
+    validation_fn: GANValidationFn | None = None,
+    g_lr_scheduler: LRScheduler | None = None,
+    d_lr_scheduler: LRScheduler | None = None,
     device: torch.device | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
-) -> dict:
-    """Runs training loop over epochs.
+    epoch_initialize_fn: EpochHookFn | None = None,
+    epoch_finalize_fn: EpochHookFn | None = None,
+) -> TrainLog:
+    """Run the GAN training loop over epochs.
 
-    Checkpointing saves networks `g_net`, `d_net` and both optimizer states at
-    every epoch divisible by `checkpoint_epochs`. Setting `checkpoint_epochs=None`
-    turns off checkpointing. Checkpointing will create a new dir under
-    `checkpoint_dir/` followed by a directory with date and time of training start.
+    Checkpointing saves `g_net`, `d_net`, and optimizer states at epochs divisible
+    by `checkpoint_epochs`. If checkpointing is enabled, a timestamped directory is
+    created under `checkpoint_dir`.
+
+    Args:
+        n_epochs: Number of epochs to train.
+        g_net: Generator network.
+        d_net: Discriminator network.
+        dataloader: Iterable of training batches `(x_data, y_data)`.
+        z_sample_fn: Function that samples latent vectors for a batch size.
+        g_optimizer: Optimizer for generator parameters.
+        d_optimizer: Optimizer for discriminator parameters.
+        loss_fn: Adversarial loss function used by both networks.
+        d_reg_fn: Optional discriminator regularizer.
+        d_opt_pre: Number of discriminator updates before generator update.
+        d_opt_post: Number of discriminator updates after generator update.
+        g_opt_freq: Frequency of generator updates in batch steps.
+        validation_fn: Optional callback invoked before each epoch and once after
+            training.
+        g_lr_scheduler: Optional generator learning-rate scheduler.
+        d_lr_scheduler: Optional discriminator learning-rate scheduler.
+        device: Optional device to move batch tensors to.
+        logger: Logger instance for training progress.
+        checkpoint_epochs: Epoch interval for checkpoint saves. `None` disables
+            checkpointing.
+        checkpoint_dir: Parent directory where checkpoint runs are stored.
+        epoch_initialize_fn: Optional callback invoked at the start of each epoch.
+        epoch_finalize_fn: Optional callback invoked at the end of each epoch.
+
+    Returns:
+        Aggregated epoch-level training diagnostics.
+
+    Raises:
+        ValueError: If `n_epochs < 1` or `checkpoint_epochs < 1` when provided.
     """
+    if n_epochs < 1:
+        raise ValueError(f"n_epochs must be >= 1, got {n_epochs}")
     DLOG_TAGS = [f"{name}_mean" for name in DLOG_BASENAMES]
     DLOG_TAGS += [f"{name}_std" for name in DLOG_BASENAMES]
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, DLOG_TAGS)
 
     # set checkpoint directory; create if it doesn't exist
     if checkpoint_epochs is not None:
-        assert 1 <= checkpoint_epochs, checkpoint_epochs
+        if checkpoint_epochs < 1:
+            raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
         assert checkpoint_dir is not None
         checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
         checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
@@ -76,6 +140,10 @@ def train_epochs(
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
     for epoch_idx in tqdm(range(n_epochs), desc="epochs"):
+        # initialize epoch
+        if epoch_initialize_fn:
+            epoch_initialize_fn(epoch_idx)
+
         # save checkpoint
         if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
             for tag_, net_, opt_ in zip(
@@ -142,6 +210,10 @@ def train_epochs(
             f"d_loss post mean {batch_dlog['d_post_loss_mean']:.6e} std {batch_dlog['d_post_loss_std']:.3e}, "
         )
 
+        # finalize epoch
+        if epoch_finalize_fn:
+            epoch_finalize_fn(epoch_idx)
+
     # save checkpoint---after training
     if checkpoint_epochs is not None:
         for tag_, net_, opt_ in zip(
@@ -184,15 +256,30 @@ def train_epochs(
 def _train_step_discriminator(
     x_data: torch.Tensor,
     y_data: torch.Tensor,
-    z_sample_fn: Callable,
+    z_sample_fn: LatentSampleFn,
     g_net: torch.nn.Module,
     d_net: torch.nn.Module,
     d_optimizer: torch.optim.Optimizer,
-    loss_fn: Callable,
-    d_reg_fn: Callable | None = None,
-    dlog_item: dict | None = None,
+    loss_fn: GANLossFn,
+    d_reg_fn: DiscriminatorRegularizerFn | None = None,
+    dlog_item: dict[str, float] | None = None,
 ) -> float:
-    """Trains discriminator network."""
+    """Run one discriminator optimization step.
+
+    Args:
+        x_data: Real input samples.
+        y_data: Conditioning inputs paired with `x_data`.
+        z_sample_fn: Function that samples latent vectors for the generator.
+        g_net: Generator network.
+        d_net: Discriminator network.
+        d_optimizer: Optimizer for discriminator parameters.
+        loss_fn: Adversarial loss callable for discriminator training.
+        d_reg_fn: Optional discriminator regularizer.
+        dlog_item: Optional dictionary updated with scalar diagnostics.
+
+    Returns:
+        Total discriminator loss value after regularization.
+    """
     # sample from latent space for generator
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
@@ -208,7 +295,7 @@ def _train_step_discriminator(
     # evaluate discriminator loss
     # Note: output must have correct sign for minimization
     d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
-    d_reg_dlog = dict()
+    d_reg_dlog: dict[str, float] = {}
     if d_reg_fn is not None:
         random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
         d_reg = d_reg_fn(
@@ -219,7 +306,7 @@ def _train_step_discriminator(
             dlog=d_reg_dlog,
         )
     else:
-        d_reg = torch.tensor(0.0)
+        d_reg = d_loss.new_tensor(0.0)
     loss = d_loss + d_reg
 
     # calculate derivatives (end AD) and update network parameters
@@ -238,14 +325,27 @@ def _train_step_discriminator(
 
 def _train_step_generator(
     y_data: torch.Tensor,
-    z_sample_fn: Callable,
+    z_sample_fn: LatentSampleFn,
     g_net: torch.nn.Module,
     d_net: torch.nn.Module,
     g_optimizer: torch.optim.Optimizer,
-    loss_fn: Callable,
-    dlog_item: dict | None = None,
+    loss_fn: GANLossFn,
+    dlog_item: dict[str, float] | None = None,
 ) -> float:
-    """Trains generator network."""
+    """Run one generator optimization step.
+
+    Args:
+        y_data: Conditioning inputs for generation.
+        z_sample_fn: Function that samples latent vectors for the generator.
+        g_net: Generator network.
+        d_net: Discriminator network.
+        g_optimizer: Optimizer for generator parameters.
+        loss_fn: Adversarial loss callable for generator training.
+        dlog_item: Optional dictionary updated with scalar diagnostics.
+
+    Returns:
+        Generator loss value for this step.
+    """
     # sample from latent space for generator
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
@@ -276,21 +376,44 @@ def train_batches(
     g_net: torch.nn.Module,
     d_net: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
-    z_sample_fn: Callable,
+    z_sample_fn: LatentSampleFn,
     g_optimizer: torch.optim.Optimizer,
     d_optimizer: torch.optim.Optimizer,
-    loss_fn: Callable,
-    d_reg_fn: Callable | None = None,
+    loss_fn: GANLossFn,
+    d_reg_fn: DiscriminatorRegularizerFn | None = None,
     d_opt_pre: int = 1,
     d_opt_post: int = 1,
     g_opt_freq: int = 1,
     device: torch.device | None = None,
-    logger=logging.getLogger("dlk.opt.train_batches"),
-    batch_initialize_fn: Callable | None = None,
-    batch_finalize_fn: Callable | None = None,
+    logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
+    batch_initialize_fn: BatchHookFn | None = None,
+    batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
-) -> dict:
-    """Runs training loop over batches."""
+) -> TrainLog:
+    """Run the GAN training loop over batches for one epoch.
+
+    Args:
+        epoch_idx: Index of the current epoch.
+        g_net: Generator network.
+        d_net: Discriminator network.
+        dataloader: Iterable of training batches `(x_data, y_data)`.
+        z_sample_fn: Function that samples latent vectors for a batch size.
+        g_optimizer: Optimizer for generator parameters.
+        d_optimizer: Optimizer for discriminator parameters.
+        loss_fn: Adversarial loss function used by both networks.
+        d_reg_fn: Optional discriminator regularizer.
+        d_opt_pre: Number of discriminator updates before generator update.
+        d_opt_post: Number of discriminator updates after generator update.
+        g_opt_freq: Frequency of generator updates in batch steps.
+        device: Optional device to move batch tensors to.
+        logger: Logger instance for batch progress.
+        batch_initialize_fn: Optional callback run before each batch.
+        batch_finalize_fn: Optional callback run after each batch.
+        max_batches: Optional cap on number of processed batches.
+
+    Returns:
+        Batch-level diagnostics aggregated across the epoch.
+    """
     DLOG_TAGS = DLOG_BASENAMES
     if max_batches is None:
         max_batches = len(dataloader)
@@ -314,10 +437,10 @@ def train_batches(
             x_data = x_data.to(device)
             y_data = y_data.to(device)
 
-        dlog_item = dict()
+        dlog_item: dict[str, float] = {}
 
         # pre-train discriminator network
-        dlog_buf = dict()
+        dlog_pre_buf: dict[str, float] = {}
         for i in range(d_opt_pre):
             d_loss_reg_v = _train_step_discriminator(
                 x_data,
@@ -328,13 +451,13 @@ def train_batches(
                 d_optimizer,
                 loss_fn,
                 d_reg_fn=d_reg_fn,
-                dlog_item=dlog_buf,
+                dlog_item=dlog_pre_buf,
             )
             logger.debug(
                 f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, pre {i:2d}, "
-                f"d_loss_reg {d_loss_reg_v:.6e}, d_loss {dlog_buf['d_loss']:.6e}"
+                f"d_loss_reg {d_loss_reg_v:.6e}, d_loss {dlog_pre_buf['d_loss']:.6e}"
             )
-        for k, v in dlog_buf.items():
+        for k, v in dlog_pre_buf.items():
             dlog_item[f"d_pre_{k.removeprefix('d_')}"] = v
 
         # train generator network
@@ -353,8 +476,8 @@ def train_batches(
             )
 
         # post-train discriminator network
-        dlog_buf = dict()
-        for _ in range(d_opt_post):
+        dlog_post_buf: dict[str, float] = {}
+        for j in range(d_opt_post):
             d_loss_reg_v = _train_step_discriminator(
                 x_data,
                 y_data,
@@ -364,13 +487,13 @@ def train_batches(
                 d_optimizer,
                 loss_fn,
                 d_reg_fn=d_reg_fn,
-                dlog_item=dlog_buf,
+                dlog_item=dlog_post_buf,
             )
             logger.debug(
-                f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, post {i}, "
-                f"d_loss_reg {d_loss_reg_v:.6e}, d_loss {dlog_buf['d_loss']:.6e}"
+                f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, post {j:2d}, "
+                f"d_loss_reg {d_loss_reg_v:.6e}, d_loss {dlog_post_buf['d_loss']:.6e}"
             )
-        for k, v in dlog_buf.items():
+        for k, v in dlog_post_buf.items():
             dlog_item[f"d_post_{k.removeprefix('d_')}"] = v
 
         # log

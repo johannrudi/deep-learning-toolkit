@@ -1,4 +1,4 @@
-"""Training loops for supervised learning."""
+"""Provide reusable epoch- and batch-level training loops for supervised models."""
 
 import logging
 import pathlib
@@ -10,6 +10,10 @@ import torch
 from tqdm import tqdm
 
 from dlk.opt.utils import (
+    BatchHookFn,
+    EpochHookFn,
+    LRScheduler,
+    TrainLog,
     checkpoint_path,
     checkpoint_save,
     train_dlog_batch_finalize,
@@ -20,36 +24,67 @@ from dlk.opt.utils import (
     train_dlog_epoch_update,
 )
 
+# Reusable types
+LossFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+ValidationFn = Callable[[int, torch.nn.Module], None]
+TensorTransformFn = Callable[[torch.Tensor], torch.Tensor]
+
 
 def train_epochs(
     n_epochs: int,
     net: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_fn: Callable,
-    validation_fn: Callable | None = None,
-    lr_scheduler=None,
+    loss_fn: LossFn,
+    validation_fn: ValidationFn | None = None,
+    lr_scheduler: LRScheduler | None = None,
     device: torch.device | None = None,
-    inputs_transform_fn: Callable | None = None,
-    targets_transform_fn: Callable | None = None,
+    inputs_transform_fn: TensorTransformFn | None = None,
+    targets_transform_fn: TensorTransformFn | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
-    epoch_initialize_fn: Callable | None = None,
-    epoch_finalize_fn: Callable | None = None,
-) -> dict:
-    """Runs training loop over epochs.
+    epoch_initialize_fn: EpochHookFn | None = None,
+    epoch_finalize_fn: EpochHookFn | None = None,
+) -> TrainLog:
+    """Run the training loop over epochs.
 
-    Checkpointing saves model and optimizer states at every epoch divisible
-    by `checkpoint_epochs`. Setting `checkpoint_epochs=None` turns off
-    checkpointing. Checkpointing will create a new dir under `checkpoint_dir/`
-    followed by a directory with date and time of training start.
+    Checkpointing saves model and optimizer states at every epoch divisible by
+    `checkpoint_epochs`. Setting `checkpoint_epochs=None` disables checkpointing.
+    When enabled, checkpoints are written to a run-specific directory under
+    `checkpoint_dir`.
+
+    Args:
+        n_epochs: Number of epochs to train.
+        net: Model to optimize.
+        dataloader: Iterable of `(inputs, targets)` training batches.
+        optimizer: Optimizer used to update model parameters.
+        loss_fn: Callable that maps `(outputs, targets)` to a scalar loss tensor.
+        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net)`.
+        lr_scheduler: Optional learning-rate scheduler with `get_last_lr` and `step`.
+        device: Optional device used to move inputs and targets.
+        inputs_transform_fn: Optional transform applied to each input batch.
+        targets_transform_fn: Optional transform applied to each target batch.
+        logger: Logger used for progress and metrics reporting.
+        checkpoint_epochs: Checkpoint period in epochs; disable with `None`.
+        checkpoint_dir: Root directory used for checkpoint files.
+        epoch_initialize_fn: Optional callback invoked at the start of each epoch.
+        epoch_finalize_fn: Optional callback invoked at the end of each epoch.
+
+    Returns:
+        Training log dictionary with per-epoch metrics and run timing.
+
+    Raises:
+        ValueError: If `n_epochs < 1` or `checkpoint_epochs < 1` when provided.
     """
+    if n_epochs < 1:
+        raise ValueError(f"n_epochs must be >= 1, got {n_epochs}")
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, ["loss_mean", "loss_std"])
 
     # set checkpoint directory; create if it doesn't exist
     if checkpoint_epochs is not None:
-        assert 1 <= checkpoint_epochs, checkpoint_epochs
+        if checkpoint_epochs < 1:
+            raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
         assert checkpoint_dir is not None
         checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
         checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
@@ -133,11 +168,12 @@ def train_epochs(
     logger.info(
         f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
     )
+    time_per_epoch = time_train / n_epochs
+    time_per_step = time_train / n_steps if n_steps > 0 else float("nan")
+    samples_per_second = n_samples / time_train if time_train > 0 else float("nan")
+    logger.info(f"training time {time_train:g} sec, time/epoch {time_per_epoch:g} sec")
     logger.info(
-        f"training time {time_train:g} sec, time/epoch {time_train / n_epochs:g} sec"
-    )
-    logger.info(
-        f"time/step {time_train / n_steps:g} sec, samples/sec {n_samples / time_train:g} sec"
+        f"time/step {time_per_step:g} sec, samples/sec {samples_per_second:g} sec"
     )
 
     # return log
@@ -149,16 +185,34 @@ def train_batches(
     net: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_fn: Callable,
+    loss_fn: LossFn,
     device: torch.device | None = None,
-    inputs_transform_fn: Callable | None = None,
-    targets_transform_fn: Callable | None = None,
+    inputs_transform_fn: TensorTransformFn | None = None,
+    targets_transform_fn: TensorTransformFn | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
-    batch_initialize_fn: Callable | None = None,
-    batch_finalize_fn: Callable | None = None,
+    batch_initialize_fn: BatchHookFn | None = None,
+    batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
-) -> dict:
-    """Runs training loop over batches."""
+) -> TrainLog:
+    """Run the training loop over batches for a single epoch.
+
+    Args:
+        epoch_idx: Current epoch index used in logging.
+        net: Model to optimize.
+        dataloader: Iterable of `(inputs, targets)` training batches.
+        optimizer: Optimizer used to update model parameters.
+        loss_fn: Callable that maps `(outputs, targets)` to a scalar loss tensor.
+        device: Optional device used to move inputs and targets.
+        inputs_transform_fn: Optional transform applied to each input batch.
+        targets_transform_fn: Optional transform applied to each target batch.
+        logger: Logger used for per-batch debug metrics.
+        batch_initialize_fn: Optional callback invoked before each batch step.
+        batch_finalize_fn: Optional callback invoked after each batch step.
+        max_batches: Optional maximum number of batches processed.
+
+    Returns:
+        Batch-level training log dictionary with aggregate loss statistics.
+    """
     if max_batches is None:
         max_batches = len(dataloader)
     batch_dlog = train_dlog_batch_initialize(max_batches, ["loss"], save_list=False)
