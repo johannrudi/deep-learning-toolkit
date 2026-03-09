@@ -1,8 +1,8 @@
-"""
-EfficientNet-type architecture for time series data.
+"""EfficientNet-type architecture for time series data.
+
+Note: This code is under development.
 """
 
-import math
 from collections import namedtuple
 
 import torch

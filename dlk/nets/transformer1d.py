@@ -1,5 +1,6 @@
-"""
-Networks with 1D transformer layers.
+"""Networks with 1D transformer layers.
+
+Note: This code is under development.
 """
 
 import math
@@ -62,7 +63,7 @@ class ChannelWisePatchEmbedding1D(nn.Module):
 
     def forward(self, x):
         # x size: (batch_size, n_channels, input_seq_size)
-        batch_size, n_channels, seq_size = x.size()
+        batch_size, n_channels, _ = x.size()
 
         channel_embeddings = []
 
@@ -172,7 +173,7 @@ class ChannelWiseMultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        batch_size, seq_len, embedding_size = x.shape
+        batch_size, seq_len, _ = x.shape
 
         # Split input into channels
         # Assume the embedding is organized as [ch1_features, ch2_features, ...]

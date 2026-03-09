@@ -1,37 +1,108 @@
-"""
-Utility Functions
-"""
+"""Provide utilities for layer initialization and parameter accounting."""
 
 import math
+from typing import Literal, Protocol, cast
 
 import torch
 import torch.nn as nn
 from prettytable import PrettyTable
 
+# --------------------------------------
+# Types
+# --------------------------------------
 
-def get_gain(activation, default="linear"):
-    r"""Calculates the gain to be used as an argument for initializing parameter values."""
-    if activation is not None:
-        activation_name = type(activation).__name__.lower()
-        if activation_name in ["silu", "gelu"]:
-            activation_name = "relu"
-        try:
-            gain = nn.init.calculate_gain(activation_name)
-        except ValueError:
-            gain = nn.init.calculate_gain(default)
-    else:
-        gain = nn.init.calculate_gain(default)
-    return gain
+Nonlinearity = Literal[
+    "linear",
+    "conv1d",
+    "conv2d",
+    "conv3d",
+    "conv_transpose1d",
+    "conv_transpose2d",
+    "conv_transpose3d",
+    "sigmoid",
+    "tanh",
+    "relu",
+    "leaky_relu",
+    "selu",
+]
 
 
-def set_init_parameters(layer, gain=1.0, bias_scale=0.1):
-    r"""
-    Initializes the trainable parameters of a layer.
+class WeightedLayer(Protocol):
+    """Define the interface required for parameter initialization helpers."""
+
+    @property
+    def weight(self) -> torch.Tensor:
+        """Return the trainable weight tensor."""
+        ...
+
+    @property
+    def bias(self) -> torch.Tensor | None:
+        """Return the optional trainable bias tensor."""
+        ...
+
+
+# --------------------------------------
+
+SUPPORTED_NONLINEARITIES: set[str] = set(Nonlinearity.__args__)
+
+
+def _resolve_nonlinearity(
+    activation_name: str,
+    default: Nonlinearity,
+) -> Nonlinearity:
+    """Resolve a string activation name into a supported nonlinearity literal.
 
     Args:
-        layer:      Layer of a network to be initialized (of type nn.Module)
-        gain:       Gain to use for sampling initial parameters
-        bias_scale: Scaling of uniform distribution for initializing the bias
+        activation_name: Raw name of the activation to resolve.
+        default: Fallback nonlinearity when the name is unsupported.
+
+    Returns:
+        Valid nonlinearity literal accepted by ``torch.nn.init.calculate_gain``.
+    """
+    normalized_name = (
+        "relu"
+        if activation_name.lower() in {"silu", "gelu"}
+        else activation_name.lower()
+    )
+    if normalized_name in SUPPORTED_NONLINEARITIES:
+        return cast(Nonlinearity, normalized_name)
+    return default
+
+
+def get_gain(
+    activation: object | None,
+    default: Nonlinearity = "linear",
+) -> float:
+    """Calculate the gain for parameter initialization.
+
+    Args:
+        activation: Activation-like value used by the layer, or ``None``.
+        default: Fallback gain mode when activation lookup fails.
+
+    Returns:
+        Gain value for initialization.
+    """
+    if isinstance(activation, nn.Module):
+        activation_name = type(activation).__name__.lower()
+        nonlinearity = _resolve_nonlinearity(activation_name, default)
+        return nn.init.calculate_gain(nonlinearity)
+    return nn.init.calculate_gain(default)
+
+
+def set_init_parameters(
+    layer: WeightedLayer,
+    gain: float = 1.0,
+    bias_scale: float = 0.1,
+) -> None:
+    """Initialize trainable parameters of a layer.
+
+    Args:
+        layer: Layer to initialize.
+        gain: Gain scaling for Xavier initialization.
+        bias_scale: Uniform scale factor used for bias initialization.
+
+    Returns:
+        None.
     """
     nn.init.xavier_uniform_(layer.weight, gain=gain)
     if layer.bias is not None:
@@ -39,18 +110,32 @@ def set_init_parameters(layer, gain=1.0, bias_scale=0.1):
         nn.init.uniform_(layer.bias, a=-lim, b=+lim)
 
 
-def set_zero_parameters(layer):
-    r"""
-    Zeros the parameters of a layer.
+def set_zero_parameters(layer: nn.Module) -> nn.Module:
+    """Set all layer parameters to zero.
+
+    Args:
+        layer: Layer whose parameters are zeroed.
+
+    Returns:
+        The same layer with zeroed parameters.
     """
-    for p in layer.parameters():
-        torch.nn.init.zeros_(p)
+    for parameter in layer.parameters():
+        torch.nn.init.zeros_(parameter)
     return layer
 
 
-def get_parameters(net):
-    r"""
-    Original source: https://stackoverflow.com/questions/49201236/check-the-total-number-of-parameters-in-a-pytorch-model
+def get_parameters(net: nn.Module) -> tuple[int, int, PrettyTable]:
+    """Build a table with parameter counts and trainability flags for a network.
+
+    Source:
+        https://stackoverflow.com/questions/49201236/check-the-total-number-of-parameters-in-a-pytorch-model
+
+    Args:
+        net: Network to inspect.
+
+    Returns:
+        Tuple containing trainable parameter count, non-trainable parameter
+        count, and a formatted ``PrettyTable`` summary.
     """
     table = PrettyTable(["Module name", "Num. parameters", "Trainable"])
     table.align["Module name"] = "l"
@@ -76,17 +161,29 @@ def get_parameters(net):
     return n_trainable_params, n_nontrainable_params, table
 
 
-def count_trainable_parameters(net):
-    r"""
-    Counts the number of trainable parameters of a network.
+def count_trainable_parameters(net: nn.Module) -> int:
+    """Count the number of trainable parameters in a network.
+
+    Args:
+        net: Network to inspect.
+
+    Returns:
+        Number of parameters with ``requires_grad=True``.
     """
-    assert isinstance(net, nn.Module)
-    return sum(p.numel() for p in net.parameters() if p.requires_grad)
+    assert isinstance(net, nn.Module), "Expected 'net' to be an nn.Module."
+    return sum(
+        parameter.numel() for parameter in net.parameters() if parameter.requires_grad
+    )
 
 
-def count_all_parameters(net):
-    r"""
-    Counts the number of all parameters (including non-trainable) of a network.
+def count_all_parameters(net: nn.Module) -> int:
+    """Count the total number of parameters in a network.
+
+    Args:
+        net: Network to inspect.
+
+    Returns:
+        Total number of parameters, including non-trainable parameters.
     """
-    assert isinstance(net, nn.Module)
-    return sum(p.numel() for p in net.parameters())
+    assert isinstance(net, nn.Module), "Expected 'net' to be an nn.Module."
+    return sum(parameter.numel() for parameter in net.parameters())

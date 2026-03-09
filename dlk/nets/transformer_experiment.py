@@ -1,8 +1,10 @@
-"""
-Models with transformer layers.
+"""Models with transformer layers.
 
+Sources:
 - annotated transformer: <https://nlp.seas.harvard.edu/annotated-transformer/>
 - pytorch tutorial: <https://pytorch.org/tutorials/beginner/translation_transformer.html>
+
+Note: This code is under development.
 """
 
 import math
@@ -133,7 +135,7 @@ class Transformer1d0dModel(nn.Module):
             output_layer_activation=output_layer_activation,
         )
 
-    def forward(self, x_src: Tensor, x_trg: Tensor = None, **kwargs):
+    def forward(self, x_src: Tensor, x_trg: Tensor | None = None, **kwargs):
         r"""Applies the model function: y = model(x_src, x_trg)
 
         Args:
@@ -162,7 +164,7 @@ class Transformer1d0dModel(nn.Module):
 
     def decode(self, x_trg: Tensor, h_src: Tensor, **kwargs):
         x_trg_emb = self.decoder_emb(x_trg)
-        return self.transformer.decoder(x_trg_emb, y_src, **kwargs)
+        return self.transformer.decoder(x_trg_emb, h_src, **kwargs)
 
 
 ###############################################################################

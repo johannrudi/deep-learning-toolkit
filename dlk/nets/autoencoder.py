@@ -1,8 +1,5 @@
-"""
-Model for Autoencoder.
-"""
+"""Model for Autoencoder."""
 
-import torch
 import torch.nn as nn
 
 
