@@ -3,7 +3,6 @@
 import logging
 import pathlib
 import timeit
-from collections.abc import Callable
 from datetime import datetime
 
 import torch
@@ -12,8 +11,11 @@ from tqdm import tqdm
 from dlk.opt.utils import (
     BatchHookFn,
     EpochHookFn,
+    LossFn,
     LRScheduler,
+    TensorTransformFn,
     TrainLog,
+    ValidationFn,
     checkpoint_path,
     checkpoint_save,
     train_dlog_batch_finalize,
@@ -23,11 +25,6 @@ from dlk.opt.utils import (
     train_dlog_epoch_initialize,
     train_dlog_epoch_update,
 )
-
-# Reusable types
-LossFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-ValidationFn = Callable[[int, torch.nn.Module], None]
-TensorTransformFn = Callable[[torch.Tensor], torch.Tensor]
 
 
 def train_epochs(

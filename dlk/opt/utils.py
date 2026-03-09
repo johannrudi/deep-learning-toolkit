@@ -3,14 +3,20 @@
 import math
 import pathlib
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 import torch
 
-# Reusable types
-EpochHookFn = Callable[[int], None]
-BatchHookFn = Callable[[int], None]
-TrainLog = dict[str, Any]
+# --------------------------------------
+# Types
+# --------------------------------------
+
+EpochHookFn: TypeAlias = Callable[[int], None]
+BatchHookFn: TypeAlias = Callable[[int], None]
+LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+ValidationFn: TypeAlias = Callable[[int, torch.nn.Module], None]
+TensorTransformFn: TypeAlias = Callable[[torch.Tensor], torch.Tensor]
+TrainLog: TypeAlias = dict[str, Any]
 
 
 class LRScheduler(Protocol):
@@ -23,6 +29,9 @@ class LRScheduler(Protocol):
     def step(self) -> None:
         """Advance the scheduler state by one step."""
         ...
+
+
+# --------------------------------------
 
 
 def checkpoint_path(

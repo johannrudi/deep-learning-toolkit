@@ -38,6 +38,17 @@ DLOG_BASENAMES = [
 ]
 
 
+# --------------------------------------
+# Types
+# --------------------------------------
+
+GANLossFn: TypeAlias = Callable[
+    [torch.Tensor | None, torch.Tensor], tuple[torch.Tensor, torch.Tensor]
+]
+GANValidationFn: TypeAlias = Callable[[int, torch.nn.Module, torch.nn.Module], None]
+LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
+
+
 class DiscriminatorRegularizerFn(Protocol):
     """Protocol for discriminator regularizers that optionally emit logs."""
 
@@ -54,12 +65,7 @@ class DiscriminatorRegularizerFn(Protocol):
         ...
 
 
-# Reusable types
-LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
-GANLossFn: TypeAlias = Callable[
-    [torch.Tensor | None, torch.Tensor], tuple[torch.Tensor, torch.Tensor]
-]
-GANValidationFn: TypeAlias = Callable[[int, torch.nn.Module, torch.nn.Module], None]
+# --------------------------------------
 
 
 def train_epochs(
