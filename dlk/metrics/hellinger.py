@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from numbers import Real
+from typing import TypeGuard
 
 import torch
 
@@ -59,6 +60,16 @@ def _resolve_hist_bins(
     return bins
 
 
+def _is_global_hist_range(
+    hist_range: tuple[float, float] | Sequence[tuple[float, float]],
+) -> TypeGuard[tuple[float, float]]:
+    """Check whether histogram range is a single global `(min, max)` pair."""
+    if not isinstance(hist_range, tuple) or len(hist_range) != 2:
+        return False
+    low, high = hist_range
+    return isinstance(low, Real) and isinstance(high, Real)
+
+
 def _resolve_hist_range(
     hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None,
     samples1: torch.Tensor,
@@ -87,7 +98,7 @@ def _resolve_hist_range(
             for low_i, high_i in zip(low, high, strict=True)
         ]
 
-    if len(hist_range) == 2 and all(isinstance(value, Real) for value in hist_range):
+    if _is_global_hist_range(hist_range):
         low = float(hist_range[0])
         high = float(hist_range[1])
         if low >= high:
@@ -102,10 +113,14 @@ def _resolve_hist_range(
 
     resolved_range: list[tuple[float, float]] = []
     for dim, bounds in enumerate(hist_range):
-        if len(bounds) != 2:
+        if not isinstance(bounds, Sequence) or len(bounds) != 2:
             raise ValueError(f"hist_range[{dim}] must be a (min, max) pair.")
-        low = float(bounds[0])
-        high = float(bounds[1])
+        low_value = bounds[0]
+        high_value = bounds[1]
+        if not isinstance(low_value, Real) or not isinstance(high_value, Real):
+            raise ValueError(f"hist_range[{dim}] must be a (min, max) pair.")
+        low = float(low_value)
+        high = float(high_value)
         if low >= high:
             raise ValueError(f"hist_range[{dim}] must satisfy min < max.")
         resolved_range.append((low, high))
