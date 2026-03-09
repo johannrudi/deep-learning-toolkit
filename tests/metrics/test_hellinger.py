@@ -2,7 +2,10 @@ import math
 
 import torch
 
-from dlk.metrics.hellinger import hellinger_distance_hist, hellinger_distance_hist_marginals
+from dlk.metrics.hellinger import (
+    hellinger_distance_hist,
+    hellinger_distance_hist_marginals,
+)
 
 
 def test_hellinger_distance_hist_returns_zero_for_identical_inputs() -> None:
@@ -21,7 +24,7 @@ def test_hellinger_distance_hist_returns_zero_for_identical_inputs() -> None:
     distance = hellinger_distance_hist(
         samples1=samples,
         samples2=samples.clone(),
-        hist_bins=5,
+        hist_bins=3,
         hist_range=(0.0, 1.0),
     )
 
@@ -46,12 +49,7 @@ def test_hellinger_distance_hist_matches_analytic_uniform_distance() -> None:
         dtype=torch.float64,
     )
 
-    torch.testing.assert_close(
-        estimated_distance,
-        true_distance,
-        rtol=0.0,
-        atol=1e-10,
-    )
+    torch.testing.assert_close(estimated_distance, true_distance, rtol=0.0, atol=1e-10)
 
 
 def test_hellinger_distance_hist_marginals_returns_zero_for_identical_inputs() -> None:
@@ -74,7 +72,10 @@ def test_hellinger_distance_hist_marginals_returns_zero_for_identical_inputs() -
         hist_range=(0.0, 1.0),
     )
 
-    torch.testing.assert_close(distances, torch.zeros(samples.shape[1], dtype=samples.dtype))
+    torch.testing.assert_close(
+        distances,
+        torch.zeros(samples.shape[1], dtype=samples.dtype),
+    )
 
 
 def test_hellinger_distance_hist_marginals_matches_per_feature_hist_distance() -> None:

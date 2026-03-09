@@ -1,130 +1,29 @@
-"""Compute Hellinger distances via estimating densities with histograms or KDE."""
+r"""Compute Hellinger distances using histograms and kernel density estimation.
 
+The Hellinger distance (https://en.wikipedia.org/wiki/Hellinger_distance) is defined as
+
+.. math::
+    H^{2}(P,Q) =
+    {\frac {1}{2}}\displaystyle \int _{\mathcal {X}}\left({\sqrt {p(x)}}-{\sqrt {q(x)}}\right)^{2}\lambda (dx).
+
+To compute this distance from samples, histograms or kernel density estimation provides
+discrete distributions.  The Hellinger distance for two discrete probability distributions
+:math:`{\displaystyle P=(p_{1},\ldots ,p_{k})}` and
+:math:`{\displaystyle Q=(q_{1},\ldots ,q_{k})}` is
+
+.. math::
+    H(P,Q) =
+    {\frac {1}{\sqrt {2}}}\;{\sqrt {\sum _{i=1}^{k}({\sqrt {p_{i}}}-{\sqrt {q_{i}}})^{2}}} =
+    {\frac {1}{\sqrt {2}}}\;{\bigl \|}{\sqrt {P}}-{\sqrt {Q}}{\bigr \|}_{2}.
+
+"""
+
+import math
 from collections.abc import Sequence
-from numbers import Real
-from typing import TypeGuard
 
 import torch
 
-
-def _as_floating_2d(samples: torch.Tensor, name: str) -> torch.Tensor:
-    """Validate and normalize a 2D samples tensor.
-
-    Args:
-        samples: Tensor with shape `(n_samples, n_features)`.
-        name: Argument name used in error messages.
-
-    Returns:
-        Floating-point tensor with unchanged shape.
-
-    Raises:
-        ValueError: If `samples` is not 2D.
-    """
-    if samples.ndim != 2:
-        raise ValueError(
-            f"{name} must be 2D with shape (n_samples, n_features), got {samples.shape}."
-        )
-    if not torch.is_floating_point(samples):
-        samples = samples.float()
-    return samples
-
-
-def _resolve_hist_bins(
-    hist_bins: int | Sequence[int] | None, n_features: int
-) -> list[int]:
-    """Resolve histogram bin counts for each feature dimension.
-
-    Args:
-        hist_bins: Number of bins per feature as an int or per-dimension sequence.
-        n_features: Number of feature dimensions.
-
-    Returns:
-        List of per-dimension bin counts.
-
-    Raises:
-        ValueError: If bin counts are non-positive or incompatible with `n_features`.
-    """
-    if hist_bins is None:
-        bins = [16] * n_features
-    elif isinstance(hist_bins, int):
-        bins = [hist_bins] * n_features
-    else:
-        bins = [int(n_bins) for n_bins in hist_bins]
-        if len(bins) != n_features:
-            raise ValueError(
-                "hist_bins must have one value per feature; "
-                f"expected {n_features}, got {len(bins)}."
-            )
-    if any(n_bins <= 0 for n_bins in bins):
-        raise ValueError("hist_bins values must be positive.")
-    return bins
-
-
-def _is_global_hist_range(
-    hist_range: tuple[float, float] | Sequence[tuple[float, float]],
-) -> TypeGuard[tuple[float, float]]:
-    """Check whether histogram range is a single global `(min, max)` pair."""
-    if not isinstance(hist_range, tuple) or len(hist_range) != 2:
-        return False
-    low, high = hist_range
-    return isinstance(low, Real) and isinstance(high, Real)
-
-
-def _resolve_hist_range(
-    hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None,
-    samples1: torch.Tensor,
-    samples2: torch.Tensor,
-    n_features: int,
-) -> list[tuple[float, float]]:
-    """Resolve histogram value ranges for each feature dimension.
-
-    Args:
-        hist_range: Global `(min, max)` range or per-dimension ranges.
-        samples1: First sample tensor.
-        samples2: Second sample tensor.
-        n_features: Number of feature dimensions.
-
-    Returns:
-        Per-dimension list of `(min, max)` tuples.
-
-    Raises:
-        ValueError: If ranges are malformed or invalid.
-    """
-    if hist_range is None:
-        low = torch.minimum(samples1.min(dim=0).values, samples2.min(dim=0).values)
-        high = torch.maximum(samples1.max(dim=0).values, samples2.max(dim=0).values)
-        return [
-            (float(low_i.item()), float(high_i.item()))
-            for low_i, high_i in zip(low, high, strict=True)
-        ]
-
-    if _is_global_hist_range(hist_range):
-        low = float(hist_range[0])
-        high = float(hist_range[1])
-        if low >= high:
-            raise ValueError("hist_range must satisfy min < max.")
-        return [(low, high)] * n_features
-
-    if len(hist_range) != n_features:
-        raise ValueError(
-            "hist_range must provide one (min, max) pair per feature; "
-            f"expected {n_features}, got {len(hist_range)}."
-        )
-
-    resolved_range: list[tuple[float, float]] = []
-    for dim, bounds in enumerate(hist_range):
-        if not isinstance(bounds, Sequence) or len(bounds) != 2:
-            raise ValueError(f"hist_range[{dim}] must be a (min, max) pair.")
-        low_value = bounds[0]
-        high_value = bounds[1]
-        if not isinstance(low_value, Real) or not isinstance(high_value, Real):
-            raise ValueError(f"hist_range[{dim}] must be a (min, max) pair.")
-        low = float(low_value)
-        high = float(high_value)
-        if low >= high:
-            raise ValueError(f"hist_range[{dim}] must satisfy min < max.")
-        resolved_range.append((low, high))
-    return resolved_range
+from dlk.metrics.utils import as_floating_2d, resolve_hist_bins, resolve_hist_range
 
 
 @torch.no_grad()
@@ -149,8 +48,8 @@ def hellinger_distance_hist(
     Raises:
         ValueError: If sample shapes/devices are incompatible or histogram settings are invalid.
     """
-    samples1 = _as_floating_2d(samples=samples1, name="samples1")
-    samples2 = _as_floating_2d(samples=samples2, name="samples2")
+    samples1 = as_floating_2d(samples=samples1, name="samples1")
+    samples2 = as_floating_2d(samples=samples2, name="samples2")
 
     if samples1.device != samples2.device:
         raise ValueError("samples1 and samples2 must be on the same device.")
@@ -161,8 +60,11 @@ def hellinger_distance_hist(
         )
 
     n_features = samples1.shape[1]
-    histogram_bins = _resolve_hist_bins(hist_bins=hist_bins, n_features=n_features)
-    histogram_range = _resolve_hist_range(
+    histogram_bins = resolve_hist_bins(
+        hist_bins=hist_bins,
+        n_features=n_features,
+    )
+    histogram_range = resolve_hist_range(
         hist_range=hist_range,
         samples1=samples1,
         samples2=samples2,
@@ -179,12 +81,15 @@ def hellinger_distance_hist(
         for n_bins, (low, high) in zip(histogram_bins, histogram_range, strict=True)
     ]
 
+    # compute one multi-dimensional histogram over the entire feature space
     hist1, _ = torch.histogramdd(samples1, bins=bin_edges, density=True)
     hist2, _ = torch.histogramdd(samples2, bins=bin_edges, density=True)
-    diff = torch.sqrt(torch.clamp(hist1, min=0.0)) - torch.sqrt(
-        torch.clamp(hist2, min=0.0)
-    )
-    return torch.sqrt(torch.sum(diff * diff) / 2.0)
+    hist1_sqrt = torch.sqrt(torch.clamp(hist1, min=0.0))
+    hist2_sqrt = torch.sqrt(torch.clamp(hist2, min=0.0))
+    diff = hist1_sqrt - hist2_sqrt
+    distance = torch.linalg.vector_norm(diff) / math.sqrt(2.0)
+
+    return distance
 
 
 @torch.no_grad()
@@ -209,8 +114,8 @@ def hellinger_distance_hist_marginals(
     Raises:
         ValueError: If sample shapes/devices are incompatible or histogram settings are invalid.
     """
-    samples1 = _as_floating_2d(samples=samples1, name="samples1")
-    samples2 = _as_floating_2d(samples=samples2, name="samples2")
+    samples1 = as_floating_2d(samples=samples1, name="samples1")
+    samples2 = as_floating_2d(samples=samples2, name="samples2")
 
     if samples1.device != samples2.device:
         raise ValueError("samples1 and samples2 must be on the same device.")
@@ -221,8 +126,11 @@ def hellinger_distance_hist_marginals(
         )
 
     n_features = samples1.shape[1]
-    histogram_bins = _resolve_hist_bins(hist_bins=hist_bins, n_features=n_features)
-    histogram_range = _resolve_hist_range(
+    histogram_bins = resolve_hist_bins(
+        hist_bins=hist_bins,
+        n_features=n_features,
+    )
+    histogram_range = resolve_hist_range(
         hist_range=hist_range,
         samples1=samples1,
         samples2=samples2,
@@ -230,7 +138,7 @@ def hellinger_distance_hist_marginals(
     )
     distances = torch.empty(n_features, device=samples1.device, dtype=samples1.dtype)
 
-    # compute one-dimensional histograms for each feature independently.
+    # compute one-dimensional histograms for each feature independently
     for dim, (n_bins, (low, high)) in enumerate(
         zip(histogram_bins, histogram_range, strict=True)
     ):
@@ -243,9 +151,9 @@ def hellinger_distance_hist_marginals(
         )
         hist1, _ = torch.histogram(samples1[:, dim], bins=bin_edges, density=True)
         hist2, _ = torch.histogram(samples2[:, dim], bins=bin_edges, density=True)
-        diff = torch.sqrt(torch.clamp(hist1, min=0.0)) - torch.sqrt(
-            torch.clamp(hist2, min=0.0)
-        )
-        distances[dim] = torch.sqrt(torch.sum(diff * diff) / 2.0)
+        hist1_sqrt = torch.sqrt(torch.clamp(hist1, min=0.0))
+        hist2_sqrt = torch.sqrt(torch.clamp(hist2, min=0.0))
+        diff = hist1_sqrt - hist2_sqrt
+        distances[dim] = torch.linalg.vector_norm(diff) / math.sqrt(2.0)
 
     return distances
