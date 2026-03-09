@@ -165,6 +165,108 @@ def resolve_hist_bin_edges(
     return bin_edges
 
 
+@torch.no_grad()
+def kdedd_on_grid(
+    samples: torch.Tensor,
+    grid_limits: torch.Tensor,
+    grid_size: int = 32,
+    bandwidth: float | str = 1.0,
+    algorithm: str = "standard",
+    kernel: str = "gaussian",
+    batch_size: int = 128,
+    log_density: bool = False,
+) -> torch.Tensor:
+    """Estimate KDE values on a Cartesian grid using torch-kde.
+
+    Args:
+        samples: Sample tensor with shape `(n_samples, n_features)`.
+        grid_limits: Per-feature bounds with shape `(n_features, 2)` where each
+            row is `(low, high)`. The transposed shape `(2, n_features)` is also
+            accepted.
+        grid_size: Number of evaluation points per feature dimension.
+        bandwidth: Bandwidth argument forwarded to `torchkde.KernelDensity`.
+        algorithm: Algorithm argument forwarded to `torchkde.KernelDensity`.
+        kernel: Kernel argument forwarded to `torchkde.KernelDensity`.
+        batch_size: Number of grid points per batch in `score_samples`.
+
+    Returns:
+        Flattened density values with shape `(grid_size**n_features,)`.
+
+    Raises:
+        ValueError: If tensor shapes or scalar arguments are invalid.
+        ImportError: If `torchkde` is not available.
+    """
+    samples = as_floating_2d(samples=samples, name="samples")
+    n_features = samples.shape[1]
+
+    # resolve grid limits
+    if grid_limits.ndim != 2:
+        raise ValueError(
+            "grid_limits must be 2D with shape (n_features, 2) "
+            f"or (2, n_features), got {tuple(grid_limits.shape)}."
+        )
+    if grid_limits.shape == (n_features, 2):
+        resolved_grid_limits = grid_limits
+    elif grid_limits.shape == (2, n_features):
+        resolved_grid_limits = grid_limits.T
+    else:
+        raise ValueError(
+            "grid_limits must have shape (n_features, 2) "
+            f"or (2, n_features), got {tuple(grid_limits.shape)}."
+        )
+    if not torch.is_floating_point(resolved_grid_limits):
+        resolved_grid_limits = resolved_grid_limits.float()
+    resolved_grid_limits = resolved_grid_limits.to(
+        device=samples.device,
+        dtype=samples.dtype,
+    )
+
+    low = resolved_grid_limits[:, 0]
+    high = resolved_grid_limits[:, 1]
+    if torch.any(low >= high):
+        raise ValueError("Each grid_limits row must satisfy low < high.")
+
+    if grid_size < 1:
+        raise ValueError(f"grid_size must be positive, got {grid_size}.")
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be positive, got {batch_size}.")
+
+    try:
+        from torchkde import KernelDensity
+    except ImportError as exc:
+        raise ImportError(
+            "torchkde is required for kdedd_on_grid. Install with `pip install torch-kde`."
+        ) from exc
+
+    # create a KDE estimator from the input samples
+    kernel_density = KernelDensity(
+        bandwidth=bandwidth,
+        algorithm=algorithm,
+        kernel=kernel,
+    )
+    kernel_density.fit(samples)
+
+    # construct Cartesian grid points using ij indexing
+    grid_1d = [
+        torch.linspace(
+            low_i.item(),
+            high_i.item(),
+            grid_size,
+            device=samples.device,
+            dtype=samples.dtype,
+        )
+        for low_i, high_i in zip(low, high, strict=True)
+    ]
+    grid_mesh = torch.meshgrid(*grid_1d, indexing="ij")
+    grid_points = torch.stack(grid_mesh, dim=0).reshape(n_features, -1).T
+
+    # evaluate log-density and convert it to density values
+    log_grid_vals = kernel_density.score_samples(grid_points, batch_size=batch_size)
+    if log_density:
+        return log_grid_vals
+    return torch.exp(log_grid_vals)
+
+
 def pairwise_distances(
     x: torch.Tensor,
     y: torch.Tensor,
