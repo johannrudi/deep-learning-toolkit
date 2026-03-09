@@ -19,34 +19,42 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 keywords = [
+    "artificial intelligence",
     "deep learning",
     "machine learning",
+    "neural networks",
+    "scientific computing",
     "pytorch",
 ]
 dependencies = [
-    "prettytable>=3",
-    "pytest>=8",
-    "torch>=2",
-    "tqdm>=4",
+    "prettytable>=3,<4",
+    "torch>=2,<3",
+    "tqdm>=4,<5",
 ]
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
+test = [
+    "pytest>=8,<9",
+]
+kde = [
+    "torch-kde",
+]
 dev = [
     "basedpyright",
-    "black>=25",
+    "black>=25,<26",
     "build",
     "bumpver",
-    "isort>=5",
+    "isort>=5,<6",
     "pip-tools",
-    "pytest>=8",
+    "pytest>=8,<9",
     "twine",
 ]
 
-#[project.urls]
-#Homepage = "https://github.com/johannrudi/dl-kit"
-#Documentation = "" #TODO
-#Issues = "https://github.com/johannrudi/dl-kit/issues"
+[project.urls]
+Homepage = "https://github.com/johannrudi/dl-kit"
+Repository = "https://github.com/johannrudi/dl-kit"
+Issues = "https://github.com/johannrudi/dl-kit/issues"
 
 #[project.scripts]
 #dlk = "dlk.__main__:main"
@@ -56,8 +64,21 @@ requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-exclude = ["_*"]
+include = ["dlk*"]
+exclude = ["tests*", "_*"]
 namespaces = false  # do not add folders without `__init__.py` file
+
+[tool.basedpyright]
+typeCheckingMode = "basic"
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312"]
 
 [tool.isort]
 profile = "black"
+src_paths = ["dlk", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
