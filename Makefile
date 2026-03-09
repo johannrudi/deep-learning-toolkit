@@ -35,8 +35,8 @@ lint:
 compile:
 	$(PY_COMPILE) $(PACKAGE_DIR)
 
-test: compile lint
+test: compile
 	@$(PY_TEST)
 
-testv: compile lint
+testv: compile
 	@$(PY_TESTV)
