@@ -13,6 +13,7 @@ TEST   := test
 # set Python tools
 PY_FORMAT := black
 PY_IMPORT_FORMAT := isort
+PY_LINT := basedpyright
 PY_COMPILE := python -m compileall -q -f
 PY_TEST := pytest
 PY_TESTV := pytest -v
@@ -22,17 +23,20 @@ PACKAGE_DIR := dlk
 
 # --------------------------------------
 
-.PHONY: format py_compile test
+.PHONY: format lint compile test testv
 
 format:
 	$(PY_IMPORT_FORMAT) $(PACKAGE_DIR)
 	$(PY_FORMAT) $(PACKAGE_DIR)
 
+lint:
+	$(PY_LINT) $(PACKAGE_DIR)
+
 compile:
 	$(PY_COMPILE) $(PACKAGE_DIR)
 
-test: compile
+test: compile lint
 	@$(PY_TEST)
 
-testv: compile
+testv: compile lint
 	@$(PY_TESTV)
