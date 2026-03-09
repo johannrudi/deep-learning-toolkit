@@ -135,6 +135,36 @@ def resolve_hist_range(
     return resolved_range
 
 
+def resolve_hist_bin_edges(
+    samples1: torch.Tensor,
+    samples2: torch.Tensor,
+    hist_bins: int | Sequence[int] | None = None,
+    hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None = None,
+) -> list[torch.Tensor]:
+    n_features = samples1.shape[1]
+    histogram_bins = resolve_hist_bins(
+        hist_bins=hist_bins,
+        n_features=n_features,
+    )
+    histogram_range = resolve_hist_range(
+        hist_range=hist_range,
+        samples1=samples1,
+        samples2=samples2,
+        n_features=n_features,
+    )
+    bin_edges = [
+        torch.linspace(
+            low,
+            high,
+            n_bins + 1,
+            device=samples1.device,
+            dtype=samples1.dtype,
+        )
+        for n_bins, (low, high) in zip(histogram_bins, histogram_range, strict=True)
+    ]
+    return bin_edges
+
+
 def pairwise_distances(
     x: torch.Tensor,
     y: torch.Tensor,

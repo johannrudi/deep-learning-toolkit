@@ -52,6 +52,37 @@ def test_hellinger_distance_hist_matches_analytic_uniform_distance() -> None:
     torch.testing.assert_close(estimated_distance, true_distance, rtol=0.0, atol=1e-10)
 
 
+def test_hellinger_distance_hist_scale_invariant_for_scaled_uniform_inputs() -> None:
+    """Reduce distance when one input distribution is a scaled version of the other."""
+    n_samples = 20_000
+    base_grid = (torch.arange(n_samples, dtype=torch.float64) + 0.5) / n_samples
+    samples1 = base_grid.unsqueeze(1)
+    samples2 = (2.0 * base_grid).unsqueeze(1)
+
+    standard_distance = hellinger_distance_hist(
+        samples1=samples1,
+        samples2=samples2,
+        hist_bins=2,
+        hist_range=(0.0, 2.0),
+        scale_invariant=False,
+    )
+    scale_invariant_distance = hellinger_distance_hist(
+        samples1=samples1,
+        samples2=samples2,
+        hist_bins=2,
+        hist_range=(0.0, 2.0),
+        scale_invariant=True,
+    )
+
+    torch.testing.assert_close(
+        scale_invariant_distance,
+        torch.tensor(0.5, dtype=torch.float64),
+        rtol=0.0,
+        atol=1e-10,
+    )
+    assert scale_invariant_distance < standard_distance
+
+
 def test_hellinger_distance_hist_marginals_returns_zero_for_identical_inputs() -> None:
     """Return zero distance for each feature when the two input sample sets are identical."""
     samples = torch.tensor(

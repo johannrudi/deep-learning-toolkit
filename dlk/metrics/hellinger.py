@@ -23,7 +23,7 @@ from collections.abc import Sequence
 
 import torch
 
-from dlk.metrics.utils import as_floating_2d, resolve_hist_bins, resolve_hist_range
+from dlk.metrics.utils import as_floating_2d, resolve_hist_bin_edges
 
 
 @torch.no_grad()
@@ -32,8 +32,22 @@ def hellinger_distance_hist(
     samples2: torch.Tensor,
     hist_bins: int | Sequence[int] | None = None,
     hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None = None,
+    scale_invariant: bool = False,
 ) -> torch.Tensor:
-    """Estimate Hellinger distance between two sample sets using histograms.
+    r"""Estimate Hellinger distance between two sample sets using histograms.
+    When `scale_invariant=True`, the metric rescales the square-root histogram of
+    `samples2` before computing the norm by minimizing:
+
+    .. math::
+        d_{\text{SI}}(x, y)
+        = \frac{1}{\sqrt{2}}\left\lVert \sqrt{x} - \alpha\sqrt{y} \right\rVert_2
+
+    with respect to :math:`\alpha`, where:
+
+    .. math::
+        \alpha
+        = \left(\frac{\sum_i \sqrt{x_i}\sqrt{y_i}}{\sum_i y_i}\right)^2
+        \quad (\text{for } \sum_i y_i > 0)
 
     Args:
         samples1: First sample tensor with shape `(n_samples_1, n_features)`.
@@ -41,9 +55,11 @@ def hellinger_distance_hist(
         hist_bins: Number of bins as an int or per-feature sequence. Defaults to 16 bins per feature.
         hist_range: Histogram range as a global `(min, max)` tuple or per-feature `(min, max)` tuples.
             When omitted, the range is inferred from both sample sets.
+        scale_invariant: If `True`, apply the scale-invariant variant defined above.
+            If `False`, compute the standard Hellinger distance.
 
     Returns:
-        Scalar tensor containing the Hellinger distance.
+        Scalar tensor containing the histogram-based Hellinger distance.
 
     Raises:
         ValueError: If sample shapes/devices are incompatible or histogram settings are invalid.
@@ -59,35 +75,25 @@ def hellinger_distance_hist(
             f"got {samples1.shape[1]} and {samples2.shape[1]}."
         )
 
-    n_features = samples1.shape[1]
-    histogram_bins = resolve_hist_bins(
+    bin_edges = resolve_hist_bin_edges(
+        samples1,
+        samples2,
         hist_bins=hist_bins,
-        n_features=n_features,
-    )
-    histogram_range = resolve_hist_range(
         hist_range=hist_range,
-        samples1=samples1,
-        samples2=samples2,
-        n_features=n_features,
     )
-    bin_edges = [
-        torch.linspace(
-            low,
-            high,
-            n_bins + 1,
-            device=samples1.device,
-            dtype=samples1.dtype,
-        )
-        for n_bins, (low, high) in zip(histogram_bins, histogram_range, strict=True)
-    ]
 
     # compute one multi-dimensional histogram over the entire feature space
     hist1, _ = torch.histogramdd(samples1, bins=bin_edges, density=True)
     hist2, _ = torch.histogramdd(samples2, bins=bin_edges, density=True)
     hist1_sqrt = torch.sqrt(torch.clamp(hist1, min=0.0))
     hist2_sqrt = torch.sqrt(torch.clamp(hist2, min=0.0))
-    diff = hist1_sqrt - hist2_sqrt
-    distance = torch.linalg.vector_norm(diff) / math.sqrt(2.0)
+    if scale_invariant:
+        scale = torch.sum(hist1_sqrt * hist2_sqrt) / torch.sum(hist2_sqrt**2)
+        diff = hist1_sqrt - scale * hist2_sqrt
+        distance = torch.linalg.vector_norm(diff) / math.sqrt(2.0)
+    else:
+        diff = hist1_sqrt - hist2_sqrt
+        distance = torch.linalg.vector_norm(diff) / math.sqrt(2.0)
 
     return distance
 
@@ -98,6 +104,7 @@ def hellinger_distance_hist_marginals(
     samples2: torch.Tensor,
     hist_bins: int | Sequence[int] | None = None,
     hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None = None,
+    scale_invariant: bool = False,
 ) -> torch.Tensor:
     """Estimate per-feature 1D Hellinger distances from sample marginals.
 
@@ -107,6 +114,8 @@ def hellinger_distance_hist_marginals(
         hist_bins: Number of bins as an int or per-feature sequence. Defaults to 16 bins per feature.
         hist_range: Histogram range as a global `(min, max)` tuple or per-feature `(min, max)` tuples.
             When omitted, the range is inferred from both sample sets.
+        scale_invariant: If `True`, apply the scale-invariant variant described in
+            `hellinger_distance_hist`. If `False`, compute the standard Hellinger distance.
 
     Returns:
         Tensor with shape `(n_features,)` containing one 1D Hellinger distance per feature.
@@ -125,35 +134,30 @@ def hellinger_distance_hist_marginals(
             f"got {samples1.shape[1]} and {samples2.shape[1]}."
         )
 
-    n_features = samples1.shape[1]
-    histogram_bins = resolve_hist_bins(
+    bin_edges = resolve_hist_bin_edges(
+        samples1,
+        samples2,
         hist_bins=hist_bins,
-        n_features=n_features,
-    )
-    histogram_range = resolve_hist_range(
         hist_range=hist_range,
-        samples1=samples1,
-        samples2=samples2,
-        n_features=n_features,
     )
+    n_features = samples1.shape[1]
     distances = torch.empty(n_features, device=samples1.device, dtype=samples1.dtype)
 
     # compute one-dimensional histograms for each feature independently
-    for dim, (n_bins, (low, high)) in enumerate(
-        zip(histogram_bins, histogram_range, strict=True)
-    ):
-        bin_edges = torch.linspace(
-            low,
-            high,
-            n_bins + 1,
-            device=samples1.device,
-            dtype=samples1.dtype,
+    for dim, bin_edges_per_dim in enumerate(bin_edges):
+        hist1, _ = torch.histogram(
+            samples1[:, dim], bins=bin_edges_per_dim, density=True
         )
-        hist1, _ = torch.histogram(samples1[:, dim], bins=bin_edges, density=True)
-        hist2, _ = torch.histogram(samples2[:, dim], bins=bin_edges, density=True)
+        hist2, _ = torch.histogram(
+            samples2[:, dim], bins=bin_edges_per_dim, density=True
+        )
         hist1_sqrt = torch.sqrt(torch.clamp(hist1, min=0.0))
         hist2_sqrt = torch.sqrt(torch.clamp(hist2, min=0.0))
-        diff = hist1_sqrt - hist2_sqrt
+        if scale_invariant:
+            scale = torch.sum(hist1_sqrt * hist2_sqrt) / torch.sum(hist2_sqrt**2)
+            diff = hist1_sqrt - scale * hist2_sqrt
+        else:
+            diff = hist1_sqrt - hist2_sqrt
         distances[dim] = torch.linalg.vector_norm(diff) / math.sqrt(2.0)
 
     return distances
