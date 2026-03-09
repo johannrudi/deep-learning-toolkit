@@ -1,7 +1,7 @@
 """Profile model training loops with PyTorch profiler and export step diagnostics."""
 
 import logging
-import os
+import pathlib
 from collections.abc import Mapping, Sized
 from typing import Any, Literal, Protocol, TypeAlias
 
@@ -135,7 +135,8 @@ def trace_handler(
     Returns:
         None.
     """
-    os.makedirs(log_profile_dir, exist_ok=True)
+    profile_dir = pathlib.Path(log_profile_dir)
+    profile_dir.mkdir(parents=True, exist_ok=True)
 
     # generate profiler summary tables
     table = f"<profile_result step={prof.step_num}>\n"
@@ -150,14 +151,14 @@ def trace_handler(
     table += "</profile_result>\n"
 
     # write summary table to file and stdout
-    table_path = os.path.join(log_profile_dir, f"table_prof_step_{prof.step_num}.txt")
+    table_path = profile_dir / f"table_prof_step_{prof.step_num}.txt"
     with open(table_path, "w", encoding="utf-8") as file_handle:
         file_handle.write(table)
     print(table)
 
     # write Chrome trace JSON
-    trace_path = os.path.join(log_profile_dir, f"trace_prof_step_{prof.step_num}.json")
-    prof.export_chrome_trace(trace_path)
+    trace_path = profile_dir / f"trace_prof_step_{prof.step_num}.json"
+    prof.export_chrome_trace(str(trace_path))
 
 
 def _select_profiler_activities() -> (
