@@ -1,10 +1,19 @@
-"""Provide shared utilities for metric computations."""
+"""Provide helper utilities for histogram, KDE, and distance metrics."""
 
 from collections.abc import Sequence
 from numbers import Real
-from typing import Literal, TypeGuard
+from typing import Literal, TypeAlias, TypeGuard
 
 import torch
+
+# --------------------------------------
+# Types
+# --------------------------------------
+
+CountsLike: TypeAlias = int | Sequence[int] | None
+LimitsLike: TypeAlias = tuple[float, float] | Sequence[tuple[float, float]] | None
+
+# --------------------------------------
 
 
 def as_floating_2d(
@@ -32,211 +41,266 @@ def as_floating_2d(
     return samples
 
 
-def resolve_hist_bins(
-    hist_bins: int | Sequence[int] | None,
+def resolve_counts(
+    counts: CountsLike,
     n_features: int,
 ) -> list[int]:
-    """Resolve histogram bin counts for each feature dimension.
+    """Resolve histogram bin counts or grid point counts for each feature dimension.
 
     Args:
-        hist_bins: Number of bins per feature as an int or per-dimension sequence.
+        counts: Number of bins/points per feature as an int or per-dimension sequence.
         n_features: Number of feature dimensions.
 
     Returns:
-        List of per-dimension bin counts.
+        List of per-dimension counts.
 
     Raises:
-        ValueError: If bin counts are non-positive or incompatible with `n_features`.
+        ValueError: If counts are non-positive or incompatible with `n_features`.
     """
-    if hist_bins is None:
-        bins = [16] * n_features
-    elif isinstance(hist_bins, int):
-        bins = [hist_bins] * n_features
+    if counts is None:
+        resolved_counts = [16] * n_features
+    elif isinstance(counts, int):
+        resolved_counts = [counts] * n_features
     else:
-        bins = [int(n_bins) for n_bins in hist_bins]
-        if len(bins) != n_features:
+        resolved_counts = [int(n) for n in counts]
+        if len(resolved_counts) != n_features:
             raise ValueError(
-                "hist_bins must have one value per feature; "
-                f"expected {n_features}, got {len(bins)}."
+                "counts must have one value per feature; "
+                f"expected {n_features}, got {len(counts)}."
             )
-    if any(n_bins <= 0 for n_bins in bins):
-        raise ValueError("hist_bins values must be positive.")
-    return bins
+    if any(n <= 0 for n in resolved_counts):
+        raise ValueError(f"counts must be positive, got {counts}.")
+    return resolved_counts
 
 
-def _is_global_hist_range(
-    hist_range: tuple[float, float] | Sequence[tuple[float, float]],
+def _are_global_limits(
+    limits: tuple[float, float] | Sequence[tuple[float, float]],
 ) -> TypeGuard[tuple[float, float]]:
-    """Check whether histogram range is a single global `(min, max)` pair."""
-    if not isinstance(hist_range, tuple) or len(hist_range) != 2:
+    """Check whether limits are a single global `(min, max)` pair."""
+    if not isinstance(limits, tuple) or len(limits) != 2:
         return False
-    low, high = hist_range
+    low, high = limits
     return isinstance(low, Real) and isinstance(high, Real)
 
 
-def resolve_hist_range(
-    hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None,
-    samples1: torch.Tensor,
-    samples2: torch.Tensor,
+def resolve_limits(
+    limits: LimitsLike,
     n_features: int,
+    samples1: torch.Tensor | None = None,
+    samples2: torch.Tensor | None = None,
 ) -> list[tuple[float, float]]:
-    """Resolve histogram value ranges for each feature dimension.
+    """Resolve histogram value ranges or grid point limits for each feature dimension.
 
     Args:
-        hist_range: Global `(min, max)` range or per-dimension ranges.
+        limits: Global `(min, max)` limits or per-dimension limits.
+        n_features: Number of feature dimensions.
         samples1: First sample tensor.
         samples2: Second sample tensor.
-        n_features: Number of feature dimensions.
 
     Returns:
         Per-dimension list of `(min, max)` tuples.
 
     Raises:
-        ValueError: If ranges are malformed or invalid.
+        ValueError: If limits are malformed or invalid.
     """
-    if hist_range is None:
-        low = torch.minimum(samples1.min(dim=0).values, samples2.min(dim=0).values)
-        high = torch.maximum(samples1.max(dim=0).values, samples2.max(dim=0).values)
+    if limits is None:
+        if samples1 is None:
+            raise ValueError("limits and samples1 cannot both be None.")
+        low = samples1.min(dim=0).values
+        high = samples1.max(dim=0).values
+        if samples2 is not None:
+            low = torch.minimum(low, samples2.min(dim=0).values)
+            high = torch.maximum(high, samples2.max(dim=0).values)
         return [
             (float(low_i.item()), float(high_i.item()))
             for low_i, high_i in zip(low, high, strict=True)
         ]
 
-    if _is_global_hist_range(hist_range):
-        low = float(hist_range[0])
-        high = float(hist_range[1])
+    if _are_global_limits(limits):
+        low = float(limits[0])
+        high = float(limits[1])
         if low >= high:
-            raise ValueError("hist_range must satisfy min < max.")
+            raise ValueError("limits must satisfy min < max.")
         return [(low, high)] * n_features
 
-    if len(hist_range) != n_features:
+    if len(limits) != n_features:
         raise ValueError(
-            "hist_range must provide one (min, max) pair per feature; "
-            f"expected {n_features}, got {len(hist_range)}."
+            "limits must provide one (min, max) pair per feature; "
+            f"expected {n_features}, got {len(limits)}."
         )
 
-    resolved_range: list[tuple[float, float]] = []
-    for dim, bounds in enumerate(hist_range):
+    resolved_limits: list[tuple[float, float]] = []
+    for dim, bounds in enumerate(limits):
         if not isinstance(bounds, Sequence) or len(bounds) != 2:
-            raise ValueError(
-                f"hist_range[{dim}] must be a (min, max) pair, got {bounds}."
-            )
+            raise ValueError(f"limits[{dim}] must be a (min, max) pair, got {bounds}.")
         low_value = bounds[0]
         high_value = bounds[1]
         if not isinstance(low_value, Real) or not isinstance(high_value, Real):
-            raise ValueError(
-                f"hist_range[{dim}] must be a (min, max) pair, got {bounds}."
-            )
+            raise ValueError(f"limits[{dim}] must be a (min, max) pair, got {bounds}.")
         low = float(low_value)
         high = float(high_value)
         if low >= high:
-            raise ValueError(f"hist_range[{dim}] must satisfy min < max.")
-        resolved_range.append((low, high))
-    return resolved_range
+            raise ValueError(f"limits[{dim}] must satisfy min < max.")
+        resolved_limits.append((low, high))
+    return resolved_limits
 
 
-def resolve_hist_bin_edges(
+def resolve_points(
     samples1: torch.Tensor,
-    samples2: torch.Tensor,
-    hist_bins: int | Sequence[int] | None = None,
-    hist_range: tuple[float, float] | Sequence[tuple[float, float]] | None = None,
+    samples2: torch.Tensor | None,
+    counts: CountsLike = None,
+    limits: LimitsLike = None,
+    counts_are_intervals: bool = False,
 ) -> list[torch.Tensor]:
+    """Resolve per-feature 1D coordinate grids from counts and limits.
+
+    Args:
+        samples1: First sample tensor with shape `(n_samples, n_features)`.
+        samples2: Optional second sample tensor used when inferring limits.
+        counts: Number of points/intervals per feature as an int or per-feature sequence.
+        limits: Global `(min, max)` limits or per-feature limits.
+        counts_are_intervals: `True` if counts represent intervals, or points otherwise.
+
+    Returns:
+        List of per-feature coordinate tensors. Each tensor has shape
+        `(count_d + 1,)` for feature dimension `d` if `counts_are_intervals=True` and
+        `(count_d,)` otherwise.
+
+    Raises:
+        ValueError: If counts or limits are invalid.
+    """
     n_features = samples1.shape[1]
-    histogram_bins = resolve_hist_bins(
-        hist_bins=hist_bins,
+    resolved_counts = resolve_counts(
+        counts=counts,
         n_features=n_features,
     )
-    histogram_range = resolve_hist_range(
-        hist_range=hist_range,
+    resolved_limits = resolve_limits(
+        limits=limits,
+        n_features=n_features,
         samples1=samples1,
         samples2=samples2,
-        n_features=n_features,
     )
-    bin_edges = [
-        torch.linspace(
-            low,
-            high,
-            n_bins + 1,
-            device=samples1.device,
-            dtype=samples1.dtype,
-        )
-        for n_bins, (low, high) in zip(histogram_bins, histogram_range, strict=True)
+
+    if counts_are_intervals:
+        add = 1
+    else:
+        add = 0
+    points = [
+        torch.linspace(lo, hi, n + add, device=samples1.device, dtype=samples1.dtype)
+        for n, (lo, hi) in zip(resolved_counts, resolved_limits, strict=True)
     ]
-    return bin_edges
+    return points
 
 
 @torch.no_grad()
-def kdedd_on_grid(
+def histogramdd(
     samples: torch.Tensor,
-    grid_limits: torch.Tensor,
-    grid_size: int = 32,
+    bin_counts: CountsLike = None,
+    bin_ranges: LimitsLike = None,
+    to_density: bool = False,
+    to_mass: bool = False,
+) -> torch.Tensor:
+    """Estimate a normalized multidimensional histogram from samples.
+
+    Args:
+        samples: Sample tensor with shape `(n_samples, n_features)`.
+        bin_counts: Number of bins as one int or a per-feature sequence.
+        bin_ranges: Global `(min, max)` range or per-feature ranges.
+        to_density: If `True`, return density values whose integral over the
+            histogram domain is approximately 1.
+        to_mass: If `True`, divide the histogram output by `n_samples` so each
+            bin stores empirical probability mass.
+
+    Returns:
+        Histogram density tensor with one axis per feature dimension.
+
+    Raises:
+        ValueError: If samples, bin_counts, or bin_ranges are invalid.
+    """
+    samples = as_floating_2d(samples=samples, name="samples")
+    n_features = samples.shape[1]
+
+    resolved_bin_counts = resolve_counts(
+        counts=bin_counts,
+        n_features=n_features,
+    )
+    resolved_bin_ranges = resolve_limits(
+        limits=bin_ranges,
+        n_features=n_features,
+        samples1=samples,
+    )
+    bin_edges = resolve_points(
+        samples1=samples,
+        samples2=None,
+        counts=resolved_bin_counts,
+        limits=resolved_bin_ranges,
+        counts_are_intervals=True,
+    )
+
+    hist, _ = torch.histogramdd(samples, bins=bin_edges, density=to_density)
+    if to_mass:
+        hist = hist / samples.shape[0]
+    return hist
+
+
+@torch.no_grad()
+def kde_density(
+    samples: torch.Tensor,
+    grid_size: CountsLike = None,
+    grid_limits: LimitsLike = None,
     bandwidth: float | str = 1.0,
     algorithm: str = "standard",
     kernel: str = "gaussian",
-    batch_size: int = 128,
+    batch_size: int = 256,
     log_density: bool = False,
+    to_mass: bool = False,
 ) -> torch.Tensor:
     """Estimate KDE values on a Cartesian grid using torch-kde.
 
     Args:
         samples: Sample tensor with shape `(n_samples, n_features)`.
-        grid_limits: Per-feature bounds with shape `(n_features, 2)` where each
-            row is `(low, high)`. The transposed shape `(2, n_features)` is also
-            accepted.
-        grid_size: Number of evaluation points per feature dimension.
+        grid_size: Number of intervals as one int or per-feature-dimension
+            sequence. Each grid dimension contains `grid_size + 1` points.
+        grid_limits: Global `(min, max)` limits or per-feature limits.
         bandwidth: Bandwidth argument forwarded to `torchkde.KernelDensity`.
         algorithm: Algorithm argument forwarded to `torchkde.KernelDensity`.
         kernel: Kernel argument forwarded to `torchkde.KernelDensity`.
         batch_size: Number of grid points per batch in `score_samples`.
+        log_density: If `True`, return log-density values instead of density values.
+        to_mass: If `True`, convert density values into approximate probability
+            mass per grid cell by multiplying by cell volume. Ignored when
+            `log_density=True`.
 
     Returns:
-        Flattened density values with shape `(grid_size**n_features,)`.
+        Density or log-density values on the Cartesian grid with shape
+        `(grid_size_0 + 1, ..., grid_size_{n_features - 1} + 1)`.
 
     Raises:
-        ValueError: If tensor shapes or scalar arguments are invalid.
+        ValueError: If grid_size, grid_limits, or batch_size are invalid.
         ImportError: If `torchkde` is not available.
     """
     samples = as_floating_2d(samples=samples, name="samples")
     n_features = samples.shape[1]
 
-    # resolve grid limits
-    if grid_limits.ndim != 2:
-        raise ValueError(
-            "grid_limits must be 2D with shape (n_features, 2) "
-            f"or (2, n_features), got {tuple(grid_limits.shape)}."
-        )
-    if grid_limits.shape == (n_features, 2):
-        resolved_grid_limits = grid_limits
-    elif grid_limits.shape == (2, n_features):
-        resolved_grid_limits = grid_limits.T
-    else:
-        raise ValueError(
-            "grid_limits must have shape (n_features, 2) "
-            f"or (2, n_features), got {tuple(grid_limits.shape)}."
-        )
-    if not torch.is_floating_point(resolved_grid_limits):
-        resolved_grid_limits = resolved_grid_limits.float()
-    resolved_grid_limits = resolved_grid_limits.to(
-        device=samples.device,
-        dtype=samples.dtype,
+    resolved_grid_size = resolve_counts(
+        counts=grid_size,
+        n_features=n_features,
     )
-
-    low = resolved_grid_limits[:, 0]
-    high = resolved_grid_limits[:, 1]
-    if torch.any(low >= high):
-        raise ValueError("Each grid_limits row must satisfy low < high.")
-
-    if grid_size < 1:
-        raise ValueError(f"grid_size must be positive, got {grid_size}.")
-    if batch_size < 1:
-        raise ValueError(f"batch_size must be positive, got {batch_size}.")
+    resolved_grid_limits = resolve_limits(
+        limits=grid_limits,
+        n_features=n_features,
+        samples1=samples,
+    )
 
     try:
         from torchkde import KernelDensity
     except ImportError as exc:
         raise ImportError(
-            "torchkde is required for kdedd_on_grid. Install with `pip install torch-kde`."
+            "torchkde is required for kde_on_grid. Install with `pip install torch-kde`."
         ) from exc
+
+    if batch_size < 1:
+        raise ValueError(f"batch_size must be positive, got {batch_size}.")
 
     # create a KDE estimator from the input samples
     kernel_density = KernelDensity(
@@ -247,63 +311,110 @@ def kdedd_on_grid(
     kernel_density.fit(samples)
 
     # construct Cartesian grid points using ij indexing
-    grid_1d = [
-        torch.linspace(
-            low_i.item(),
-            high_i.item(),
-            grid_size,
-            device=samples.device,
-            dtype=samples.dtype,
-        )
-        for low_i, high_i in zip(low, high, strict=True)
-    ]
-    grid_mesh = torch.meshgrid(*grid_1d, indexing="ij")
+    grids_1d = resolve_points(
+        samples1=samples,
+        samples2=None,
+        counts=resolved_grid_size,
+        limits=resolved_grid_limits,
+        counts_are_intervals=False,
+    )
+    grid_mesh = torch.meshgrid(*grids_1d, indexing="ij")
     grid_points = torch.stack(grid_mesh, dim=0).reshape(n_features, -1).T
+    grid_shape = tuple(grid_1d.numel() for grid_1d in grids_1d)
 
-    # evaluate log-density and convert it to density values
+    # evaluate log-density
     log_grid_vals = kernel_density.score_samples(grid_points, batch_size=batch_size)
+    log_grid_vals = log_grid_vals.reshape(grid_shape)
     if log_density:
         return log_grid_vals
-    return torch.exp(log_grid_vals)
+
+    # convert to density values
+    kde_density = torch.exp(log_grid_vals)
+    if to_mass:
+        # compute the volume of each cell
+        cell_volume = 1.0
+        for dim, (siz, lim) in enumerate(
+            zip(resolved_grid_size, resolved_grid_limits, strict=True)
+        ):
+            cell_volume *= (lim[1] - lim[0]) / (siz - 1)
+        return kde_density * cell_volume
+    return kde_density
 
 
+def kde_density_to_mass(
+    kde_density: torch.Tensor,
+    grid_size: CountsLike = None,
+    grid_limits: LimitsLike = None,
+):
+    """Convert grid-based KDE values into approximate probability masses.
+
+    Args:
+        kde_density: KDE values on a Cartesian grid with one axis per feature.
+        grid_size: Number of grid points as one int or per-feature sequence.
+        grid_limits: Global `(min, max)` limits or per-feature limits for the grid.
+
+    Returns:
+        Tensor with the same shape as `kde_density` containing approximate
+        probability mass values per grid cell.
+
+    Raises:
+        ValueError: If `grid_size` or `grid_limits` are invalid.
+    """
+    n_features = kde_density.ndim
+    resolved_grid_size = resolve_counts(counts=grid_size, n_features=n_features)
+    resolved_grid_limits = resolve_limits(limits=grid_limits, n_features=n_features)
+
+    # compute the volume of each cell
+    cell_volume = 1.0
+    for dim, (siz, lim) in enumerate(
+        zip(resolved_grid_size, resolved_grid_limits, strict=True)
+    ):
+        cell_volume *= (lim[1] - lim[0]) / (siz - 1)
+    return kde_density * cell_volume
+
+
+@torch.no_grad()
 def pairwise_distances(
-    x: torch.Tensor,
-    y: torch.Tensor,
+    samples1: torch.Tensor,
+    samples2: torch.Tensor,
     p: Literal[1, 2] = 2,
 ) -> torch.Tensor:
     """Compute pairwise distances between rows of two matrices.
 
     Args:
-        x: Input tensor with shape ``[N, D]``.
-        y: Input tensor with shape ``[M, D]``.
+        samples1: Input tensor with shape ``[N, D]``.
+        samples2: Input tensor with shape ``[M, D]``.
         p: Distance mode selector. Use ``1`` for Euclidean distance and ``2`` for
             squared Euclidean distance.
 
     Returns:
         A tensor with shape ``[N, M]`` where entry ``(i, j)`` is the distance
-        between ``x[i]`` and ``y[j]``.
+        between ``samples1[i]`` and ``samples2[j]``.
 
     Raises:
-        ValueError: If ``x`` or ``y`` is not 2D.
-        ValueError: If ``x`` and ``y`` do not share the same feature dimension.
+        ValueError: If ``samples1`` or ``samples2`` is not 2D.
+        ValueError: If ``samples1`` and ``samples2`` do not share the same feature dimension.
         ValueError: If ``p`` is not one of ``{1, 2}``.
     """
-    if x.ndim != 2:
-        raise ValueError(f"x must be 2D with shape [N, D], got shape {tuple(x.shape)}")
-    if y.ndim != 2:
-        raise ValueError(f"y must be 2D with shape [M, D], got shape {tuple(y.shape)}")
-    if x.shape[1] != y.shape[1]:
+    if samples1.ndim != 2:
         raise ValueError(
-            "x and y must have the same feature dimension, "
-            f"got x.shape[1]={x.shape[1]} and y.shape[1]={y.shape[1]}"
+            f"samples1 must be 2D with shape [N, D], got shape {tuple(samples1.shape)}"
+        )
+    if samples2.ndim != 2:
+        raise ValueError(
+            f"samples2 must be 2D with shape [M, D], got shape {tuple(samples2.shape)}"
+        )
+    if samples1.shape[1] != samples2.shape[1]:
+        raise ValueError(
+            "samples1 and samples2 must have the same feature dimension, "
+            f"got samples1.shape[1]={samples1.shape[1]} and samples2.shape[1]={samples2.shape[1]}"
         )
     if not p in [1, 2]:
         raise ValueError(f"p must be 1 (Euclidean) or 2 (squared Euclidean), got {p=}")
 
-    x2 = (x * x).sum(dim=1, keepdim=True)
-    y2 = (y * y).sum(dim=1, keepdim=True).T
-    sq = torch.clamp(x2 + y2 - 2.0 * (x @ y.T), min=0.0)
+    x2 = (samples1 * samples1).sum(dim=1, keepdim=True)
+    y2 = (samples2 * samples2).sum(dim=1, keepdim=True).T
+    sq = torch.clamp(x2 + y2 - 2.0 * (samples1 @ samples2.T), min=0.0)
     if p == 2:
         return sq
     if p == 1:
