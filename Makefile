@@ -16,7 +16,6 @@ PY_IMPORT_FORMAT := isort
 PY_LINT := basedpyright
 PY_COMPILE := python -m compileall -q -f
 PY_TEST := pytest
-PY_TESTV := pytest -v
 
 # set package directory
 PACKAGE_DIR := dlk
@@ -38,5 +37,11 @@ compile:
 test: compile
 	@$(PY_TEST)
 
+testq: compile
+	@$(PY_TEST) -q
+
 testv: compile
-	@$(PY_TESTV)
+	@$(PY_TEST) -v
+
+testvv: compile
+	@$(PY_TEST) -sv
