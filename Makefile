@@ -1,4 +1,6 @@
 # --------------------------------------
+# Makefile for this package
+#
 # Author: Johann Rudi
 # --------------------------------------
 
@@ -17,22 +19,30 @@ PY_LINT := basedpyright
 PY_COMPILE := python -m compileall -q -f
 PY_TEST := pytest
 
-# set package directory
+# set directories
 PACKAGE_DIR := dlk
+TESTS_DIR := tests
 
 # --------------------------------------
 
-.PHONY: format lint compile test testv
+.PHONY: format lint compile
 
 format:
 	$(PY_IMPORT_FORMAT) $(PACKAGE_DIR)
 	$(PY_FORMAT) $(PACKAGE_DIR)
-
-lint:
-	$(PY_LINT) $(PACKAGE_DIR)
+	@echo
+	$(PY_IMPORT_FORMAT) $(TESTS_DIR)
+	$(PY_FORMAT) $(TESTS_DIR)
 
 compile:
 	$(PY_COMPILE) $(PACKAGE_DIR)
+	$(PY_COMPILE) $(TESTS_DIR)
+
+lint:
+	$(PY_LINT) $(PACKAGE_DIR)
+	$(PY_LINT) $(TESTS_DIR)
+
+.PHONY: test testq testv testvv
 
 test: compile
 	@$(PY_TEST)
