@@ -34,11 +34,11 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-test = [
-    "pytest>=8,<9",
-]
 kde = [
     "torch-kde",
+]
+test = [
+    "pytest>=8,<9",
 ]
 dev = [
     "basedpyright",

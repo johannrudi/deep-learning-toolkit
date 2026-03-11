@@ -6,23 +6,63 @@ network architectures, loss functions, training loops, and utilities.
 
 ## Installation
 
-### Install the package in editable mode
+### Requirements
+
+- Python `>=3.11`
+
+<!-- TODO: uncomment this after a public release
+### Install in regular mode
 
 ```sh
-pip install -e
+pip install deep-learning-toolkit
+```
+-->
+
+### Install the package in editable mode
+
+Using a clone of the Git repository:
+
+```sh
+pip install -e .
 ```
 
-### Install with development dependencies (`[dev]`)
+#### Install with optional extras
+
+Kernel density estimation features:
+
+```sh
+pip install -e ".[kde]"
+```
+
+Running tests:
+
+```sh
+pip install -e ".[test]"
+```
+
+#### Install with optional extras for development
 
 ```sh
 pip install -e ".[dev]"
 ```
 
-### Install in regular mode
+This includes extras from `[test]`.
 
-```sh
-pip install .
-```
+### Runtime dependencies
+
+- `torch>=2,<3`
+- `prettytable>=3,<4`
+- `tqdm>=4,<5`
+
+## Development commands
+
+- `make format`: run `isort` and `black` on `dlk/` and `tests/`
+- `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
+- `make lint`: run `basedpyright` on `dlk/` and `tests/`
+- `make test`: run `pytest` (after `make compile`)
+- `make testq`: run `pytest -q` (after `make compile`)
+- `make testv`: run `pytest -v` (after `make compile`)
+- `make testvv`: run `pytest -sv` (after `make compile`)
 
 ## Architecture
 
