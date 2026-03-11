@@ -240,7 +240,7 @@ def profile_train_epochs(
             """Signal the end of each training step to the profiler."""
             prof.step()
 
-        n_epochs: int = 10  # keep above the total number of profiled steps
+        n_epochs = 10  # keep above the total number of profiled steps
         train_epochs_fn(
             n_epochs,
             net,
@@ -334,7 +334,7 @@ def profile_train_batches(
             """Signal the end of each training step to the profiler."""
             prof.step()
 
-        epoch_idx: int = 0
+        epoch_idx = 0
         logger: logging.Logger = logging.getLogger("dlk.opt.profile_train_batches")
         batch_dlog = train_batches_fn(
             epoch_idx,
