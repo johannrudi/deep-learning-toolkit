@@ -65,6 +65,43 @@ def _create_level_blocks(
     return block
 
 
+def _normalize_level_channels(
+    level_channels: Sequence[int | Sequence[int]],
+) -> list[list[int]]:
+    """Normalize per-level channel specs into lists of integer channel sizes.
+
+    Args:
+        level_channels: Channel specs where each level is an int or sequence of ints.
+
+    Returns:
+        list[list[int]]: Normalized level-wise channel layout.
+    """
+    normalized_channels: list[list[int]] = []
+    for channels in level_channels:
+        if isinstance(channels, int):
+            normalized_channels.append([channels])
+        else:
+            normalized_channels.append(list(channels))
+    return normalized_channels
+
+
+def _init_parameters_recursive(module: nn.Module) -> None:
+    """Initialize module parameters recursively when `init_parameters` is available.
+
+    Args:
+        module: Module subtree to initialize.
+
+    Returns:
+        None.
+    """
+    init_parameters = getattr(module, "init_parameters", None)
+    if callable(init_parameters):
+        init_parameters()
+        return
+    for child in module.children():
+        _init_parameters_recursive(child)
+
+
 class UNetXd_2025(nn.Module):
     """Define a configurable UNet architecture for N-dimensional convolutional blocks.
 
@@ -135,41 +172,45 @@ class UNetXd_2025(nn.Module):
             {} if output_conv_kwargs is None else dict(output_conv_kwargs)
         )
         # set default channel configurations
-        if down_levels_conv_channels is None:
-            down_levels_conv_channels = [2, 4, 8]
-        if up_levels_conv_channels is None:
-            up_levels_conv_channels = [8, 4, 2]
-        if coarse_level_conv_channels is None:
-            coarse_level_conv_channels = [16, 16]
+        down_level_channels = (
+            [2, 4, 8]
+            if down_levels_conv_channels is None
+            else list(down_levels_conv_channels)
+        )
+        up_level_channels = (
+            [8, 4, 2]
+            if up_levels_conv_channels is None
+            else list(up_levels_conv_channels)
+        )
+        coarse_channels = (
+            [16, 16]
+            if coarse_level_conv_channels is None
+            else list(coarse_level_conv_channels)
+        )
         # check dimension dependent classes
         assert with_Downsample is not None
         assert with_Upsample is not None
         assert with_LevelBlock is not None
         assert with_Normalization is not None
         # normalize channel configurations
-        down_levels_conv_channels = [
-            list(channels) if isinstance(channels, (list, tuple)) else [channels]
-            for channels in down_levels_conv_channels
-        ]
-        up_levels_conv_channels = [
-            list(channels) if isinstance(channels, (list, tuple)) else [channels]
-            for channels in up_levels_conv_channels
-        ]
-        coarse_level_conv_channels = list(coarse_level_conv_channels)
+        down_levels_channels = _normalize_level_channels(down_level_channels)
+        up_levels_channels = _normalize_level_channels(up_level_channels)
         # set number of layers
-        assert len(down_levels_conv_channels) == len(up_levels_conv_channels)
-        n_levels = len(down_levels_conv_channels)
+        assert len(down_levels_channels) == len(up_levels_channels)
+        n_levels = len(down_levels_channels)
         # check kernels
-        if isinstance(down_levels_conv_kernels, (list, tuple)):
+        down_level_kernels: list[int]
+        if isinstance(down_levels_conv_kernels, int):
+            down_level_kernels = [down_levels_conv_kernels] * n_levels
+        else:
             assert len(down_levels_conv_kernels) == n_levels
-            down_levels_conv_kernels = list(down_levels_conv_kernels)
-        else:  # otherwise assume single integer
-            down_levels_conv_kernels = [down_levels_conv_kernels] * n_levels
-        if isinstance(up_levels_conv_kernels, (list, tuple)):
+            down_level_kernels = list(down_levels_conv_kernels)
+        up_level_kernels: list[int]
+        if isinstance(up_levels_conv_kernels, int):
+            up_level_kernels = [up_levels_conv_kernels] * n_levels
+        else:
             assert len(up_levels_conv_kernels) == n_levels
-            up_levels_conv_kernels = list(up_levels_conv_kernels)
-        else:  # otherwise assume single integer
-            up_levels_conv_kernels = [up_levels_conv_kernels] * n_levels
+            up_level_kernels = list(up_levels_conv_kernels)
         assert isinstance(coarse_level_conv_kernels, int), type(
             coarse_level_conv_kernels
         )
@@ -181,15 +222,15 @@ class UNetXd_2025(nn.Module):
         else:
             dropout = None
         # TODO manage print statements
-        print(f"### {down_levels_conv_channels=}")
-        print(f"### {coarse_level_conv_channels=}")
-        print(f"### {up_levels_conv_channels=}")
+        print(f"### {down_levels_channels=}")
+        print(f"### {coarse_channels=}")
+        print(f"### {up_levels_channels=}")
         _indent = ""
         #
         # create input block
         #
         ch_in = input_channels
-        ch_out = down_levels_conv_channels[0][0]
+        ch_out = down_levels_channels[0][0]
         print(f"###{_indent} input {ch_in=}, {ch_out=}")
         self.input_block = with_LevelBlock(
             ch_in,
@@ -207,7 +248,7 @@ class UNetXd_2025(nn.Module):
         # UNUSED: ch_down_all = list()  # initialize channels of all layers (incl. downsample)
         self.down_levels = nn.ModuleList()
         for l, (channels, kernel_size) in enumerate(
-            zip(down_levels_conv_channels, down_levels_conv_kernels)
+            zip(down_levels_channels, down_level_kernels)
         ):
             _indent = l * "  "
             level = list()
@@ -246,10 +287,8 @@ class UNetXd_2025(nn.Module):
         # create coarse level
         #
         _indent = (l + 1) * "  "
-        ch_in_all = [ch_in] + coarse_level_conv_channels[
-            :-1
-        ]  # input channels of all layers
-        ch_out_all = coarse_level_conv_channels  # output channels of all layers
+        ch_in_all = [ch_in] + coarse_channels[:-1]  # input channels of all layers
+        ch_out_all = coarse_channels  # output channels of all layers
         for ci_, co_ in zip(ch_in_all, ch_out_all):
             print(f"###{_indent} coarse     level={l+1}, ch_in={ci_}, ch_out={co_}")
         kernel_size = coarse_level_conv_kernels
@@ -270,13 +309,13 @@ class UNetXd_2025(nn.Module):
         #
         self.up_levels = nn.ModuleList()
         for l_inv, (channels, kernel_size) in enumerate(
-            zip(up_levels_conv_channels, up_levels_conv_kernels)
+            zip(up_levels_channels, up_level_kernels)
         ):
             l = n_levels - 1 - l_inv
             _indent = l * "  "
             level = list()
             # set channels of corresponding down level `l`
-            ch_down_inv = list(reversed(down_levels_conv_channels[l]))
+            ch_down_inv = list(reversed(down_levels_channels[l]))
             # add upsample layer
             # <code id="v1">
             # if l < n_levels - 1:  # if not the last level
@@ -304,7 +343,7 @@ class UNetXd_2025(nn.Module):
             # add sequence of layers
             ch_in_all = [ch_in] + channels[:-1]  # input channels of all layers
             ch_in_all = [
-                sum(c) for c in zip(ch_in_all, ch_down_inv)
+                ci_ + cd_ for ci_, cd_ in zip(ch_in_all, ch_down_inv)
             ]  # add channels of down level
             ch_out_all = channels  # output channels of all layers
             for ci_, co_ in zip(ch_in_all, ch_out_all):
@@ -357,15 +396,15 @@ class UNetXd_2025(nn.Module):
         h = self.input_block(x)
         # downsample levels
         h_down = list()
-        for level in self.down_levels:
-            for block in level:
+        for level in self.down_levels.children():
+            for block in level.children():
                 h = block(h)
                 h_down.append(h)
         # coarse level
         h = self.coarse_level(h)
         # upsample levels
-        for level in self.up_levels:
-            for block in level:
+        for level in self.up_levels.children():
+            for block in level.children():
                 h_cat = torch.cat(
                     [h, h_down.pop()], dim=1
                 )  # concatenate along channel dimension
@@ -377,31 +416,17 @@ class UNetXd_2025(nn.Module):
     def init_parameters(self) -> None:
         """initialize values of trainable parameters in all submodules."""
         # input layer
-        self.input_block.init_parameters()
+        _init_parameters_recursive(self.input_block)
         # downsample levels
-        for level in self.down_levels:
-            for block in level:
-                try:
-                    block.init_parameters()
-                except AttributeError:
-                    for layer in block:
-                        layer.init_parameters()
+        for level in self.down_levels.children():
+            _init_parameters_recursive(level)
         # coarse level
-        try:
-            self.coarse_level.init_parameters()
-        except AttributeError:
-            for block in self.coarse_level:
-                block.init_parameters()
+        _init_parameters_recursive(self.coarse_level)
         # upsample levels
-        for level in self.up_levels:
-            for block in level:
-                try:
-                    block.init_parameters()
-                except AttributeError:
-                    for layer in block:
-                        layer.init_parameters()
+        for level in self.up_levels.children():
+            _init_parameters_recursive(level)
         # output layer
-        self.output_block.init_parameters()
+        _init_parameters_recursive(self.output_block)
 
 
 # --------------------------------------

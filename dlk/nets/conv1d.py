@@ -533,16 +533,16 @@ class UNetResBlock(nn.Module):
         input_channels: int,
         output_channels: int | None = None,
         use_conv: bool = False,
-        with_normalization: NormalizationFactory | None = None,
+        normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
-        if with_normalization is None:
-            with_normalization = Normalization
+        if normalization is None:
+            normalization = Normalization
         self.input_channels = input_channels
         self.output_channels = output_channels or input_channels
         # create input layers
         self.in_layers = nn.Sequential(
-            with_normalization(input_channels),
+            normalization(input_channels),
             nn.SiLU(),
             nn.Conv1d(
                 input_channels,
@@ -554,7 +554,7 @@ class UNetResBlock(nn.Module):
         )
         # create output layers
         self.out_layers = nn.Sequential(
-            with_normalization(self.output_channels),
+            normalization(self.output_channels),
             nn.SiLU(),
             set_zero_parameters(
                 nn.Conv1d(
