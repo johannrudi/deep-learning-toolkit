@@ -1,14 +1,20 @@
-# DL-Kit: Deep Learning Toolkit
+# DL-Kit &mdash; Deep Learning Toolkit
 
-This is a PyTorch-based toolkit for building and training deep learning models, with a
-focus on scientific computing and inverse problems. The package provides reusable neural
-network architectures, loss functions, training loops, and utilities.
+DL-Kit is a PyTorch toolkit for scientific machine learning that provides reusable
+neural network architectures, loss functions, training loops, and utilities for
+scientific datasets.
 
-## Installation
+## Installing the `deep-learning-toolkit`
 
 ### Requirements
 
 - Python `>=3.11`
+
+### Runtime dependencies
+
+- `torch>=2,<3`
+- `prettytable>=3,<4`
+- `tqdm>=4,<5`
 
 <!-- TODO: uncomment this after a public release
 ### Install in regular mode
@@ -48,12 +54,6 @@ pip install -e ".[dev]"
 
 This includes extras from `[test]`.
 
-### Runtime dependencies
-
-- `torch>=2,<3`
-- `prettytable>=3,<4`
-- `tqdm>=4,<5`
-
 ## Development commands
 
 - `make format`: run `isort` and `black` on `dlk/` and `tests/`
@@ -66,7 +66,7 @@ This includes extras from `[test]`.
 
 ## Architecture
 
-### Neural network architectures - `dlk/nets/`
+### Neural network architectures &rarr; `dlk/nets/`
 
 - `mlp.py`: Multilayer Perceptron (MLPNet, MLPNet_MultIn, MLPResNet with residual and attention blocks)
 - `autoencoder.py`: Generic autoencoder wrapper for encoder/decoder pairs
@@ -83,7 +83,7 @@ All network modules follow a consistent pattern:
 - `init_parameters()` uses Xavier initialization with gain calculated from activation functions
 - Utility functions `_get_gain()` and `_set_init_parameters()` handle activation-aware initialization
 
-### Training and optimization - `dlk/opt/`
+### Training and optimization &rarr; `dlk/opt/`
 
 - `train.py`: Training loops (`train_epochs`, `train_batches`) with checkpointing and validation hooks
 - `train_gan.py`: GAN-specific training loops

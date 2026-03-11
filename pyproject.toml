@@ -1,7 +1,7 @@
 [project]
 name =  "deep-learning-toolkit"
 version = "0.3.0"
-description = "DL-Kit: Deep Learning Toolkit"
+description = "DL-Kit is a PyTorch toolkit for scientific machine learning that provides reusable neural network architectures, loss functions, training loops, and utilities for scientific datasets."
 readme = "README.md"
 authors = [
     { name = "Johann Rudi", email = "jrudi@vt.edu" },
