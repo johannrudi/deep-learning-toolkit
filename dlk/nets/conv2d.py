@@ -1,7 +1,7 @@
 """2D convolutional network architectures and reusable building blocks."""
 
 from collections.abc import Sequence
-from typing import Any, cast
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -152,11 +152,11 @@ class ConvNet(nn.Module):
         # initialize hidden convolutional layers
         gain = get_gain(self.hidden_conv_layers_activation, default="conv2d")
         for layer in self.hidden_conv_layers:
-            set_init_parameters(cast(nn.Conv2d, layer), gain)
+            set_init_parameters(layer, gain)
         # initialize hidden dense layers
         gain = get_gain(self.hidden_dense_layers_activation, default="conv2d")
         for layer in self.hidden_dense_layers:
-            set_init_parameters(cast(nn.Linear, layer), gain)
+            set_init_parameters(layer, gain)
         # initialize output layer
         gain = get_gain(self.output_layer_activation, default="conv2d")
         if self.output_layer is not None:
@@ -307,16 +307,15 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
         # initialize hidden convolutional layers before upsampling
         gain = get_gain(self.pre_up_layers_activation, default="conv2d")
         for layer in self.pre_up_layers:
-            set_init_parameters(cast(nn.Conv2d, layer), gain)
+            set_init_parameters(layer, gain)
         # initialize hidden convolutional layers after upsampling
         if self.post_up_layers:
             gain = get_gain(self.post_up_layers_activation, default="conv2d")
             set_init_parameters(self.up_layer, gain)
             for layer in self.post_up_layers[:-1]:
-                set_init_parameters(cast(nn.Conv2d, layer), gain)
+                set_init_parameters(layer, gain)
             set_init_parameters(
-                cast(nn.Conv2d, self.post_up_layers[-1]),
-                get_gain(None, default="conv2d"),
+                self.post_up_layers[-1], get_gain(None, default="conv2d")
             )
         else:
             set_init_parameters(self.up_layer, get_gain(None, default="conv2d"))
@@ -425,11 +424,8 @@ class ConvUpsampleNet_Interpolate(nn.Module):
         """Initialize trainable parameters with activation-aware gains."""
         gain = get_gain(self.conv_layers_activation, default="conv2d")
         for layer in self.conv_layers[:-1]:
-            set_init_parameters(cast(nn.Conv2d, layer), gain)
-        set_init_parameters(
-            cast(nn.Conv2d, self.conv_layers[-1]),
-            get_gain(None, default="conv2d"),
-        )
+            set_init_parameters(layer, gain)
+        set_init_parameters(self.conv_layers[-1], get_gain(None, default="conv2d"))
 
 
 # --------------------------------------

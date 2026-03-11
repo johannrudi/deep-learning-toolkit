@@ -119,21 +119,19 @@ class MLPNet(nn.Module):
         # initialize input layer
         if isinstance(self.input_layer, nn.Sequential):
             gain = get_gain(self.input_layer.activation)
-            set_init_parameters(cast(nn.Linear, self.input_layer.layer), gain)
+            set_init_parameters(self.input_layer.layer, gain)
         else:
             set_init_parameters(self.input_layer, get_gain(None))
 
         # initialize hidden layers
         for block in self.hidden_blocks:
             gain = get_gain(getattr(block, "activation", None))
-            set_init_parameters(cast(nn.Linear, block.layer), gain)
+            set_init_parameters(block.layer, gain)
 
         # initialize output layer
         if isinstance(self.output_layer, nn.Sequential):
             gain = get_gain(self.output_layer.activation)
-            set_init_parameters(
-                cast(nn.Linear, self.output_layer.layer), gain, bias_scale=0.0
-            )
+            set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
         else:
             set_init_parameters(self.output_layer, get_gain(None), bias_scale=0.0)
 
@@ -242,13 +240,12 @@ class MLPNet_MultIn(MLPNet):
 
         # apply hidden layers
         for block_idx, block in enumerate(self.hidden_blocks):
-            block_layer = cast(nn.Linear, block.layer)
             h_in = h_kwargs.get(f"h{block_idx}")
             if h_in is not None:
                 h = torch.cat((h, torch.flatten(h_in, 1)), dim=1)
             assert (
-                h.size(1) == block_layer.in_features
-            ), f"{block_idx=}, {h.size(1)=}, {block_layer.in_features=}"
+                h.size(1) == cast(nn.Linear, block.layer).in_features
+            ), f"{block_idx=}, {h.size(1)=}, {cast(nn.Linear, block.layer).in_features=}"
             h = block(h)
 
         # apply output layer
@@ -422,12 +419,10 @@ class AttentionBlock(nn.Module):
             None.
         """
         set_init_parameters(
-            cast(nn.Linear, self.attention_block.layer_0),
+            self.attention_block.layer_0,
             get_gain(self.attention_block.activation),
         )
-        set_init_parameters(
-            cast(nn.Linear, self.attention_block.layer_1), get_gain(None)
-        )
+        set_init_parameters(self.attention_block.layer_1, get_gain(None))
         if self.skip_connection is not None:
             set_init_parameters(self.skip_connection, get_gain(None))
 
@@ -542,16 +537,12 @@ class ResidualBlock(nn.Module):
         Returns:
             None.
         """
+        set_init_parameters(self.residual_block.layer_0, get_gain(None))
         set_init_parameters(
-            cast(nn.Linear, self.residual_block.layer_0), get_gain(None)
-        )
-        set_init_parameters(
-            cast(nn.Linear, self.residual_block.layer_1),
+            self.residual_block.layer_1,
             get_gain(self.residual_block.activation),
         )
-        set_init_parameters(
-            cast(nn.Linear, self.residual_block.layer_2), get_gain(None)
-        )
+        set_init_parameters(self.residual_block.layer_2, get_gain(None))
         if self.skip_connection is not None:
             set_init_parameters(self.skip_connection, get_gain(None))
 
@@ -778,15 +769,13 @@ class MLPResNet(nn.Module):
         # initialize input layer
         if isinstance(self.input_layer, nn.Sequential):
             gain = get_gain(self.input_layer.activation)
-            set_init_parameters(cast(nn.Linear, self.input_layer.layer), gain)
+            set_init_parameters(self.input_layer.layer, gain)
         else:
             set_init_parameters(self.input_layer, get_gain(None))
 
         # initialize output layer
         if isinstance(self.output_layer, nn.Sequential):
             gain = get_gain(self.output_layer.activation)
-            set_init_parameters(
-                cast(nn.Linear, self.output_layer.layer), gain, bias_scale=0.0
-            )
+            set_init_parameters(self.output_layer.layer, gain, bias_scale=0.0)
         else:
             set_init_parameters(self.output_layer, get_gain(None), bias_scale=0.0)

@@ -13,7 +13,6 @@ from dlk.nets.mlp import MLPResNet
 from dlk.nets.utils import (
     ModuleFactory,
     NormalizationFactory,
-    WeightedLayer,
     get_gain,
     set_init_parameters,
     set_zero_parameters,
@@ -124,7 +123,7 @@ class ConvNet(nn.Module):
         h = x
         # apply hidden convolutional layers
         for layer in self.hidden_conv_layers:
-            h = cast(nn.Conv1d, layer)(h)
+            h = cast(nn.Module, layer)(h)
             if self.hidden_conv_layers_activation is not None:
                 h = self.hidden_conv_layers_activation(h)
             if self.dropout is not None:
@@ -132,7 +131,7 @@ class ConvNet(nn.Module):
         h = torch.flatten(h, 1)
         # apply hidden dense layers
         for layer in self.hidden_dense_layers:
-            h = cast(nn.Linear, layer)(h)
+            h = cast(nn.Module, layer)(h)
             if self.hidden_dense_layers_activation is not None:
                 h = self.hidden_dense_layers_activation(h)
             if self.dropout is not None:
@@ -151,11 +150,11 @@ class ConvNet(nn.Module):
         # initialize hidden convolutional layers
         gain = get_gain(self.hidden_conv_layers_activation, default="conv1d")
         for layer in self.hidden_conv_layers:
-            set_init_parameters(cast(nn.Conv1d, layer), gain)
+            set_init_parameters(layer, gain)
         # initialize hidden dense layers
         gain = get_gain(self.hidden_dense_layers_activation, default="conv1d")
         for layer in self.hidden_dense_layers:
-            set_init_parameters(cast(nn.Linear, layer), gain)
+            set_init_parameters(layer, gain)
         # initialize output layer
         gain = get_gain(self.output_layer_activation, default="conv1d")
         if self.output_layer is not None:
@@ -347,9 +346,7 @@ class ConvResNet(nn.Module):
     def init_parameters(self) -> None:
         """Initialize trainable parameters of all active submodules."""
         # initialize input layer
-        set_init_parameters(
-            cast(WeightedLayer, self.input_layer), get_gain(None, default="conv1d")
-        )
+        set_init_parameters(self.input_layer, get_gain(None, default="conv1d"))
         # initialize convolutional block
         for layer in self.conv_resnet:
             cast(MultiLevelBlock, layer).init_parameters()
@@ -427,9 +424,7 @@ class UNetDownsample(nn.Module):
     def init_parameters(self) -> None:
         """Initialize trainable parameters using the block activation gain."""
         activation = getattr(self.block, "activation", None)
-        set_init_parameters(
-            cast(nn.Conv1d, self.block.layer), get_gain(activation, default="conv1d")
-        )
+        set_init_parameters(self.block.layer, get_gain(activation, default="conv1d"))
 
 
 class UNetUpsample(nn.Module):
@@ -506,9 +501,7 @@ class UNetUpsample(nn.Module):
     def init_parameters(self) -> None:
         """Initialize trainable parameters using the block activation gain."""
         activation = getattr(self.block, "activation", None)
-        set_init_parameters(
-            cast(nn.Conv1d, self.block.layer), get_gain(activation, default="conv1d")
-        )
+        set_init_parameters(self.block.layer, get_gain(activation, default="conv1d"))
 
 
 def Normalization(num_channels: int, num_groups: int = 1) -> nn.GroupNorm:
@@ -789,15 +782,15 @@ class MultiLevelBlock(nn.Module):
             gain = get_gain(self.block.activation, default="conv1d")
         else:
             gain = get_gain(None, default="conv1d")
-        set_init_parameters(cast(WeightedLayer, self.block.layer_0), gain)
+        set_init_parameters(self.block.layer_0, gain)
         if hasattr(self.block, "layer_1"):
-            set_init_parameters(cast(WeightedLayer, self.block.layer_1), gain)
+            set_init_parameters(self.block.layer_1, gain)
         if hasattr(self.block, "layer_2"):
-            set_init_parameters(cast(WeightedLayer, self.block.layer_2), gain)
+            set_init_parameters(self.block.layer_2, gain)
         if self.skip_connection is not None and not isinstance(
             self.skip_connection, nn.Identity
         ):
-            set_init_parameters(cast(WeightedLayer, self.skip_connection))
+            set_init_parameters(self.skip_connection)
 
 
 class DownsampleBlock(MultiLevelBlock):

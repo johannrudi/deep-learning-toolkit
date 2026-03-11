@@ -2,7 +2,7 @@
 
 import math
 from collections.abc import Callable
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 import torch
 import torch.nn as nn
@@ -52,6 +52,16 @@ class WeightedLayer(Protocol):
         ...
 
 
+WEIGHTED_LAYER_COMPATIBLE_TYPES = (
+    nn.Linear,
+    nn.Conv1d,
+    nn.Conv2d,
+    nn.Conv3d,
+    nn.ConvTranspose1d,
+    nn.ConvTranspose2d,
+    nn.ConvTranspose3d,
+)
+
 # --------------------------------------
 
 
@@ -98,8 +108,24 @@ def get_gain(
     return nn.init.calculate_gain(default)
 
 
+def _resolve_layer(module: Any, *, name: str = "module") -> WeightedLayer:
+    # check the module class
+    if not isinstance(module, WEIGHTED_LAYER_COMPATIBLE_TYPES):
+        raise TypeError(
+            f"{name} must be a supported Linear/Conv* layer, got {type(module).__name__}"
+        )
+
+    # validate protocol fields
+    if not isinstance(module.weight, torch.Tensor):
+        raise TypeError(f"{name}.weight must be a torch.Tensor")
+    if module.bias is not None and not isinstance(module.bias, torch.Tensor):
+        raise TypeError(f"{name}.bias must be torch.Tensor | None")
+
+    return cast(WeightedLayer, module)
+
+
 def set_init_parameters(
-    layer: WeightedLayer,
+    layer: Any,
     gain: float = 1.0,
     bias_scale: float = 0.1,
 ) -> None:
@@ -113,6 +139,7 @@ def set_init_parameters(
     Returns:
         None.
     """
+    layer = _resolve_layer(layer)
     nn.init.xavier_uniform_(layer.weight, gain=gain)
     if layer.bias is not None:
         lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
