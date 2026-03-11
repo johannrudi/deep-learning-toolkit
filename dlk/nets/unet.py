@@ -2,7 +2,7 @@
 
 import math
 from abc import abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -10,6 +10,12 @@ import torch.nn as nn
 
 import dlk.nets.conv1d
 import dlk.nets.conv2d
+from dlk.nets.utils import (
+    ConvFactory,
+    ModuleFactory,
+    NormalizationFactory,
+    SampleFactory,
+)
 
 # --------------------------------------
 # UNet (2025)
@@ -22,8 +28,8 @@ def _create_level_blocks(
     kernel_size: int,
     activation: nn.Module | None = None,
     dropout: nn.Module | None = None,
-    with_LevelBlock: Callable[..., nn.Module] | None = None,
-    with_Normalization: Callable[[int], nn.Module] | None = None,
+    with_LevelBlock: ModuleFactory | None = None,
+    with_Normalization: NormalizationFactory | None = None,
     **conv_kwargs: Any,
 ) -> list[nn.Module]:
     """Create the convolutional blocks used in one UNet level.
@@ -108,10 +114,10 @@ class UNetXd_2025(nn.Module):
         output_activation: nn.Module | None = None,
         use_dropout: float | bool = False,
         # dimension dependent classes
-        with_Downsample: Callable[..., nn.Module] | None = None,
-        with_Upsample: Callable[..., nn.Module] | None = None,
-        with_LevelBlock: Callable[..., nn.Module] | None = None,
-        with_Normalization: Callable[[int], nn.Module] | None = None,
+        with_Downsample: ModuleFactory | None = None,
+        with_Upsample: ModuleFactory | None = None,
+        with_LevelBlock: ModuleFactory | None = None,
+        with_Normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
         # set default kwargs containers
@@ -198,7 +204,7 @@ class UNetXd_2025(nn.Module):
         #
         # create downsample levels
         #
-        ch_down_all = list()  # initialize channels of all layers (incl. downsample)
+        # UNUSED: ch_down_all = list()  # initialize channels of all layers (incl. downsample)
         self.down_levels = nn.ModuleList()
         for l, (channels, kernel_size) in enumerate(
             zip(down_levels_conv_channels, down_levels_conv_kernels)
@@ -344,9 +350,9 @@ class UNetXd_2025(nn.Module):
         Returns:
             torch.Tensor: Output tensor with `output_channels`.
         """
-        assert x.size(1) == self.input_channels, (
-            f"expected {self.input_channels} input channels, got {x.size(1)}"
-        )
+        assert (
+            x.size(1) == self.input_channels
+        ), f"expected {self.input_channels} input channels, got {x.size(1)}"
         # input layer
         h = self.input_block(x)
         # downsample levels
@@ -426,6 +432,7 @@ def _zero_module(module: nn.Module) -> nn.Module:
         p.detach().zero_()
     return module
 
+
 def timestep_embedding(
     timesteps: torch.Tensor, dim: int, max_period: int = 10000
 ) -> torch.Tensor:
@@ -462,9 +469,7 @@ class EmbedModule(nn.Module):
     """Define an interface for modules that consume an auxiliary embedding."""
 
     @abstractmethod
-    def forward(
-        self, x: torch.Tensor, emb: torch.Tensor | None
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, emb: torch.Tensor | None) -> torch.Tensor:
         """Apply the module to `x`, optionally conditioned on `emb`."""
         raise NotImplementedError
 
@@ -501,7 +506,7 @@ class ResBlock2d_EmbedBlock(dlk.nets.conv2d.ResBlock, EmbedModule):
         output_channels: int | None = None,
         use_conv: bool = False,
         use_scale_shift_norm: bool = False,
-        normalization: Callable[[int], nn.Module] | None = None,
+        normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__(
             input_channels,
@@ -562,7 +567,7 @@ class AttentionBlock(nn.Module):
         self,
         channels: int,
         num_heads: int = 1,
-        normalization: Callable[[int], nn.Module] | None = None,
+        normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
         self.channels = channels
@@ -570,7 +575,7 @@ class AttentionBlock(nn.Module):
             num_heads  # TODO probably num_heads need to be used in dim of self.qkv
         )
 
-        self.norm = normalization(channels)
+        self.norm = normalization(channels) if normalization is not None else None
         self.qkv = nn.Conv1d(channels, channels * 3, 1)
         self.attention = QKVAttention()
         self.proj_out = _zero_module(nn.Conv1d(channels, channels, 1))
@@ -578,7 +583,9 @@ class AttentionBlock(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
-        qkv = self.qkv(self.norm(x))
+        if self.norm is not None:
+            x = self.norm(x)
+        qkv = self.qkv(x)
         qkv = qkv.reshape(b * self.num_heads, -1, qkv.shape[2])
         h = self.attention(qkv)
         h = h.reshape(b, -1, h.shape[-1])
@@ -672,12 +679,12 @@ class UNetXd_2021_idd(nn.Module):
         num_heads_upsample: int = -1,
         time_embed_dim: int | None = None,
         # dimension dependent classes
-        with_InputLayer: Callable[[int, int], nn.Module] | None = None,
-        with_OutputLayer: Callable[[int, int], nn.Module] | None = None,
-        with_Downsample: Callable[[int, int, int], nn.Module] | None = None,
-        with_Upsample: Callable[[int, int, int], nn.Module] | None = None,
-        with_LevelBlock: Callable[..., nn.Module] | None = None,
-        with_Normalization: Callable[[int], nn.Module] | None = None,
+        with_InputLayer: ConvFactory | None = None,
+        with_OutputLayer: ConvFactory | None = None,
+        with_Downsample: SampleFactory | None = None,
+        with_Upsample: SampleFactory | None = None,
+        with_LevelBlock: ModuleFactory | None = None,
+        with_Normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
         attention_levels = [] if attention_levels is None else list(attention_levels)
@@ -713,7 +720,7 @@ class UNetXd_2021_idd(nn.Module):
             )
             # create label embedding layers
             if self.num_classes is not None:
-                self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+                self.label_emb = nn.Embedding(self.num_classes, time_embed_dim)
         #
         # create downsample blocks
         #
@@ -854,7 +861,10 @@ class UNet1d_2021(UNetXd_2021_idd):
     """Instantiate the 1D UNet 2021 variant."""
 
     def __init__(
-        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+        self,
+        *args: Any,
+        internal_channels: int = 32,
+        **kwargs: Any,
     ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(
@@ -898,7 +908,10 @@ class UNet2d_2021(UNetXd_2021_idd):
     """Instantiate the 2D UNet 2021 variant."""
 
     def __init__(
-        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+        self,
+        *args: Any,
+        internal_channels: int = 32,
+        **kwargs: Any,
     ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv2d(
@@ -942,7 +955,10 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
     """Instantiate the 2D UNet 2021 variant with timestep conditioning."""
 
     def __init__(
-        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+        self,
+        *args: Any,
+        internal_channels: int = 32,
+        **kwargs: Any,
     ) -> None:
         time_embed_dim = 4 * internal_channels
 
@@ -1026,12 +1042,12 @@ class EncoderNetXd_2021_idd(nn.Module):
         num_heads_upsample: int = -1,
         time_embed_dim: int | None = None,
         # dimension dependent classes
-        with_InputLayer: Callable[[int, int], nn.Module] | None = None,
-        with_OutputLayer: Callable[[int, int], nn.Module] | None = None,
-        with_Downsample: Callable[[int, int, int], nn.Module] | None = None,
-        with_Upsample: Callable[[int, int, int], nn.Module] | None = None,
-        with_LevelBlock: Callable[..., nn.Module] | None = None,
-        with_Normalization: Callable[[int], nn.Module] | None = None,
+        with_InputLayer: ConvFactory | None = None,
+        with_OutputLayer: ConvFactory | None = None,
+        with_Downsample: SampleFactory | None = None,
+        with_Upsample: SampleFactory | None = None,
+        with_LevelBlock: ModuleFactory | None = None,
+        with_Normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
         attention_levels = [] if attention_levels is None else list(attention_levels)
@@ -1067,7 +1083,7 @@ class EncoderNetXd_2021_idd(nn.Module):
             )
             # create label embedding layers
             if self.num_classes is not None:
-                self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+                self.label_emb = nn.Embedding(self.num_classes, time_embed_dim)
         #
         # create downsample blocks
         #
@@ -1197,12 +1213,12 @@ class DecoderNetXd_2021_idd(nn.Module):
         num_heads_upsample: int = -1,
         time_embed_dim: int | None = None,
         # dimension dependent classes
-        with_InputLayer: Callable[[int, int], nn.Module] | None = None,
-        with_OutputLayer: Callable[[int, int], nn.Module] | None = None,
-        with_Downsample: Callable[[int, int, int], nn.Module] | None = None,
-        with_Upsample: Callable[[int, int, int], nn.Module] | None = None,
-        with_LevelBlock: Callable[..., nn.Module] | None = None,
-        with_Normalization: Callable[[int], nn.Module] | None = None,
+        with_InputLayer: ConvFactory | None = None,
+        with_OutputLayer: ConvFactory | None = None,
+        with_Downsample: SampleFactory | None = None,
+        with_Upsample: SampleFactory | None = None,
+        with_LevelBlock: ModuleFactory | None = None,
+        with_Normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
         attention_levels = [] if attention_levels is None else list(attention_levels)
@@ -1238,7 +1254,7 @@ class DecoderNetXd_2021_idd(nn.Module):
             )
             # create label embedding layers
             if self.num_classes is not None:
-                self.label_emb = nn.Embedding(num_classes, time_embed_dim)
+                self.label_emb = nn.Embedding(self.num_classes, time_embed_dim)
         #
         # create middle block
         #
@@ -1336,7 +1352,10 @@ class EncoderNet1d_2021(EncoderNetXd_2021_idd):
     """Instantiate the 1D encoder variant derived from the 2021 UNet."""
 
     def __init__(
-        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+        self,
+        *args: Any,
+        internal_channels: int = 32,
+        **kwargs: Any,
     ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(
@@ -1380,7 +1399,10 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
     """Instantiate the 1D decoder variant derived from the 2021 UNet."""
 
     def __init__(
-        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+        self,
+        *args: Any,
+        internal_channels: int = 32,
+        **kwargs: Any,
     ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(
@@ -1418,5 +1440,3 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
             with_Normalization=_Normalization,
             **kwargs,
         )
-
-

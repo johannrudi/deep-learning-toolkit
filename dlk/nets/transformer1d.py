@@ -1,7 +1,5 @@
 """1D transformer networks for sequence modeling with optional channel-wise attention."""
 
-from __future__ import annotations
-
 import math
 from collections.abc import Sequence
 

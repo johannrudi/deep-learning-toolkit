@@ -3,7 +3,7 @@
 import logging
 import math
 from collections import OrderedDict
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from typing import Any, cast
 
 import torch
@@ -11,6 +11,8 @@ import torch.nn as nn
 
 from dlk.nets.mlp import MLPResNet
 from dlk.nets.utils import (
+    ModuleFactory,
+    NormalizationFactory,
     WeightedLayer,
     get_gain,
     set_init_parameters,
@@ -20,14 +22,6 @@ from dlk.nets.utils import (
 # TODO: old code, decide what to do
 # def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
 #     return int((in_length + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1)
-
-# --------------------------------------
-# Types
-# --------------------------------------
-
-ConvFactory1D = Callable[..., nn.Module]
-
-# --------------------------------------
 
 
 # --------------------------------------
@@ -157,11 +151,11 @@ class ConvNet(nn.Module):
         # initialize hidden convolutional layers
         gain = get_gain(self.hidden_conv_layers_activation, default="conv1d")
         for layer in self.hidden_conv_layers:
-            set_init_parameters(cast(WeightedLayer, layer), gain)
+            set_init_parameters(cast(nn.Conv1d, layer), gain)
         # initialize hidden dense layers
         gain = get_gain(self.hidden_dense_layers_activation, default="conv1d")
         for layer in self.hidden_dense_layers:
-            set_init_parameters(cast(WeightedLayer, layer), gain)
+            set_init_parameters(cast(nn.Linear, layer), gain)
         # initialize output layer
         gain = get_gain(self.output_layer_activation, default="conv1d")
         if self.output_layer is not None:
@@ -187,7 +181,7 @@ class ConvResNet(nn.Module):
         input_channels: int,
         conv_resnet_params: dict[str, Any] | None = None,
         mlp_resnet_params: dict[str, Any] | None = None,
-        with_Conv: ConvFactory1D = nn.Conv1d,
+        with_Conv: ModuleFactory = nn.Conv1d,
     ) -> None:
         super().__init__()
         # set from arguments
@@ -546,16 +540,16 @@ class UNetResBlock(nn.Module):
         input_channels: int,
         output_channels: int | None = None,
         use_conv: bool = False,
-        normalization: Callable[[int], nn.Module] | None = None,
+        with_normalization: NormalizationFactory | None = None,
     ) -> None:
         super().__init__()
-        if normalization is None:
-            normalization = Normalization
+        if with_normalization is None:
+            with_normalization = Normalization
         self.input_channels = input_channels
         self.output_channels = output_channels or input_channels
         # create input layers
         self.in_layers = nn.Sequential(
-            normalization(input_channels),
+            with_normalization(input_channels),
             nn.SiLU(),
             nn.Conv1d(
                 input_channels,
@@ -567,7 +561,7 @@ class UNetResBlock(nn.Module):
         )
         # create output layers
         self.out_layers = nn.Sequential(
-            normalization(self.output_channels),
+            with_normalization(self.output_channels),
             nn.SiLU(),
             set_zero_parameters(
                 nn.Conv1d(
@@ -648,7 +642,7 @@ class MultiLevelBlock(nn.Module):
         skip_connection: bool = False,
         interp_mode: str = "nearest-exact",
         logger: logging.Logger = logging.getLogger("dlk.nets.conv1d.MultiLevelBlock"),
-        with_Conv: ConvFactory1D = nn.Conv1d,
+        with_Conv: ModuleFactory = nn.Conv1d,
         **conv_kwargs: Any,
     ) -> None:
         super().__init__()

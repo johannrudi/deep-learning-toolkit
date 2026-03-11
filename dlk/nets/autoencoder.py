@@ -1,9 +1,9 @@
 """Autoencoder network wrapper that composes encoder and decoder modules."""
 
-from collections.abc import Callable
-
 import torch
 import torch.nn as nn
+
+from dlk.nets.utils import TensorTransform
 
 
 class Autoencoder(nn.Module):
@@ -11,9 +11,7 @@ class Autoencoder(nn.Module):
         self,
         e_net: nn.Module,
         d_net: nn.Module,
-        output_layer_transformation: (
-            Callable[[torch.Tensor], torch.Tensor] | None
-        ) = None,  # TODO: make this a type in utils.py
+        output_layer_transformation: TensorTransform | None = None,
     ) -> None:
         """Initialize the autoencoder wrapper.
 

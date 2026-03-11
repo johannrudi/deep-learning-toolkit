@@ -1,17 +1,18 @@
 """2D convolutional network architectures and reusable building blocks."""
 
-from collections.abc import Callable, Sequence
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
 
-from dlk.nets.utils import get_gain, set_init_parameters, set_zero_parameters
-
-Tensor = torch.Tensor  # TODO: use torch.Tensor directly instead
-# TODO: put general purpose types into nets/utils.py
-Activation = Callable[[Tensor], Tensor] | nn.Module
-NormalizationFactory = Callable[[int], nn.Module]
+from dlk.nets.utils import (
+    Activation,
+    NormalizationFactory,
+    get_gain,
+    set_init_parameters,
+    set_zero_parameters,
+)
 
 # --------------------------------------
 # Convolutional Nets
@@ -106,7 +107,7 @@ class ConvNet(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the model function to the input tensor.
 
         Args:
@@ -151,11 +152,11 @@ class ConvNet(nn.Module):
         # initialize hidden convolutional layers
         gain = get_gain(self.hidden_conv_layers_activation, default="conv2d")
         for layer in self.hidden_conv_layers:
-            set_init_parameters(layer, gain)
+            set_init_parameters(cast(nn.Conv2d, layer), gain)
         # initialize hidden dense layers
         gain = get_gain(self.hidden_dense_layers_activation, default="conv2d")
         for layer in self.hidden_dense_layers:
-            set_init_parameters(layer, gain)
+            set_init_parameters(cast(nn.Linear, layer), gain)
         # initialize output layer
         gain = get_gain(self.output_layer_activation, default="conv2d")
         if self.output_layer is not None:
@@ -261,7 +262,7 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the model function to the input tensor.
 
         Args:
@@ -306,15 +307,16 @@ class ConvUpsampleNet_Reshuffle(nn.Module):
         # initialize hidden convolutional layers before upsampling
         gain = get_gain(self.pre_up_layers_activation, default="conv2d")
         for layer in self.pre_up_layers:
-            set_init_parameters(layer, gain)
+            set_init_parameters(cast(nn.Conv2d, layer), gain)
         # initialize hidden convolutional layers after upsampling
         if self.post_up_layers:
             gain = get_gain(self.post_up_layers_activation, default="conv2d")
             set_init_parameters(self.up_layer, gain)
             for layer in self.post_up_layers[:-1]:
-                set_init_parameters(layer, gain)
+                set_init_parameters(cast(nn.Conv2d, layer), gain)
             set_init_parameters(
-                self.post_up_layers[-1], get_gain(None, default="conv2d")
+                cast(nn.Conv2d, self.post_up_layers[-1]),
+                get_gain(None, default="conv2d"),
             )
         else:
             set_init_parameters(self.up_layer, get_gain(None, default="conv2d"))
@@ -382,7 +384,7 @@ class ConvUpsampleNet_Interpolate(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the model function to the input tensor.
 
         Args:
@@ -423,8 +425,11 @@ class ConvUpsampleNet_Interpolate(nn.Module):
         """Initialize trainable parameters with activation-aware gains."""
         gain = get_gain(self.conv_layers_activation, default="conv2d")
         for layer in self.conv_layers[:-1]:
-            set_init_parameters(layer, gain)
-        set_init_parameters(self.conv_layers[-1], get_gain(None, default="conv2d"))
+            set_init_parameters(cast(nn.Conv2d, layer), gain)
+        set_init_parameters(
+            cast(nn.Conv2d, self.conv_layers[-1]),
+            get_gain(None, default="conv2d"),
+        )
 
 
 # --------------------------------------
@@ -475,7 +480,7 @@ class Downsample(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply downsampling to an input tensor.
 
         Args:
@@ -548,7 +553,7 @@ class Upsample(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply upsampling to an input tensor.
 
         Args:
@@ -627,7 +632,7 @@ class LevelBlock(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the residual level block to an input tensor.
 
         Args:
@@ -736,7 +741,7 @@ class ResBlock(nn.Module):
         else:
             self.skip_connection = nn.Conv2d(input_channels, self.output_channels, 1)
 
-    def forward(self, x: Tensor) -> Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply the residual block to an input tensor.
 
         Args:

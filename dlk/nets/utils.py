@@ -1,6 +1,7 @@
 """Provide utilities for layer initialization and parameter accounting."""
 
 import math
+from collections.abc import Callable
 from typing import Literal, Protocol, cast
 
 import torch
@@ -11,6 +12,8 @@ from prettytable import PrettyTable
 # Types
 # --------------------------------------
 
+TensorTransform = Callable[[torch.Tensor], torch.Tensor]
+Activation = TensorTransform | nn.Module
 Nonlinearity = Literal[
     "linear",
     "conv1d",
@@ -25,6 +28,14 @@ Nonlinearity = Literal[
     "leaky_relu",
     "selu",
 ]
+
+SUPPORTED_NONLINEARITIES: set[str] = set(Nonlinearity.__args__)
+
+ModuleFactory = Callable[..., nn.Module]
+ConvFactory = Callable[[int, int], nn.Module]
+LinearFactory = Callable[[int, int], nn.Module]
+SampleFactory = Callable[[int, int, int], nn.Module]
+NormalizationFactory = Callable[[int], nn.Module]
 
 
 class WeightedLayer(Protocol):
@@ -42,8 +53,6 @@ class WeightedLayer(Protocol):
 
 
 # --------------------------------------
-
-SUPPORTED_NONLINEARITIES: set[str] = set(Nonlinearity.__args__)
 
 
 def _resolve_nonlinearity(

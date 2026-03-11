@@ -1,13 +1,13 @@
 """Define experimental transformer components for sequence-to-vector prediction."""
 
 import math
-from collections.abc import Callable
 from typing import Any
 
 import torch
 import torch.nn as nn
 
 from dlk.nets.mlp import MLPNet
+from dlk.nets.utils import Activation
 
 
 class DataEmbedding(nn.Module):
@@ -146,7 +146,7 @@ class Transformer1d0dModel(nn.Module):
         n_encoder_layers: int = 6,
         n_decoder_layers: int = 6,
         feedforward_size: int = 2048,
-        transformer_activation: str | Callable[[torch.Tensor], torch.Tensor] = "relu",
+        transformer_activation: str | Activation = "relu",
         transformer_kwargs: dict[str, Any] | None = None,
         output_layer_activation: nn.Module | None = None,
         use_dropout: float | bool = False,
