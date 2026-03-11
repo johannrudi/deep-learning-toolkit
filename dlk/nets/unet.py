@@ -1,10 +1,9 @@
-"""UNet
-
-Note: This code is under development.
-"""
+"""UNet-family architectures and encoder/decoder variants for 1D and 2D data."""
 
 import math
 from abc import abstractmethod
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -18,16 +17,33 @@ import dlk.nets.conv2d
 
 
 def _create_level_blocks(
-    input_channels_all,
-    output_channels_all,
-    kernel_size,
-    activation=None,
-    dropout=None,
-    with_LevelBlock=None,
-    with_Normalization=None,
-    **conv_kwargs,
-):
-    block = list()
+    input_channels_all: Sequence[int],
+    output_channels_all: Sequence[int],
+    kernel_size: int,
+    activation: nn.Module | None = None,
+    dropout: nn.Module | None = None,
+    with_LevelBlock: Callable[..., nn.Module] | None = None,
+    with_Normalization: Callable[[int], nn.Module] | None = None,
+    **conv_kwargs: Any,
+) -> list[nn.Module]:
+    """Create the convolutional blocks used in one UNet level.
+
+    Args:
+        input_channels_all: Input channels for each block in the level.
+        output_channels_all: Output channels for each block in the level.
+        kernel_size: Kernel size used by each block.
+        activation: Activation module applied in each block.
+        dropout: Dropout module applied in each block.
+        with_LevelBlock: Factory that creates one convolutional block.
+        with_Normalization: Factory that creates normalization modules.
+        **conv_kwargs: Additional keyword arguments forwarded to each block.
+
+    Returns:
+        list[nn.Module]: Created blocks for the level.
+    """
+    assert with_LevelBlock is not None
+    assert with_Normalization is not None
+    block: list[nn.Module] = []
     for ch_in, ch_out in zip(input_channels_all, output_channels_all):
         block.append(
             with_LevelBlock(
@@ -44,70 +60,108 @@ def _create_level_blocks(
 
 
 class UNetXd_2025(nn.Module):
-    r"""
-    UNet.
+    """Define a configurable UNet architecture for N-dimensional convolutional blocks.
 
     Args:
-        input_channels:  number of channels of inputs
-        output_channels: number of channels of outputs
+        input_channels: Number of channels in the input tensor.
+        output_channels: Number of channels in the output tensor.
+        input_conv_kernels: Kernel size used in the input block.
+        input_conv_kwargs: Extra keyword arguments for the input block.
+        down_levels_conv_channels: Channel configuration for down path levels.
+        down_levels_conv_kernels: Kernel sizes for down path levels.
+        down_levels_conv_kwargs: Extra keyword arguments for down path blocks.
+        coarse_level_conv_channels: Channel configuration for the bottleneck level.
+        coarse_level_conv_kernels: Kernel size for bottleneck blocks.
+        coarse_level_conv_kwargs: Extra keyword arguments for bottleneck blocks.
+        up_levels_conv_channels: Channel configuration for up path levels.
+        up_levels_conv_kernels: Kernel sizes for up path levels.
+        up_levels_conv_kwargs: Extra keyword arguments for up path blocks.
+        output_conv_kernels: Kernel size used in the output block.
+        output_conv_kwargs: Extra keyword arguments for the output block.
+        hidden_layers_activation: Activation used for hidden blocks.
+        output_activation: Activation used by the output block.
+        use_dropout: Dropout probability, or False to disable dropout.
+        with_Downsample: Factory for downsample layers.
+        with_Upsample: Factory for upsample layers.
+        with_LevelBlock: Factory for convolutional blocks.
+        with_Normalization: Factory for normalization modules.
     """
 
     def __init__(
         self,
-        input_channels,
-        output_channels,
-        input_conv_kernels=3,
-        input_conv_kwargs={},
-        down_levels_conv_channels=[2, 4, 8],
-        down_levels_conv_kernels=3,
-        down_levels_conv_kwargs={},
-        coarse_level_conv_channels=[16, 16],
-        coarse_level_conv_kernels=3,
-        coarse_level_conv_kwargs={},
-        up_levels_conv_channels=[8, 4, 2],
-        up_levels_conv_kernels=3,
-        up_levels_conv_kwargs={},
-        output_conv_kernels=3,
-        output_conv_kwargs={},
-        hidden_layers_activation=nn.ReLU(),
-        output_activation=None,
-        use_dropout=False,
+        input_channels: int,
+        output_channels: int,
+        input_conv_kernels: int = 3,
+        input_conv_kwargs: dict[str, Any] | None = None,
+        down_levels_conv_channels: Sequence[int | Sequence[int]] | None = None,
+        down_levels_conv_kernels: int | Sequence[int] = 3,
+        down_levels_conv_kwargs: dict[str, Any] | None = None,
+        coarse_level_conv_channels: Sequence[int] | None = None,
+        coarse_level_conv_kernels: int = 3,
+        coarse_level_conv_kwargs: dict[str, Any] | None = None,
+        up_levels_conv_channels: Sequence[int | Sequence[int]] | None = None,
+        up_levels_conv_kernels: int | Sequence[int] = 3,
+        up_levels_conv_kwargs: dict[str, Any] | None = None,
+        output_conv_kernels: int = 3,
+        output_conv_kwargs: dict[str, Any] | None = None,
+        hidden_layers_activation: nn.Module = nn.ReLU(),
+        output_activation: nn.Module | None = None,
+        use_dropout: float | bool = False,
         # dimension dependent classes
-        with_Downsample=None,
-        with_Upsample=None,
-        with_LevelBlock=None,
-        with_Normalization=None,
-    ):
+        with_Downsample: Callable[..., nn.Module] | None = None,
+        with_Upsample: Callable[..., nn.Module] | None = None,
+        with_LevelBlock: Callable[..., nn.Module] | None = None,
+        with_Normalization: Callable[[int], nn.Module] | None = None,
+    ) -> None:
         super().__init__()
+        # set default kwargs containers
+        input_conv_kwargs = {} if input_conv_kwargs is None else dict(input_conv_kwargs)
+        down_levels_conv_kwargs = (
+            {} if down_levels_conv_kwargs is None else dict(down_levels_conv_kwargs)
+        )
+        coarse_level_conv_kwargs = (
+            {} if coarse_level_conv_kwargs is None else dict(coarse_level_conv_kwargs)
+        )
+        up_levels_conv_kwargs = (
+            {} if up_levels_conv_kwargs is None else dict(up_levels_conv_kwargs)
+        )
+        output_conv_kwargs = (
+            {} if output_conv_kwargs is None else dict(output_conv_kwargs)
+        )
+        # set default channel configurations
+        if down_levels_conv_channels is None:
+            down_levels_conv_channels = [2, 4, 8]
+        if up_levels_conv_channels is None:
+            up_levels_conv_channels = [8, 4, 2]
+        if coarse_level_conv_channels is None:
+            coarse_level_conv_channels = [16, 16]
         # check dimension dependent classes
         assert with_Downsample is not None
         assert with_Upsample is not None
         assert with_LevelBlock is not None
         assert with_Normalization is not None
-        # check channels
-        assert isinstance(down_levels_conv_channels, list), type(
-            down_levels_conv_channels
-        )
-        assert isinstance(up_levels_conv_channels, list), type(up_levels_conv_channels)
-        assert isinstance(coarse_level_conv_channels, list), type(
-            coarse_level_conv_channels
-        )
-        for l, channels in enumerate(down_levels_conv_channels):
-            if not isinstance(channels, list):
-                down_levels_conv_channels[l] = [channels]
-        for l, channels in enumerate(up_levels_conv_channels):
-            if not isinstance(channels, list):
-                up_levels_conv_channels[l] = [channels]
+        # normalize channel configurations
+        down_levels_conv_channels = [
+            list(channels) if isinstance(channels, (list, tuple)) else [channels]
+            for channels in down_levels_conv_channels
+        ]
+        up_levels_conv_channels = [
+            list(channels) if isinstance(channels, (list, tuple)) else [channels]
+            for channels in up_levels_conv_channels
+        ]
+        coarse_level_conv_channels = list(coarse_level_conv_channels)
         # set number of layers
         assert len(down_levels_conv_channels) == len(up_levels_conv_channels)
         n_levels = len(down_levels_conv_channels)
         # check kernels
-        if isinstance(down_levels_conv_kernels, list):
+        if isinstance(down_levels_conv_kernels, (list, tuple)):
             assert len(down_levels_conv_kernels) == n_levels
+            down_levels_conv_kernels = list(down_levels_conv_kernels)
         else:  # otherwise assume single integer
             down_levels_conv_kernels = [down_levels_conv_kernels] * n_levels
-        if isinstance(up_levels_conv_kernels, list):
+        if isinstance(up_levels_conv_kernels, (list, tuple)):
             assert len(up_levels_conv_kernels) == n_levels
+            up_levels_conv_kernels = list(up_levels_conv_kernels)
         else:  # otherwise assume single integer
             up_levels_conv_kernels = [up_levels_conv_kernels] * n_levels
         assert isinstance(coarse_level_conv_kernels, int), type(
@@ -281,13 +335,18 @@ class UNetXd_2025(nn.Module):
         # initialize parameters
         self.init_parameters()
 
-    def forward(self, x):
-        r"""Applies the network's forward function: y = net(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the UNet forward pass.
 
         Args:
-            x: input tensor
+            x: Input tensor with channel dimension equal to `input_channels`.
+
+        Returns:
+            torch.Tensor: Output tensor with `output_channels`.
         """
-        assert x.size(1) == self.input_channels
+        assert x.size(1) == self.input_channels, (
+            f"expected {self.input_channels} input channels, got {x.size(1)}"
+        )
         # input layer
         h = self.input_block(x)
         # downsample levels
@@ -309,8 +368,8 @@ class UNetXd_2025(nn.Module):
         y = self.output_block(h)
         return y
 
-    def init_parameters(self):
-        r"""Initializes the values of trainable parameters."""
+    def init_parameters(self) -> None:
+        """initialize values of trainable parameters in all submodules."""
         # input layer
         self.input_block.init_parameters()
         # downsample levels
@@ -343,7 +402,9 @@ class UNetXd_2025(nn.Module):
 
 
 class UNet2d_2025(UNetXd_2025):
-    def __init__(self, *args, **kwargs):
+    """Instantiate the 2D variant of `UNetXd_2025`."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(
             *args,
             **kwargs,
@@ -359,18 +420,16 @@ class UNet2d_2025(UNetXd_2025):
 # --------------------------------------
 
 
-def _zero_module(module):
-    """
-    Zero out the parameters of a module and return it.
-    """
+def _zero_module(module: nn.Module) -> nn.Module:
+    """Zero out all trainable parameters in `module` and return it."""
     for p in module.parameters():
         p.detach().zero_()
     return module
 
-
-def timestep_embedding(timesteps, dim, max_period=10000):
-    """
-    Create sinusoidal timestep embeddings.
+def timestep_embedding(
+    timesteps: torch.Tensor, dim: int, max_period: int = 10000
+) -> torch.Tensor:
+    """Create sinusoidal embeddings for a batch of timesteps.
 
     Compute embedding `emb` as:
 
@@ -378,11 +437,13 @@ def timestep_embedding(timesteps, dim, max_period=10000):
         x[i,j] = ts[i] * fq[j],  for i=0,..,N, j=0,..,d/2
         emb = [cos(x) , sin(x)]
 
-    :param timesteps: a 1-D Tensor of N indices, one per batch element.
-                      These may be fractional.
-    :param dim: the dimension of the output.
-    :param max_period: controls the minimum frequency of the embeddings.
-    :return: an [N x dim] Tensor of positional embeddings.
+    Args:
+        timesteps: One-dimensional tensor with one timestep per batch element.
+        dim: Embedding output dimension.
+        max_period: Controls the minimum frequency of the embeddings.
+
+    Returns:
+        torch.Tensor: Positional embeddings of shape `[N, dim]`.
     """
     half = dim // 2
     freqs = torch.exp(
@@ -398,24 +459,20 @@ def timestep_embedding(timesteps, dim, max_period=10000):
 
 
 class EmbedModule(nn.Module):
-    """
-    Any module where forward() takes embeddings as a second argument.
-    """
+    """Define an interface for modules that consume an auxiliary embedding."""
 
     @abstractmethod
-    def forward(self, x, emb):
-        """
-        Apply the module to `x` given `emb` embeddings.
-        """
+    def forward(
+        self, x: torch.Tensor, emb: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Apply the module to `x`, optionally conditioned on `emb`."""
+        raise NotImplementedError
 
 
 class EmbedSequential(EmbedModule, nn.Sequential):
-    """
-    A sequential module that passes embeddings to the children that
-    support it as an extra input.
-    """
+    """Pass embeddings through child modules that implement `EmbedModule`."""
 
-    def forward(self, x, emb):
+    def forward(self, x: torch.Tensor, emb: torch.Tensor | None) -> torch.Tensor:
         for layer in self:
             if isinstance(layer, EmbedModule):
                 assert emb is not None
@@ -439,13 +496,13 @@ class ResBlock2d_EmbedBlock(dlk.nets.conv2d.ResBlock, EmbedModule):
 
     def __init__(
         self,
-        input_channels,
-        emb_channels,
-        output_channels=None,
-        use_conv=False,
-        use_scale_shift_norm=False,
-        normalization=None,
-    ):
+        input_channels: int,
+        emb_channels: int | None,
+        output_channels: int | None = None,
+        use_conv: bool = False,
+        use_scale_shift_norm: bool = False,
+        normalization: Callable[[int], nn.Module] | None = None,
+    ) -> None:
         super().__init__(
             input_channels,
             output_channels=output_channels,
@@ -465,14 +522,8 @@ class ResBlock2d_EmbedBlock(dlk.nets.conv2d.ResBlock, EmbedModule):
                 nn.Linear(emb_channels, emb_out_channels),
             )
 
-    def forward(self, x, emb):
-        """
-        Apply the block to a Tensor, conditioned on a timestep embedding.
-
-        :param x: an [N x C x ...] Tensor of features.
-        :param emb: an [N x emb_channels] Tensor of timestep embeddings.
-        :return: an [N x C x ...] Tensor of outputs.
-        """
+    def forward(self, x: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
+        """Apply the residual block conditioned on a timestep embedding."""
         assert x.size(0) == emb.size(0)
         assert x.size(1) == self.input_channels
         assert emb.size(1) == self.emb_channels
@@ -497,8 +548,7 @@ class ResBlock2d_EmbedBlock(dlk.nets.conv2d.ResBlock, EmbedModule):
 
 
 class AttentionBlock(nn.Module):
-    """
-    An attention block that allows spatial positions to attend to each other.
+    """An attention block that allows spatial positions to attend to each other.
 
     Computes:
 
@@ -508,7 +558,12 @@ class AttentionBlock(nn.Module):
         y = x + h
     """
 
-    def __init__(self, channels, num_heads=1, normalization=None):
+    def __init__(
+        self,
+        channels: int,
+        num_heads: int = 1,
+        normalization: Callable[[int], nn.Module] | None = None,
+    ) -> None:
         super().__init__()
         self.channels = channels
         self.num_heads = (
@@ -520,7 +575,7 @@ class AttentionBlock(nn.Module):
         self.attention = QKVAttention()
         self.proj_out = _zero_module(nn.Conv1d(channels, channels, 1))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         b, c, *spatial = x.shape
         x = x.reshape(b, c, -1)
         qkv = self.qkv(self.norm(x))
@@ -536,9 +591,8 @@ class QKVAttention(nn.Module):
     A module which performs QKV attention.
     """
 
-    def forward(self, qkv):
-        """
-        Apply QKV attention.
+    def forward(self, qkv: torch.Tensor) -> torch.Tensor:
+        """Apply QKV attention.
 
         Input: q, k, v
         Computes:
@@ -546,8 +600,11 @@ class QKVAttention(nn.Module):
             s = (#channels)^(-1/4)
             y = softmax(q*s * k^T*s) * v
 
-        :param qkv: an [N x (C * 3) x T] tensor of Qs, Ks, and Vs.
-        :return: an [N x C x T] tensor after attention.
+        Args:
+            qkv: Tensor with shape `[N, 3*C, T]` containing Q, K, and V.
+
+        Returns:
+            torch.Tensor: Attention output with shape `[N, C, T]`.
         """
         ch = qkv.shape[1] // 3
         q, k, v = torch.split(qkv, ch, dim=1)
@@ -559,10 +616,8 @@ class QKVAttention(nn.Module):
         return torch.einsum("bts,bcs->bct", weight, v)
 
     @staticmethod
-    def count_flops(model, _x, y):
-        """
-        A counter for the `thop` package to count the operations in an
-        attention operation.
+    def count_flops(model: Any, _x: Any, y: tuple[torch.Tensor]) -> None:
+        """Count attention FLOPs for `thop`.
 
         Meant to be used like:
 
@@ -574,7 +629,7 @@ class QKVAttention(nn.Module):
 
         """
         b, c, *spatial = y[0].shape
-        num_spatial = int(np.prod(spatial))
+        num_spatial = int(torch.prod(torch.tensor(spatial)).item())
         # We perform two matmuls with the same number of ops.
         # The first computes the weight matrix, the second computes
         # the combination of the value vectors.
@@ -583,46 +638,50 @@ class QKVAttention(nn.Module):
 
 
 class UNetXd_2021_idd(nn.Module):
-    r"""
-    UNet.
+    """Define a UNet backbone derived from the improved-diffusion architecture.
 
     Args:
-        input_channels:  number of channels of inputs
-        output_channels: number of channels of outputs
-        internal_channels: base channel count for the model.
-        num_res_blocks: number of residual blocks per downsample.
-        attention_levels: a collection of levels at which
-            attention will take place. May be a set, list, or tuple.
-            For example, if this contains 4, then at 4x downsampling, attention
-            will be used.
-
-        channel_mult: channel multiplier for each level of the UNet.
-        num_classes: if specified (as an int), then this model will be
-            class-conditional with `num_classes` classes.
-        num_heads: the number of attention heads in each attention layer.
+        input_channels: Number of channels in the input tensor.
+        output_channels: Number of channels in the output tensor.
+        internal_channels: Base channel count used by the network.
+        num_res_blocks: Number of residual blocks per level.
+        attention_levels: Levels where attention blocks are inserted.
+        channel_mult: Channel multiplier for each level.
+        num_classes: Number of classes for class-conditional mode.
+        num_heads: Number of attention heads in attention blocks.
+        num_heads_upsample: Number of attention heads used in up blocks.
+        time_embed_dim: Time embedding dimension. Disable with `None`.
+        with_InputLayer: Factory for the input projection layer.
+        with_OutputLayer: Factory for the output projection layer.
+        with_Downsample: Factory for downsample blocks.
+        with_Upsample: Factory for upsample blocks.
+        with_LevelBlock: Factory for residual-level blocks.
+        with_Normalization: Factory for normalization modules.
     """
 
     def __init__(
         self,
-        input_channels,
-        output_channels,
-        internal_channels,
-        num_res_blocks=1,
-        attention_levels=[],
-        channel_mult=(1, 2, 4, 8),
-        num_classes=None,
-        num_heads=1,
-        num_heads_upsample=-1,
-        time_embed_dim=None,
+        input_channels: int,
+        output_channels: int,
+        internal_channels: int,
+        num_res_blocks: int = 1,
+        attention_levels: Sequence[int] | None = None,
+        channel_mult: Sequence[int] = (1, 2, 4, 8),
+        num_classes: int | None = None,
+        num_heads: int = 1,
+        num_heads_upsample: int = -1,
+        time_embed_dim: int | None = None,
         # dimension dependent classes
-        with_InputLayer=None,
-        with_OutputLayer=None,
-        with_Downsample=None,
-        with_Upsample=None,
-        with_LevelBlock=None,
-        with_Normalization=None,
-    ):
+        with_InputLayer: Callable[[int, int], nn.Module] | None = None,
+        with_OutputLayer: Callable[[int, int], nn.Module] | None = None,
+        with_Downsample: Callable[[int, int, int], nn.Module] | None = None,
+        with_Upsample: Callable[[int, int, int], nn.Module] | None = None,
+        with_LevelBlock: Callable[..., nn.Module] | None = None,
+        with_Normalization: Callable[[int], nn.Module] | None = None,
+    ) -> None:
         super().__init__()
+        attention_levels = [] if attention_levels is None else list(attention_levels)
+        channel_mult = tuple(channel_mult)
         # check dimension dependent classes
         assert with_InputLayer is not None
         assert with_OutputLayer is not None
@@ -738,14 +797,21 @@ class UNetXd_2021_idd(nn.Module):
             with_OutputLayer(ch, output_channels),
         )
 
-    def forward(self, x, timesteps=None, y=None):
-        """
-        Apply the model to an input batch.
+    def forward(
+        self,
+        x: torch.Tensor,
+        timesteps: torch.Tensor | None = None,
+        y: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Apply the model to an input batch.
 
-        :param x: an [N x C x ...] Tensor of inputs.
-        :param timesteps: a 1-D batch of timesteps.
-        :param y: an [N] Tensor of labels, if class-conditional.
-        :return: an [N x C x ...] Tensor of outputs.
+        Args:
+            x: Input tensor with shape `[N, C, ...]`.
+            timesteps: One-dimensional tensor of timesteps.
+            y: Optional class labels for conditional models.
+
+        Returns:
+            torch.Tensor: Output tensor with shape `[N, C, ...]`.
         """
         if timesteps is not None:
             assert (
@@ -779,15 +845,17 @@ class UNetXd_2021_idd(nn.Module):
         return self.output_layer(h)
 
     @property
-    def inner_dtype(self):
-        """
-        Get the dtype used by the torso of the model.
-        """
+    def inner_dtype(self) -> torch.dtype:
+        """Get the dtype used by the torso of the model."""
         return next(self.input_blocks.parameters()).dtype
 
 
 class UNet1d_2021(UNetXd_2021_idd):
-    def __init__(self, *args, internal_channels=32, **kwargs):
+    """Instantiate the 1D UNet 2021 variant."""
+
+    def __init__(
+        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+    ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(
                 _input_channels,
@@ -827,7 +895,11 @@ class UNet1d_2021(UNetXd_2021_idd):
 
 
 class UNet2d_2021(UNetXd_2021_idd):
-    def __init__(self, *args, internal_channels=32, **kwargs):
+    """Instantiate the 2D UNet 2021 variant."""
+
+    def __init__(
+        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+    ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv2d(
                 _input_channels,
@@ -867,7 +939,11 @@ class UNet2d_2021(UNetXd_2021_idd):
 
 
 class UNet2d_2021_idd(UNetXd_2021_idd):
-    def __init__(self, *args, internal_channels=32, **kwargs):
+    """Instantiate the 2D UNet 2021 variant with timestep conditioning."""
+
+    def __init__(
+        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+    ) -> None:
         time_embed_dim = 4 * internal_channels
 
         def _with_InputLayer(_input_channels, _internal_channels):
@@ -916,46 +992,50 @@ class UNet2d_2021_idd(UNetXd_2021_idd):
 
 
 class EncoderNetXd_2021_idd(nn.Module):
-    r"""
-    Encoder Net derived from UNetXd_2021_idd.
+    """Define the encoder half derived from `UNetXd_2021_idd`.
 
     Args:
-        input_channels:  number of channels of inputs
-        output_channels: number of channels of outputs
-        internal_channels: base channel count for the model.
-        num_res_blocks: number of residual blocks per downsample.
-        attention_levels: a collection of levels at which
-            attention will take place. May be a set, list, or tuple.
-            For example, if this contains 4, then at 4x downsampling, attention
-            will be used.
-
-        channel_mult: channel multiplier for each level of the UNet.
-        num_classes: if specified (as an int), then this model will be
-            class-conditional with `num_classes` classes.
-        num_heads: the number of attention heads in each attention layer.
+        input_channels: Number of channels in the input tensor.
+        output_channels: Number of channels in the output tensor.
+        internal_channels: Base channel count used by the network.
+        num_res_blocks: Number of residual blocks per level.
+        attention_levels: Levels where attention blocks are inserted.
+        channel_mult: Channel multiplier for each level.
+        num_classes: Number of classes for class-conditional mode.
+        num_heads: Number of attention heads in attention blocks.
+        num_heads_upsample: Included for API compatibility with UNet classes.
+        time_embed_dim: Time embedding dimension. Disable with `None`.
+        with_InputLayer: Factory for the input projection layer.
+        with_OutputLayer: Factory for the output projection layer.
+        with_Downsample: Factory for downsample blocks.
+        with_Upsample: Factory for upsample blocks.
+        with_LevelBlock: Factory for residual-level blocks.
+        with_Normalization: Factory for normalization modules.
     """
 
     def __init__(
         self,
-        input_channels,
-        output_channels,
-        internal_channels,
-        num_res_blocks=1,
-        attention_levels=[],
-        channel_mult=(1, 1, 1, 1),
-        num_classes=None,
-        num_heads=1,
-        num_heads_upsample=-1,
-        time_embed_dim=None,
+        input_channels: int,
+        output_channels: int,
+        internal_channels: int,
+        num_res_blocks: int = 1,
+        attention_levels: Sequence[int] | None = None,
+        channel_mult: Sequence[int] = (1, 1, 1, 1),
+        num_classes: int | None = None,
+        num_heads: int = 1,
+        num_heads_upsample: int = -1,
+        time_embed_dim: int | None = None,
         # dimension dependent classes
-        with_InputLayer=None,
-        with_OutputLayer=None,
-        with_Downsample=None,
-        with_Upsample=None,
-        with_LevelBlock=None,
-        with_Normalization=None,
-    ):
+        with_InputLayer: Callable[[int, int], nn.Module] | None = None,
+        with_OutputLayer: Callable[[int, int], nn.Module] | None = None,
+        with_Downsample: Callable[[int, int, int], nn.Module] | None = None,
+        with_Upsample: Callable[[int, int, int], nn.Module] | None = None,
+        with_LevelBlock: Callable[..., nn.Module] | None = None,
+        with_Normalization: Callable[[int], nn.Module] | None = None,
+    ) -> None:
         super().__init__()
+        attention_levels = [] if attention_levels is None else list(attention_levels)
+        channel_mult = tuple(channel_mult)
         # check dimension dependent classes
         assert with_InputLayer is not None
         assert with_OutputLayer is not None
@@ -1035,14 +1115,21 @@ class EncoderNetXd_2021_idd(nn.Module):
             with_OutputLayer(ch, output_channels),
         )
 
-    def forward(self, x, timesteps=None, y=None):
-        """
-        Apply the model to an input batch.
+    def forward(
+        self,
+        x: torch.Tensor,
+        timesteps: torch.Tensor | None = None,
+        y: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Apply the encoder to an input batch.
 
-        :param x: an [N x C x ...] Tensor of inputs.
-        :param timesteps: a 1-D batch of timesteps.
-        :param y: an [N] Tensor of labels, if class-conditional.
-        :return: an [N x C x ...] Tensor of outputs.
+        Args:
+            x: Input tensor with shape `[N, C, ...]`.
+            timesteps: One-dimensional tensor of timesteps.
+            y: Optional class labels for conditional models.
+
+        Returns:
+            torch.Tensor: Output tensor with shape `[N, C, ...]`.
         """
         if timesteps is not None:
             assert (
@@ -1070,54 +1157,56 @@ class EncoderNetXd_2021_idd(nn.Module):
         return self.output_layer(h)
 
     @property
-    def inner_dtype(self):
-        """
-        Get the dtype used by the torso of the model.
-        """
+    def inner_dtype(self) -> torch.dtype:
+        """Get the dtype used by the torso of the model."""
         return next(self.input_blocks.parameters()).dtype
 
 
 class DecoderNetXd_2021_idd(nn.Module):
-    r"""
-    Decoder Net derived from UNetXd_2021_idd.
+    """Define the decoder half derived from `UNetXd_2021_idd`.
 
     Args:
-        input_channels:  number of channels of inputs
-        output_channels: number of channels of outputs
-        internal_channels: base channel count for the model.
-        num_res_blocks: number of residual blocks per downsample.
-        attention_levels: a collection of levels at which
-            attention will take place. May be a set, list, or tuple.
-            For example, if this contains 4, then at 4x downsampling, attention
-            will be used.
-
-        channel_mult: channel multiplier for each level of the UNet.
-        num_classes: if specified (as an int), then this model will be
-            class-conditional with `num_classes` classes.
-        num_heads: the number of attention heads in each attention layer.
+        input_channels: Number of channels in the input tensor.
+        output_channels: Number of channels in the output tensor.
+        internal_channels: Base channel count used by the network.
+        num_res_blocks: Number of residual blocks per level.
+        attention_levels: Levels where attention blocks are inserted.
+        channel_mult: Channel multiplier for each level.
+        num_classes: Number of classes for class-conditional mode.
+        num_heads: Number of attention heads in attention blocks.
+        num_heads_upsample: Number of attention heads used in up blocks.
+        time_embed_dim: Time embedding dimension. Disable with `None`.
+        with_InputLayer: Factory for the input projection layer.
+        with_OutputLayer: Factory for the output projection layer.
+        with_Downsample: Factory for downsample blocks.
+        with_Upsample: Factory for upsample blocks.
+        with_LevelBlock: Factory for residual-level blocks.
+        with_Normalization: Factory for normalization modules.
     """
 
     def __init__(
         self,
-        input_channels,
-        output_channels,
-        internal_channels,
-        num_res_blocks=1,
-        attention_levels=[],
-        channel_mult=(1, 1, 1, 1),
-        num_classes=None,
-        num_heads=1,
-        num_heads_upsample=-1,
-        time_embed_dim=None,
+        input_channels: int,
+        output_channels: int,
+        internal_channels: int,
+        num_res_blocks: int = 1,
+        attention_levels: Sequence[int] | None = None,
+        channel_mult: Sequence[int] = (1, 1, 1, 1),
+        num_classes: int | None = None,
+        num_heads: int = 1,
+        num_heads_upsample: int = -1,
+        time_embed_dim: int | None = None,
         # dimension dependent classes
-        with_InputLayer=None,
-        with_OutputLayer=None,
-        with_Downsample=None,
-        with_Upsample=None,
-        with_LevelBlock=None,
-        with_Normalization=None,
-    ):
+        with_InputLayer: Callable[[int, int], nn.Module] | None = None,
+        with_OutputLayer: Callable[[int, int], nn.Module] | None = None,
+        with_Downsample: Callable[[int, int, int], nn.Module] | None = None,
+        with_Upsample: Callable[[int, int, int], nn.Module] | None = None,
+        with_LevelBlock: Callable[..., nn.Module] | None = None,
+        with_Normalization: Callable[[int], nn.Module] | None = None,
+    ) -> None:
         super().__init__()
+        attention_levels = [] if attention_levels is None else list(attention_levels)
+        channel_mult = tuple(channel_mult)
         # check dimension dependent classes
         assert with_InputLayer is not None
         assert with_OutputLayer is not None
@@ -1194,14 +1283,21 @@ class DecoderNetXd_2021_idd(nn.Module):
             with_OutputLayer(ch, output_channels),
         )
 
-    def forward(self, x, timesteps=None, y=None):
-        """
-        Apply the model to an input batch.
+    def forward(
+        self,
+        x: torch.Tensor,
+        timesteps: torch.Tensor | None = None,
+        y: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Apply the decoder to an input batch.
 
-        :param x: an [N x C x ...] Tensor of inputs.
-        :param timesteps: a 1-D batch of timesteps.
-        :param y: an [N] Tensor of labels, if class-conditional.
-        :return: an [N x C x ...] Tensor of outputs.
+        Args:
+            x: Input tensor with shape `[N, C, ...]`.
+            timesteps: One-dimensional tensor of timesteps.
+            y: Optional class labels for conditional models.
+
+        Returns:
+            torch.Tensor: Output tensor with shape `[N, C, ...]`.
         """
         if timesteps is not None:
             assert (
@@ -1231,15 +1327,17 @@ class DecoderNetXd_2021_idd(nn.Module):
         return self.output_layer(h)
 
     @property
-    def inner_dtype(self):
-        """
-        Get the dtype used by the torso of the model.
-        """
+    def inner_dtype(self) -> torch.dtype:
+        """Get the dtype used by the torso of the model."""
         return next(self.output_blocks.parameters()).dtype
 
 
 class EncoderNet1d_2021(EncoderNetXd_2021_idd):
-    def __init__(self, *args, internal_channels=32, **kwargs):
+    """Instantiate the 1D encoder variant derived from the 2021 UNet."""
+
+    def __init__(
+        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+    ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(
                 _input_channels,
@@ -1279,7 +1377,11 @@ class EncoderNet1d_2021(EncoderNetXd_2021_idd):
 
 
 class DecoderNet1d_2021(DecoderNetXd_2021_idd):
-    def __init__(self, *args, internal_channels=32, **kwargs):
+    """Instantiate the 1D decoder variant derived from the 2021 UNet."""
+
+    def __init__(
+        self, *args: Any, internal_channels: int = 32, **kwargs: Any,
+    ) -> None:
         def _with_InputLayer(_input_channels, _internal_channels):
             return nn.Conv1d(
                 _input_channels,
@@ -1318,103 +1420,3 @@ class DecoderNet1d_2021(DecoderNetXd_2021_idd):
         )
 
 
-# --------------------------------------
-# Tests
-# --------------------------------------
-
-# TODO use doxygen for these test
-
-
-def test_UNet2d_2025():
-    print("---------------------------------------^")
-    net = UNet2d_2025(
-        1,
-        1,
-        down_levels_conv_channels=[[2, 2], [4, 4], [8, 8]],
-        up_levels_conv_channels=[[8, 8], [4, 4], [2, 2]],
-    )
-    print(net)
-
-    print("Test 1:")
-    x = torch.ones((1, 1, 16, 16))
-    y = net(x)
-    print("- input  x =", x, sep="\n")
-    print("- output y =", y, sep="\n")
-    print("---------------------------------------$")
-
-
-def test_UNet1d_2021():
-    print("---------------------------------------^")
-    net = UNet1d_2021(1, 1, channel_mult=(1, 2, 4))
-    print(net)
-
-    print("Test 1:")
-    x = torch.ones((1, 1, 16))
-    y = net(x)
-    print("- input  x =", x, sep="\n")
-    print("- output y =", y, sep="\n")
-    print("---------------------------------------$")
-
-
-def test_UNet2d_2021():
-    print("---------------------------------------^")
-    net = UNet2d_2021(1, 1, channel_mult=(1, 2, 4))
-    print(net)
-
-    print("Test 1:")
-    x = torch.ones((1, 1, 16, 16))
-    y = net(x)
-    print("- input  x =", x, sep="\n")
-    print("- output y =", y, sep="\n")
-    print("---------------------------------------$")
-
-
-def test_UNet2d_2021_idd():
-    print("---------------------------------------^")
-    net = UNet2d_2021_idd(1, 1, channel_mult=(1, 2, 4))
-    print(net)
-
-    print("Test 1:")
-    x = torch.ones((1, 1, 16, 16))
-    t = torch.tensor([0.1])
-    y = net(x, t)
-    print("- input  x =", x, sep="\n")
-    print("- input  t =", t, sep="\n")
-    print("- output y =", y, sep="\n")
-    print("---------------------------------------$")
-
-
-def test_EncoderNet1d_2021():
-    print("---------------------------------------^")
-    net = EncoderNet1d_2021(1, 1, channel_mult=(1, 1, 1))
-    print(net)
-
-    print("Test 1:")
-    x = torch.ones((1, 1, 16))
-    y = net(x)
-    print("- input  x =", x, sep="\n")
-    print("- output y =", y, sep="\n")
-    print("---------------------------------------$")
-
-
-def test_DecoderNet1d_2021():
-    print("---------------------------------------^")
-    net = DecoderNet1d_2021(1, 1, channel_mult=(1, 1, 1))
-    print(net)
-
-    print("Test 1:")
-    x = torch.ones((1, 1, 4))
-    y = net(x)
-    print("- input  x =", x, sep="\n")
-    print("- output y =", y, sep="\n")
-    print("---------------------------------------$")
-
-
-if __name__ == "__main__":
-    r"""Runs tests."""
-    test_UNet2d_2025()
-    test_UNet1d_2021()
-    test_UNet2d_2021()
-    test_UNet2d_2021_idd()
-    test_EncoderNet1d_2021()
-    test_DecoderNet1d_2021()
