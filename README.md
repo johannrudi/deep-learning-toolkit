@@ -1,15 +1,16 @@
 # Deep Learning Toolkit
 
+<!--
 [![Format](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
 [![Compile](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
 [![Test](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
 [![Lint](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
-<!--NOTE: shields.io works with public repos only
+-->
+<!-- NOTE: shields.io only works with public repos -->
 [![Format](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/format.yml?style=for-the-badge&label=Format)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
 [![Compile](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/compile.yml?style=for-the-badge&label=Compile)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
 [![Test](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/test.yml?style=for-the-badge&label=Test)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
 [![Lint](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/lint.yml?style=for-the-badge&label=Lint)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
--->
 
 Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
 networks, losses, training loops, and utilities.
@@ -22,9 +23,9 @@ networks, losses, training loops, and utilities.
 
 ### Runtime dependencies
 
-- `torch>=2,<3`
 - `prettytable>=3,<4`
 - `pyyaml>=6,<7`
+- `torch>=2,<3`
 - `tqdm>=4,<5`
 
 ### Install in regular mode
