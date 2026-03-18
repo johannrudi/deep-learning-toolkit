@@ -1,3 +1,4 @@
+import importlib.util
 import math
 from typing import cast
 
@@ -11,14 +12,24 @@ from dlk.metrics.hellinger import (
     marginal_hellinger_distances_samples,
 )
 
+_HAS_TORCHKDE = importlib.util.find_spec("torchkde") is not None
+_HELLINGER_METHODS: list[HellingerMethod] = ["direct", "direct_si", "bc"]
+_DENSITY_METHODS: list[DensityMethod] = ["hist", "kde"]
 
-@pytest.mark.parametrize("hellinger_method", ["direct", "direct_si", "bc"])
-@pytest.mark.parametrize("density_method", ["hist", "kde"])
+
+def _skip_if_torchkde_is_unavailable(density_method: DensityMethod) -> None:
+    if density_method == "kde" and not _HAS_TORCHKDE:
+        pytest.skip("requires optional dependency 'torchkde'")
+
+
+@pytest.mark.parametrize("hellinger_method", _HELLINGER_METHODS)
+@pytest.mark.parametrize("density_method", _DENSITY_METHODS)
 def test_hellinger_distance_hist_returns_zero_for_identical_inputs(
     hellinger_method: HellingerMethod,
     density_method: DensityMethod,
 ) -> None:
     """Return zero distance when the two input sample sets are identical."""
+    _skip_if_torchkde_is_unavailable(density_method)
     samples = torch.tensor(
         [
             [0.00, 0.00],
@@ -125,13 +136,14 @@ def test_hellinger_distance_hist_raises_for_unknown_method() -> None:
         )
 
 
-@pytest.mark.parametrize("hellinger_method", ["direct", "direct_si", "bc"])
-@pytest.mark.parametrize("density_method", ["hist", "kde"])
+@pytest.mark.parametrize("hellinger_method", _HELLINGER_METHODS)
+@pytest.mark.parametrize("density_method", _DENSITY_METHODS)
 def test_hellinger_distance_hist_marginals_returns_zero_for_identical_inputs(
     hellinger_method: HellingerMethod,
     density_method: DensityMethod,
 ) -> None:
     """Return zero distance for each feature when the two input sample sets are identical."""
+    _skip_if_torchkde_is_unavailable(density_method)
     samples = torch.tensor(
         [
             [0.00, 0.00, 0.00],
@@ -158,7 +170,7 @@ def test_hellinger_distance_hist_marginals_returns_zero_for_identical_inputs(
     )
 
 
-@pytest.mark.parametrize("hellinger_method", ["direct", "direct_si", "bc"])
+@pytest.mark.parametrize("hellinger_method", _HELLINGER_METHODS)
 @pytest.mark.parametrize("density_method", ["hist"])  # TODO: "kde" fails this test
 def test_hellinger_distance_hist_marginals_matches_per_feature_hist_distance(
     hellinger_method: HellingerMethod,
