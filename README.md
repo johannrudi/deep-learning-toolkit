@@ -1,19 +1,22 @@
 # Deep Learning Toolkit
 
+<!-- NOTE: github badges work with private repos -->
 <!--
 [![Format](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
 [![Compile](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
-[![Test](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
 [![Lint](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
+[![Test](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
 -->
-<!-- NOTE: shields.io only works with public repos -->
+<!-- NOTE: shields.io badges only work with public repos -->
 [![Format](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/format.yml?style=for-the-badge&label=Format)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
 [![Compile](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/compile.yml?style=for-the-badge&label=Compile)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
-[![Test](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/test.yml?style=for-the-badge&label=Test)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
 [![Lint](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/lint.yml?style=for-the-badge&label=Lint)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
+[![Test](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/test.yml?style=for-the-badge&label=Test)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
 
 Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
 networks, losses, training loops, and utilities.
+
+---
 
 ## Installing the `deep-learning-toolkit`
 
@@ -64,9 +67,11 @@ pip install -e ".[dev]"
 
 Using `[dev]` includes extras from `[test]`.
 
-## Importing `dlk`
+---
 
-To use the toolkit, import it's modules in your Python code code like this:
+## Importing and using `dlk`
+
+To use the toolkit, import its modules in your Python code like this:
 
 ```py
 from dlk.nets.mlp import MLPNet
@@ -85,16 +90,7 @@ train_epochs(n_epochs=100, net=model, dataloader=..., optimizer=..., loss_fn=...
 ...
 ```
 
-## Development commands
-
-- `make format`: run `isort` and `black` on `dlk/` and `tests/`
-- `make format-check`: check `isort` and `black` formatting without modifying files
-- `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
-- `make lint`: run `basedpyright` on `dlk/` and `tests/`
-- `make test`: run `pytest` (after `make compile`)
-- `make testq`: run `pytest -q` (after `make compile`)
-- `make testv`: run `pytest -v` (after `make compile`)
-- `make testvv`: run `pytest -sv` (after `make compile`)
+---
 
 ## Architecture
 
@@ -135,3 +131,18 @@ Training functions return detailed logging dictionaries (`dlog`) containing:
 - `dlk/mgmt/`: Management of configuration parameter loading/saving, logging, etc.
 - `dlk/loss/`: Loss functions
 - `dlk/metrics/`: Metrics for evaluating trained nets
+
+---
+
+## Development
+
+### Commands for development
+
+- `make format`: run `isort` and `black` on `dlk/` and `tests/`
+- `make format-check`: check `isort` and `black` formatting without modifying files
+- `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
+- `make lint`: run `basedpyright` on `dlk/` and `tests/`
+- `make test`: run `pytest` (after `make compile`)
+- `make testq`: run `pytest -q` (after `make compile`)
+- `make testv`: run `pytest -v` (after `make compile`)
+- `make testvv`: run `pytest -sv` (after `make compile`)
