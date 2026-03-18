@@ -24,19 +24,18 @@ networks, losses, training loops, and utilities.
 
 - `torch>=2,<3`
 - `prettytable>=3,<4`
+- `pyyaml>=6,<7`
 - `tqdm>=4,<5`
 
-<!-- TODO: uncomment this after a public release
 ### Install in regular mode
 
 ```sh
 pip install deep-learning-toolkit
 ```
--->
 
 ### Install the package in editable mode
 
-Using a clone of the Git repository:
+Using a clone of the [Git repository](https://github.com/johannrudi/deep-learning-toolkit/):
 
 ```sh
 pip install -e .
@@ -62,7 +61,28 @@ pip install -e ".[test]"
 pip install -e ".[dev]"
 ```
 
-This includes extras from `[test]`.
+Using `[dev]` includes extras from `[test]`.
+
+## Importing `dlk`
+
+To use the toolkit, import it's modules in your Python code code like this:
+
+```py
+from dlk.nets.mlp import MLPNet
+from dlk.opt.train import train_epochs
+
+# load your data
+...
+
+# create the model
+model = MLPNet(input_size=784, output_size=10)
+
+# train the model
+train_epochs(n_epochs=100, net=model, dataloader=..., optimizer=..., loss_fn=...)
+
+# evaluate
+...
+```
 
 ## Development commands
 

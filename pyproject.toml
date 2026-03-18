@@ -1,17 +1,17 @@
 [project]
 name =  "deep-learning-toolkit"
 version = "0.3.0"
-description = "Deep Learning Toolkit — Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities."
-readme = "README.md"
 authors = [
     { name = "Johann Rudi", email = "jrudi@vt.edu" },
 ]
-license = { file = "LICENSE" }
+description = "Deep Learning Toolkit — Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities."
+readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICEN[CS]E*"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -53,15 +53,15 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/johannrudi/dl-kit"
-Repository = "https://github.com/johannrudi/dl-kit"
-Issues = "https://github.com/johannrudi/dl-kit/issues"
+Homepage = "https://github.com/johannrudi/deep-learning-toolkit"
+Repository = "https://github.com/johannrudi/deep-learning-toolkit"
+Issues = "https://github.com/johannrudi/deep-learning-toolkit/issues"
 
 #[project.scripts]
 #dlk = "dlk.__main__:main"
 
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
