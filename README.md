@@ -11,7 +11,7 @@
 [![Format](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/format.yml?style=for-the-badge&label=Format)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
 [![Compile](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/compile.yml?style=for-the-badge&label=Compile)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
 [![Lint](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/lint.yml?style=for-the-badge&label=Lint)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
-[![Test](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/test.yml?style=for-the-badge&label=Test)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
+[![Tests](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/tests.yml?style=for-the-badge&label=Tests)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/tests.yml)
 
 Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
 networks, losses, training loops, and utilities.
@@ -39,7 +39,8 @@ pip install deep-learning-toolkit
 
 ### Install the package in editable mode
 
-Using a clone of the [Git repository](https://github.com/johannrudi/deep-learning-toolkit/):
+When using a clone of the [Git repository](https://github.com/johannrudi/deep-learning-toolkit/),
+run this command from inside the cloned directory:
 
 ```sh
 pip install -e .
@@ -47,13 +48,13 @@ pip install -e .
 
 #### Install with optional extras
 
-Kernel density estimation features:
+Dependencies for kernel density estimation:
 
 ```sh
 pip install -e ".[kde]"
 ```
 
-Running tests:
+Dependencies for running tests:
 
 ```sh
 pip install -e ".[test]"

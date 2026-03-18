@@ -1,4 +1,4 @@
-name: Test
+name: Tests
 
 on:
   push:
@@ -10,8 +10,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  test:
-    name: Test (Python ${{ matrix.python-version }})
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -27,5 +27,5 @@ jobs:
         run: pip install -e ".[test,kde]"
       - name: Compile
         run: make compile
-      - name: Test
+      - name: Tests
         run: make test
