@@ -1,8 +1,12 @@
-# DL-Kit &mdash; Deep Learning Toolkit
+# Deep Learning Toolkit
 
-DL-Kit is a PyTorch toolkit for scientific machine learning that provides reusable
-neural network architectures, loss functions, training loops, and utilities for
-scientific datasets.
+[![Format](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
+[![Compile](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
+[![Test](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
+[![Lint](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
+
+Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
+networks, losses, training loops, and utilities.
 
 ## Installing the `deep-learning-toolkit`
 
@@ -57,6 +61,7 @@ This includes extras from `[test]`.
 ## Development commands
 
 - `make format`: run `isort` and `black` on `dlk/` and `tests/`
+- `make format-check`: check `isort` and `black` formatting without modifying files
 - `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
 - `make lint`: run `basedpyright` on `dlk/` and `tests/`
 - `make test`: run `pytest` (after `make compile`)

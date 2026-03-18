@@ -25,7 +25,14 @@ TESTS_DIR := tests
 
 # --------------------------------------
 
-.PHONY: format lint compile
+.PHONY: format format-check lint compile
+
+format-check:
+	$(PY_IMPORT_FORMAT) --check $(PACKAGE_DIR)
+	$(PY_FORMAT) --check $(PACKAGE_DIR)
+	@echo
+	$(PY_IMPORT_FORMAT) --check $(TESTS_DIR)
+	$(PY_FORMAT) --check $(TESTS_DIR)
 
 format:
 	$(PY_IMPORT_FORMAT) $(PACKAGE_DIR)

@@ -11,6 +11,7 @@
 ## Tests
 
 - run `make format` to format Python files in `dlk` and `tests` with `black` and `isort`
+- run `make format-check` to check `isort` and `black` formatting in `dlk` and `tests` without modifying files
 - run `make compile` to compile Python files in `dlk` and `tests`
 - run `make lint` to run `basedpyright` across `dlk` and `tests`
 - run `make test` to run `pytest` across the codebase
