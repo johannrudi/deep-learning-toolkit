@@ -64,17 +64,29 @@ Issues = "https://github.com/johannrudi/deep-learning-toolkit/issues"
 requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-include = ["dlk*"]
-exclude = ["tests*", "_*"]
-namespaces = false  # do not add folders without `__init__.py` file
-
 [tool.basedpyright]
 typeCheckingMode = "basic"
 
 [tool.black]
 line-length = 88
 target-version = ["py311", "py312"]
+
+[tool.bumpver]
+current_version = "0.3.0"
+version_pattern = "MAJOR.MINOR.PATCH"
+commit_message = "Bump version {old_version} -> {new_version}"
+commit = true
+tag = true
+push = false
+
+[tool.bumpver.file_patterns]
+"pyproject.toml" = [
+    'current_version = "{version}"',
+    'version = "{version}"',
+]
+"dlk/__init__.py" = [
+    '__version__ = "{version}"',
+]
 
 [tool.isort]
 profile = "black"
@@ -83,3 +95,8 @@ src_paths = ["dlk", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+[tool.setuptools.packages.find]
+include = ["dlk*"]
+exclude = ["tests*", "_*"]
+namespaces = false  # do not add folders without `__init__.py` file
