@@ -28,6 +28,7 @@ keywords = [
 ]
 dependencies = [
     "prettytable>=3,<4",
+    "pyyaml>=6,<7",
     "torch>=2,<3",
     "tqdm>=4,<5",
 ]
