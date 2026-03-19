@@ -82,10 +82,10 @@ from dlk.opt.train import train_epochs
 ...
 
 # create the model
-model = MLPNet(input_size=784, output_size=10)
+net = MLPNet(input_size=784, output_size=10)
 
 # train the model
-train_epochs(n_epochs=100, net=model, dataloader=..., optimizer=..., loss_fn=...)
+train_epochs(n_epochs=100, net=net, dataloader=..., optimizer=..., loss_fn=...)
 
 # evaluate
 ...
