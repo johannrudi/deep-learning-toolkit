@@ -351,7 +351,7 @@ def update_runconfig_params_from_args(
 
 def add_args_to_parser(
     parser: argparse.ArgumentParser,
-    default_params_path: str = "configs/params.toml",
+    default_params_path: str = "configs/params.yaml",
     default_mode: str = "train_eval",
 ) -> None:
     """Add command line arguments to a parser."""
