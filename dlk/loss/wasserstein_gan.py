@@ -3,29 +3,44 @@
 from collections.abc import Callable
 
 import torch
+import torch.nn.functional as F
 
 
 def wasserstein_loss_fn(
-    d_outputs_gen: torch.Tensor | None,
+    d_outputs_gen: torch.Tensor,
     d_outputs_data: torch.Tensor | None,
-) -> tuple[torch.Tensor | float, torch.Tensor | float]:
-    """Calculate the Wasserstein critic loss and generator score term.
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    r"""Compute the Wasserstein value functions for critic or generator training steps.
 
-    D_loss = -E[D(data)] + E[D(gen)].
+    .. math::
+        \ell_D = -E[ D(x_\mathrm{data}) ] + E[ D(x_\mathrm{gen}) ]
+        \ell_G = -E[ D(x_\mathrm{gen}) ]
 
     Args:
-        d_outputs_gen: Critic outputs evaluated on generated samples.
-        d_outputs_data: Critic outputs evaluated on real samples.
+        d_outputs_gen: Critic outputs for generated samples. Pass during
+            critic and generator updates.
+        d_outputs_data: Critic outputs for real samples. Pass during
+            critic updates; set to ``None`` for generator-only updates.
 
     Returns:
-        A tuple containing:
-            - Critic loss value to minimize.
-            - Generator score term E[D(gen)].
+        tuple[Tensor, Tensor | None]: A tuple containing:
+            - The total critic loss term to minimize.
+            - The generated-sample score term when both inputs are provided,
+              otherwise ``None`` for generator-only updates.
     """
-    loss_gen = torch.mean(d_outputs_gen) if d_outputs_gen is not None else 0.0
-    loss_data = torch.mean(d_outputs_data) if d_outputs_data is not None else 0.0
-    w_loss = loss_data - loss_gen  # value to be maximized
-    return -w_loss, loss_gen  # value to be minimized
+    assert d_outputs_gen is not None
+
+    # loss for critic update
+    if d_outputs_data is not None:
+        score_data = torch.mean(d_outputs_data)
+        score_gen = torch.mean(d_outputs_gen)
+        w_score = score_data - score_gen  # value to be maximized
+        w_loss = -w_score  # value to be minimized
+        return w_loss, score_gen
+
+    # loss for generator update
+    w_loss = -torch.mean(d_outputs_gen)  # value to be minimized
+    return w_loss, None
 
 
 def gradient_norm_sq(
@@ -91,7 +106,7 @@ def gradient_penalty_lip(
     device: torch.device | None = None,
     dlog: dict[str, float] | None = None,
 ) -> torch.Tensor:
-    """Computes the regularization term for the critic network.
+    """Compute the regularization term for the critic network.
 
     This penalizes gradients greater `k` to achieve k-Lipschitz continuity.
 
@@ -110,7 +125,7 @@ def gradient_penalty_lip(
     """
     grad_norm_sq = gradient_norm_sq(d_net, x_gen, x_data, y_data=y_data, device=device)
     grad_norm = torch.sqrt(grad_norm_sq.detach())  # only for logging purposes
-    grad_penalty = torch.nn.functional.relu(grad_norm_sq + eps - lip * lip).mean()
+    grad_penalty = F.relu(grad_norm_sq + eps - lip * lip).mean()
     # log to dictionary
     if dlog is not None:
         assert isinstance(dlog, dict), type(dlog)
@@ -126,7 +141,7 @@ def gradient_penalty_opt(
     device: torch.device | None = None,
     dlog: dict[str, float] | None = None,
 ) -> torch.Tensor:
-    """Computes the regularization term for the critic network.
+    """Compute the regularization term for the critic network.
 
     This achieves the optimal Kantorovich potential in the Kantorovich–Rubinstein
     duality.

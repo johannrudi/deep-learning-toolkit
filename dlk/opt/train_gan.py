@@ -1,6 +1,7 @@
 """Train GAN models across epochs and batches with checkpointing and structured logging."""
 
 import logging
+import math
 import pathlib
 import timeit
 from collections.abc import Callable
@@ -43,7 +44,7 @@ DLOG_BASENAMES = [
 # --------------------------------------
 
 GANLossFn: TypeAlias = Callable[
-    [torch.Tensor | None, torch.Tensor], tuple[torch.Tensor, torch.Tensor]
+    [torch.Tensor, torch.Tensor | None], tuple[torch.Tensor, torch.Tensor | None]
 ]
 GANValidationFn: TypeAlias = Callable[[int, torch.nn.Module, torch.nn.Module], None]
 LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
@@ -167,14 +168,14 @@ def train_epochs(
 
         # train on batches
         batch_dlog = train_batches(
-            epoch_idx,
-            g_net,
-            d_net,
-            dataloader,
-            z_sample_fn,
-            g_optimizer,
-            d_optimizer,
-            loss_fn,
+            epoch_idx=epoch_idx,
+            g_net=g_net,
+            d_net=d_net,
+            dataloader=dataloader,
+            z_sample_fn=z_sample_fn,
+            g_optimizer=g_optimizer,
+            d_optimizer=d_optimizer,
+            loss_fn=loss_fn,
             d_reg_fn=d_reg_fn,
             d_opt_pre=d_opt_pre,
             d_opt_post=d_opt_post,
@@ -299,7 +300,7 @@ def _train_step_discriminator(
     d_outputs_data = d_net(x_data, y_data)
 
     # evaluate discriminator loss
-    # Note: output must have correct sign for minimization
+    # NOTE: output must have correct sign for minimization
     d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
     d_reg_dlog: dict[str, float] = {}
     if d_reg_fn is not None:
@@ -322,7 +323,7 @@ def _train_step_discriminator(
     # output values
     if dlog_item is not None:
         dlog_item["d_loss"] = d_loss.item()
-        dlog_item["d_loss_g"] = d_loss_g.item()
+        dlog_item["d_loss_g"] = d_loss_g.item() if d_loss_g is not None else math.nan
         dlog_item["d_reg"] = d_reg.item()
         for key, val in d_reg_dlog.items():
             dlog_item["d_" + key] = val
@@ -364,7 +365,8 @@ def _train_step_generator(
     d_outputs_gen = d_net(x_gen, y_data)
 
     # evaluate discriminator loss
-    g_loss, _ = loss_fn(None, d_outputs_gen)  # pass generated outputs as data/truth
+    # NOTE: pass only generated outputs for generator steps
+    g_loss, _ = loss_fn(d_outputs_gen, None)
     loss = g_loss
 
     # calculate derivatives (end AD) and update network parameters
@@ -449,13 +451,13 @@ def train_batches(
         dlog_pre_buf: dict[str, float] = {}
         for i in range(d_opt_pre):
             d_loss_reg_v = _train_step_discriminator(
-                x_data,
-                y_data,
-                z_sample_fn,
-                g_net,
-                d_net,
-                d_optimizer,
-                loss_fn,
+                x_data=x_data,
+                y_data=y_data,
+                z_sample_fn=z_sample_fn,
+                g_net=g_net,
+                d_net=d_net,
+                d_optimizer=d_optimizer,
+                loss_fn=loss_fn,
                 d_reg_fn=d_reg_fn,
                 dlog_item=dlog_pre_buf,
             )
@@ -469,12 +471,12 @@ def train_batches(
         # train generator network
         if 0 == batch_idx % g_opt_freq:
             g_loss_v = _train_step_generator(
-                y_data,
-                z_sample_fn,
-                g_net,
-                d_net,
-                g_optimizer,
-                loss_fn,
+                y_data=y_data,
+                z_sample_fn=z_sample_fn,
+                g_net=g_net,
+                d_net=d_net,
+                g_optimizer=g_optimizer,
+                loss_fn=loss_fn,
                 dlog_item=dlog_item,
             )
             logger.debug(
@@ -485,13 +487,13 @@ def train_batches(
         dlog_post_buf: dict[str, float] = {}
         for j in range(d_opt_post):
             d_loss_reg_v = _train_step_discriminator(
-                x_data,
-                y_data,
-                z_sample_fn,
-                g_net,
-                d_net,
-                d_optimizer,
-                loss_fn,
+                x_data=x_data,
+                y_data=y_data,
+                z_sample_fn=z_sample_fn,
+                g_net=g_net,
+                d_net=d_net,
+                d_optimizer=d_optimizer,
+                loss_fn=loss_fn,
                 d_reg_fn=d_reg_fn,
                 dlog_item=dlog_post_buf,
             )
