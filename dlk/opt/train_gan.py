@@ -3,6 +3,7 @@
 import logging
 import math
 import pathlib
+import sys
 import timeit
 from collections.abc import Callable
 from datetime import datetime
@@ -146,80 +147,81 @@ def train_epochs(
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
-    for epoch_idx in tqdm(range(n_epochs), desc="epochs"):
-        # initialize epoch
-        if epoch_initialize_fn:
-            epoch_initialize_fn(epoch_idx)
+    with tqdm(range(n_epochs), desc="epochs", disable=not sys.stdout.isatty()) as pbar:
+        for epoch_idx in pbar:
+            # initialize epoch
+            if epoch_initialize_fn:
+                epoch_initialize_fn(epoch_idx)
 
-        # save checkpoint
-        if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
-            for tag_, net_, opt_ in zip(
-                ["g", "d"], [g_net, d_net], [g_optimizer, d_optimizer]
-            ):
-                path = checkpoint_path(
-                    checkpoint_dir_, n_epochs, prefix=f"{tag_}-net", epoch=epoch_idx
-                )
-                logger.debug(f"epoch {epoch_idx:6d}, save checkpoint to '{path}'")
-                checkpoint_save(net_, path, epoch=epoch_idx, optimizer=opt_)
+            # save checkpoint
+            if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
+                for tag_, net_, opt_ in zip(
+                    ["g", "d"], [g_net, d_net], [g_optimizer, d_optimizer]
+                ):
+                    path = checkpoint_path(
+                        checkpoint_dir_, n_epochs, prefix=f"{tag_}-net", epoch=epoch_idx
+                    )
+                    logger.debug(f"epoch {epoch_idx:6d}, save checkpoint to '{path}'")
+                    checkpoint_save(net_, path, epoch=epoch_idx, optimizer=opt_)
 
-        # call validation function
-        if validation_fn is not None:
-            validation_fn(epoch_idx, g_net, d_net)
+            # call validation function
+            if validation_fn is not None:
+                validation_fn(epoch_idx, g_net, d_net)
 
-        # train on batches
-        batch_dlog = train_batches(
-            epoch_idx=epoch_idx,
-            g_net=g_net,
-            d_net=d_net,
-            dataloader=dataloader,
-            z_sample_fn=z_sample_fn,
-            g_optimizer=g_optimizer,
-            d_optimizer=d_optimizer,
-            loss_fn=loss_fn,
-            d_reg_fn=d_reg_fn,
-            d_opt_pre=d_opt_pre,
-            d_opt_post=d_opt_post,
-            g_opt_freq=g_opt_freq,
-            device=device,
-            logger=logger,
-        )
-
-        # update the learning rate schedulers
-        if g_lr_scheduler is not None:
-            g_lr_current = g_lr_scheduler.get_last_lr()
-            if 1 == len(g_lr_current):
-                g_lr_current = f"{g_lr_current[0]:.6e}"
-            else:
-                g_lr_current = str(g_lr_current)
-            g_lr_scheduler.step()
-        else:
-            g_lr_current = "n/a"
-        if d_lr_scheduler is not None:
-            d_lr_current = d_lr_scheduler.get_last_lr()
-            if 1 == len(d_lr_current):
-                d_lr_current = f"{d_lr_current[0]:.6e}"
-            else:
-                d_lr_current = str(d_lr_current)
-            d_lr_scheduler.step()
-        else:
-            d_lr_current = "n/a"
-        if g_lr_scheduler is not None or d_lr_scheduler is not None:
-            logger.debug(
-                f"epoch {epoch_idx:6d}, g_learning_rate {g_lr_current}, d_learning_rate {d_lr_current}"
+            # train on batches
+            batch_dlog = train_batches(
+                epoch_idx=epoch_idx,
+                g_net=g_net,
+                d_net=d_net,
+                dataloader=dataloader,
+                z_sample_fn=z_sample_fn,
+                g_optimizer=g_optimizer,
+                d_optimizer=d_optimizer,
+                loss_fn=loss_fn,
+                d_reg_fn=d_reg_fn,
+                d_opt_pre=d_opt_pre,
+                d_opt_post=d_opt_post,
+                g_opt_freq=g_opt_freq,
+                device=device,
+                logger=logger,
             )
 
-        # log
-        train_dlog_epoch_update(epoch_dlog, epoch_idx, DLOG_TAGS, batch_dlog)
-        logger.info(
-            f"epoch {epoch_idx:6d}, "
-            f"d_loss pre mean {batch_dlog['d_pre_loss_mean']:.6e} std {batch_dlog['d_pre_loss_std']:.3e}, "
-            f"g_loss mean {batch_dlog['g_loss_mean']:.6e} std {batch_dlog['g_loss_std']:.3e}, "
-            f"d_loss post mean {batch_dlog['d_post_loss_mean']:.6e} std {batch_dlog['d_post_loss_std']:.3e}, "
-        )
+            # update the learning rate schedulers
+            if g_lr_scheduler is not None:
+                g_lr_current = g_lr_scheduler.get_last_lr()
+                if 1 == len(g_lr_current):
+                    g_lr_current = f"{g_lr_current[0]:.6e}"
+                else:
+                    g_lr_current = str(g_lr_current)
+                g_lr_scheduler.step()
+            else:
+                g_lr_current = "n/a"
+            if d_lr_scheduler is not None:
+                d_lr_current = d_lr_scheduler.get_last_lr()
+                if 1 == len(d_lr_current):
+                    d_lr_current = f"{d_lr_current[0]:.6e}"
+                else:
+                    d_lr_current = str(d_lr_current)
+                d_lr_scheduler.step()
+            else:
+                d_lr_current = "n/a"
+            if g_lr_scheduler is not None or d_lr_scheduler is not None:
+                logger.debug(
+                    f"epoch {epoch_idx:6d}, g_learning_rate {g_lr_current}, d_learning_rate {d_lr_current}"
+                )
 
-        # finalize epoch
-        if epoch_finalize_fn:
-            epoch_finalize_fn(epoch_idx)
+            # log
+            train_dlog_epoch_update(epoch_dlog, epoch_idx, DLOG_TAGS, batch_dlog)
+            logger.info(
+                f"epoch {epoch_idx:6d}, "
+                f"d_loss pre mean {batch_dlog['d_pre_loss_mean']:.6e} std {batch_dlog['d_pre_loss_std']:.3e}, "
+                f"g_loss mean {batch_dlog['g_loss_mean']:.6e} std {batch_dlog['g_loss_std']:.3e}, "
+                f"d_loss post mean {batch_dlog['d_post_loss_mean']:.6e} std {batch_dlog['d_post_loss_std']:.3e}, "
+            )
+
+            # finalize epoch
+            if epoch_finalize_fn:
+                epoch_finalize_fn(epoch_idx)
 
     # save checkpoint---after training
     if checkpoint_epochs is not None:

@@ -2,6 +2,7 @@
 
 import logging
 import pathlib
+import sys
 import timeit
 from datetime import datetime
 
@@ -89,58 +90,59 @@ def train_epochs(
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
-    for epoch_idx in tqdm(range(n_epochs), desc="epochs"):
-        # initialize epoch
-        if epoch_initialize_fn:
-            epoch_initialize_fn(epoch_idx)
+    with tqdm(range(n_epochs), desc="epochs", disable=not sys.stdout.isatty()) as pbar:
+        for epoch_idx in pbar:
+            # initialize epoch
+            if epoch_initialize_fn:
+                epoch_initialize_fn(epoch_idx)
 
-        # save checkpoint
-        if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
-            path = checkpoint_path(
-                checkpoint_dir_, n_epochs, prefix="net", epoch=epoch_idx
+            # save checkpoint
+            if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
+                path = checkpoint_path(
+                    checkpoint_dir_, n_epochs, prefix="net", epoch=epoch_idx
+                )
+                logger.debug(f"epoch {epoch_idx:4d}, save checkpoint to '{path}'")
+                checkpoint_save(net, path, epoch=epoch_idx, optimizer=optimizer)
+
+            # call validation function
+            if validation_fn is not None:
+                validation_fn(epoch_idx, net)
+
+            # train on batches
+            batch_dlog = train_batches(
+                epoch_idx,
+                net,
+                dataloader,
+                optimizer,
+                loss_fn,
+                device=device,
+                inputs_transform_fn=inputs_transform_fn,
+                targets_transform_fn=targets_transform_fn,
+                logger=logger,
             )
-            logger.debug(f"epoch {epoch_idx:4d}, save checkpoint to '{path}'")
-            checkpoint_save(net, path, epoch=epoch_idx, optimizer=optimizer)
 
-        # call validation function
-        if validation_fn is not None:
-            validation_fn(epoch_idx, net)
+            # update the learning rate scheduler
+            if lr_scheduler is not None:
+                lr_current = lr_scheduler.get_last_lr()
+                if 1 == len(lr_current):
+                    lr_current = f"{lr_current[0]:.6e}"
+                else:
+                    lr_current = str(lr_current)
+                logger.debug(f"epoch {epoch_idx:4d}, learning_rate {lr_current}")
+                lr_scheduler.step()
 
-        # train on batches
-        batch_dlog = train_batches(
-            epoch_idx,
-            net,
-            dataloader,
-            optimizer,
-            loss_fn,
-            device=device,
-            inputs_transform_fn=inputs_transform_fn,
-            targets_transform_fn=targets_transform_fn,
-            logger=logger,
-        )
+            # log
+            train_dlog_epoch_update(
+                epoch_dlog, epoch_idx, ["loss_mean", "loss_std"], batch_dlog
+            )
+            logger.info(
+                f"epoch {epoch_idx:4d}, "
+                f"loss mean {batch_dlog['loss_mean']:.6e} std {batch_dlog['loss_std']:.3e}"
+            )
 
-        # update the learning rate scheduler
-        if lr_scheduler is not None:
-            lr_current = lr_scheduler.get_last_lr()
-            if 1 == len(lr_current):
-                lr_current = f"{lr_current[0]:.6e}"
-            else:
-                lr_current = str(lr_current)
-            logger.debug(f"epoch {epoch_idx:4d}, learning_rate {lr_current}")
-            lr_scheduler.step()
-
-        # log
-        train_dlog_epoch_update(
-            epoch_dlog, epoch_idx, ["loss_mean", "loss_std"], batch_dlog
-        )
-        logger.info(
-            f"epoch {epoch_idx:4d}, "
-            f"loss mean {batch_dlog['loss_mean']:.6e} std {batch_dlog['loss_std']:.3e}"
-        )
-
-        # finalize epoch
-        if epoch_finalize_fn:
-            epoch_finalize_fn(epoch_idx)
+            # finalize epoch
+            if epoch_finalize_fn:
+                epoch_finalize_fn(epoch_idx)
 
     # save checkpoint---after training
     if checkpoint_epochs is not None:
