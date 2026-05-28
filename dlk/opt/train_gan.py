@@ -1,9 +1,8 @@
-"""Train GAN models across epochs and batches with checkpointing and structured logging."""
+"""Reusable epoch- and batch-level training loops for GAN models."""
 
 import logging
 import math
 import pathlib
-import sys
 import timeit
 from collections.abc import Callable
 from datetime import datetime
@@ -15,10 +14,11 @@ from tqdm import tqdm
 from dlk.opt.utils import (
     BatchHookFn,
     EpochHookFn,
-    LRScheduler,
+    LRSchedulerType,
     TrainLog,
     checkpoint_path,
     checkpoint_save,
+    tqdm_disable,
     train_dlog_batch_finalize,
     train_dlog_batch_initialize,
     train_dlog_batch_update,
@@ -84,8 +84,8 @@ def train_epochs(
     d_opt_post: int = 1,
     g_opt_freq: int = 1,
     validation_fn: GANValidationFn | None = None,
-    g_lr_scheduler: LRScheduler | None = None,
-    d_lr_scheduler: LRScheduler | None = None,
+    g_lr_scheduler: LRSchedulerType | None = None,
+    d_lr_scheduler: LRSchedulerType | None = None,
     device: torch.device | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs: int | None = None,
@@ -147,7 +147,7 @@ def train_epochs(
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
-    with tqdm(range(n_epochs), desc="epochs", disable=not sys.stdout.isatty()) as pbar:
+    with tqdm(range(n_epochs), desc="epochs", disable=tqdm_disable()) as pbar:
         for epoch_idx in pbar:
             # initialize epoch
             if epoch_initialize_fn:

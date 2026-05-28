@@ -2,7 +2,8 @@
 
 import math
 import pathlib
-from collections.abc import Callable, Mapping, MutableMapping, Sequence
+import sys
+from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
 from typing import Any, Protocol, TypeAlias
 
 import torch
@@ -16,10 +17,14 @@ BatchHookFn: TypeAlias = Callable[[int], None]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 ValidationFn: TypeAlias = Callable[[int, torch.nn.Module], None]
 TensorTransformFn: TypeAlias = Callable[[torch.Tensor], torch.Tensor]
+InputsTransformFn: TypeAlias = Callable[
+    [torch.Tensor | tuple[torch.Tensor, ...]],
+    torch.Tensor | tuple[torch.Tensor, ...],
+]
 TrainLog: TypeAlias = dict[str, Any]
 
 
-class LRScheduler(Protocol):
+class LRSchedulerType(Protocol):
     """Protocol for learning-rate schedulers used during training."""
 
     def get_last_lr(self) -> list[float]:
@@ -28,6 +33,26 @@ class LRScheduler(Protocol):
 
     def step(self) -> None:
         """Advance the scheduler state by one step."""
+        ...
+
+
+class DataLoaderType(Protocol):
+    """Protocol for objects that can serve as a dataloader in training loops.
+
+    Covers `torch.utils.data.DataLoader` and custom wrappers.
+    """
+
+    @property
+    def batch_size(self) -> int | None:
+        """Number of samples per batch, or `None` if not fixed."""
+        ...
+
+    def __iter__(self) -> Iterator[Any]:
+        """Yield batches."""
+        ...
+
+    def __len__(self) -> int:
+        """Return the number of batches."""
         ...
 
 
@@ -238,3 +263,27 @@ def train_dlog_epoch_finalize(
         None.
     """
     dlog["time_train"] = time_train
+
+
+# --------------------------------------
+
+
+def tqdm_disable() -> bool:
+    """Return True when tqdm output should be suppressed.
+
+    Notebooks are detected via IPython and always show tqdm. Non-TTY
+    environments (e.g. SLURM batch jobs) suppress it.
+
+    Returns:
+        True to disable tqdm, False to enable it.
+    """
+    # show in Jupyter notebooks regardless of TTY
+    try:
+        from IPython import get_ipython  # type: ignore[import-untyped]
+
+        if get_ipython() is not None:
+            return False
+    except ImportError:
+        pass
+    # suppress for non-interactive (e.g. SLURM) jobs
+    return not sys.stdout.isatty()

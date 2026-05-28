@@ -2,7 +2,6 @@
 
 import logging
 import pathlib
-import sys
 import timeit
 from datetime import datetime
 
@@ -11,14 +10,17 @@ from tqdm import tqdm
 
 from dlk.opt.utils import (
     BatchHookFn,
+    DataLoaderType,
     EpochHookFn,
+    InputsTransformFn,
     LossFn,
-    LRScheduler,
+    LRSchedulerType,
     TensorTransformFn,
     TrainLog,
     ValidationFn,
     checkpoint_path,
     checkpoint_save,
+    tqdm_disable,
     train_dlog_batch_finalize,
     train_dlog_batch_initialize,
     train_dlog_batch_update,
@@ -31,13 +33,13 @@ from dlk.opt.utils import (
 def train_epochs(
     n_epochs: int,
     net: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
+    dataloader: DataLoaderType,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     validation_fn: ValidationFn | None = None,
-    lr_scheduler: LRScheduler | None = None,
+    lr_scheduler: LRSchedulerType | None = None,
     device: torch.device | None = None,
-    inputs_transform_fn: TensorTransformFn | None = None,
+    inputs_transform_fn: InputsTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs: int | None = None,
@@ -90,7 +92,7 @@ def train_epochs(
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
-    with tqdm(range(n_epochs), desc="epochs", disable=not sys.stdout.isatty()) as pbar:
+    with tqdm(range(n_epochs), desc="epochs", disable=tqdm_disable()) as pbar:
         for epoch_idx in pbar:
             # initialize epoch
             if epoch_initialize_fn:
@@ -182,11 +184,11 @@ def train_epochs(
 def train_batches(
     epoch_idx: int,
     net: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
+    dataloader: DataLoaderType,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     device: torch.device | None = None,
-    inputs_transform_fn: TensorTransformFn | None = None,
+    inputs_transform_fn: InputsTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
     batch_initialize_fn: BatchHookFn | None = None,
@@ -231,7 +233,10 @@ def train_batches(
         # get input and target tensors
         inputs, targets = data
         if device is not None:
-            inputs = inputs.to(device)
+            if isinstance(inputs, tuple):
+                inputs = tuple(x.to(device) for x in inputs)
+            else:
+                inputs = inputs.to(device)
             targets = targets.to(device)
         if inputs_transform_fn is not None:
             inputs = inputs_transform_fn(inputs)
@@ -240,12 +245,16 @@ def train_batches(
 
         # zero the gradients (begin AD)
         optimizer.zero_grad()
-        # forward pass
-        outputs = net(inputs)
+
+        # forward pass; unpack inputs tuple when applicable
+        outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
+
         # calculate loss
         loss = loss_fn(outputs, targets)
+
         # calculate derivatives (end AD)
         loss.backward()
+
         # update network parameters
         optimizer.step()
 
