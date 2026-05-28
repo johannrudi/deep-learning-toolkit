@@ -35,12 +35,6 @@ dependencies = [
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-kde = [
-    "torch-kde",
-]
-test = [
-    "pytest>=8,<9",
-]
 dev = [
     "basedpyright",
     "black>=25,<26",
@@ -50,6 +44,15 @@ dev = [
     "pip-tools",
     "pytest>=8,<9",
     "twine",
+]
+diffusion = [
+    "flow-matching>=1.0.10,<2"
+]
+kde = [
+    "torch-kde",
+]
+test = [
+    "pytest>=8,<9",
 ]
 
 [project.urls]
