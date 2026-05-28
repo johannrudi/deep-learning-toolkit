@@ -3,7 +3,7 @@
 import torch
 
 
-def create_learning_rate_scheduler(
+def create_linear_const_cosine_scheduler(
     optimizer: torch.optim.Optimizer,
     n_epochs: int,
     learning_rate: float,
@@ -94,3 +94,60 @@ def create_learning_rate_scheduler(
     return torch.optim.lr_scheduler.SequentialLR(
         optimizer, schedulers=schedulers, milestones=milestone_epochs
     )
+
+
+def create_learning_rate_scheduler_from_config(
+    optimizer: torch.optim.Optimizer,
+    opt_params: dict,
+    n_epochs: int,
+) -> torch.optim.lr_scheduler.LRScheduler | None:
+    """Create a learning rate scheduler, or return None if not configured.
+
+    Supports:
+      - linear_cosine:       CosineAnnealingLR with optional warm-up
+      - linear_const_cosine: Linear then constant then CosineAnnealingLR
+      - step:                StepLR
+
+    If opt_params has no "learning_rate_scheduler" key, returns None.
+    """
+    scheduler_params = opt_params.get("learning_rate_scheduler")
+    if scheduler_params is None:
+        return None
+
+    scheduler_type = scheduler_params.get("type", "linear_cosine").casefold()
+
+    if scheduler_type == "linear_cosine":
+        warmup_epochs = scheduler_params.get("warmup_epochs", 0)
+        if 0 < warmup_epochs:
+            # start with linear warm-up then cosine decay
+            def lr_lambda(epoch):
+                if epoch < warmup_epochs:
+                    return epoch / warmup_epochs
+                progress = (epoch - warmup_epochs) / max(n_epochs - warmup_epochs, 1)
+                return 0.5 * (
+                    1.0 + torch.cos(torch.tensor(3.14159265 * progress)).item()
+                )
+
+            return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+        else:
+            return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
+
+    if scheduler_type == "linear_const_cosine":
+        return create_linear_const_cosine_scheduler(
+            optimizer,
+            n_epochs,
+            opt_params["learning_rate"],
+            linear_epochs=scheduler_params.get("linear_epochs"),
+            constant_epochs=scheduler_params.get("constant_epochs"),
+            init_learning_rate=scheduler_params.get("init_learning_rate"),
+            final_learning_rate=scheduler_params.get("final_learning_rate"),
+        )
+
+    if scheduler_type == "step":
+        step_size = scheduler_params.get("step_size", n_epochs // 3)
+        gamma = scheduler_params.get("gamma", 0.1)
+        return torch.optim.lr_scheduler.StepLR(
+            optimizer, step_size=step_size, gamma=gamma
+        )
+
+    raise ValueError(f"unknown scheduler type: {repr(scheduler_type)}")
