@@ -87,7 +87,7 @@ def train_epochs(
     g_lr_scheduler: LRSchedulerType | None = None,
     d_lr_scheduler: LRSchedulerType | None = None,
     device: torch.device | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
+    logger: logging.Logger | None = None,
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
@@ -132,6 +132,9 @@ def train_epochs(
     """
     if n_epochs < 1:
         raise ValueError(f"n_epochs must be >= 1, got {n_epochs}")
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train_gan.train_epochs")
+
     DLOG_TAGS = [f"{name}_mean" for name in DLOG_BASENAMES]
     DLOG_TAGS += [f"{name}_std" for name in DLOG_BASENAMES]
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, DLOG_TAGS)
@@ -395,7 +398,7 @@ def train_batches(
     d_opt_post: int = 1,
     g_opt_freq: int = 1,
     device: torch.device | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
+    logger: logging.Logger | None = None,
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
@@ -424,9 +427,12 @@ def train_batches(
     Returns:
         Batch-level diagnostics aggregated across the epoch.
     """
-    DLOG_TAGS = DLOG_BASENAMES
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train_gan.train_batches")
     if max_batches is None:
         max_batches = len(dataloader)
+
+    DLOG_TAGS = DLOG_BASENAMES
     batch_dlog = train_dlog_batch_initialize(max_batches, DLOG_TAGS, save_list=False)
 
     # <training_loop_over_batches>

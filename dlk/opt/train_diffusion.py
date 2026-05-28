@@ -153,7 +153,7 @@ def train_epochs(
     device: torch.device | None = None,
     inputs_transform_fn: InputsTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
+    logger: logging.Logger | None = None,
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
@@ -200,6 +200,9 @@ def train_epochs(
     Raises:
         ValueError: If `n_epochs < 1` or `checkpoint_epochs < 1` when provided.
     """
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train_diffusion.train_epochs")
+
     # wrap the dataloader
     dataloader_wrapper = DataLoaderWrapper(
         dataloader,

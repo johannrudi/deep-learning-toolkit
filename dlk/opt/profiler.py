@@ -248,7 +248,7 @@ def profile_train_epochs(
             dataloader,
             optimizer,
             loss_fn,
-            logger=logging.getLogger("dlk.opt.profile_train_epochs"),
+            logger=logging.getLogger("dlk.opt.profiler.profile_train_epochs"),
             epoch_finalize_fn=epoch_finalize_fn,
             **train_epochs_fn_kwargs,
         )
@@ -336,7 +336,7 @@ def profile_train_batches(
             prof.step()
 
         epoch_idx = 0
-        logger: logging.Logger = logging.getLogger("dlk.opt.profile_train_batches")
+        logger = logging.getLogger("dlk.opt.profile_train_batches")
         batch_dlog = train_batches_fn(
             epoch_idx,
             net,

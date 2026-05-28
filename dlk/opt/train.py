@@ -41,7 +41,7 @@ def train_epochs(
     device: torch.device | None = None,
     inputs_transform_fn: InputsTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
+    logger: logging.Logger | None = None,
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
@@ -79,6 +79,9 @@ def train_epochs(
     """
     if n_epochs < 1:
         raise ValueError(f"n_epochs must be >= 1, got {n_epochs}")
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train.train_epochs")
+
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, ["loss_mean", "loss_std"])
 
     # set checkpoint directory; create if it doesn't exist
@@ -190,7 +193,7 @@ def train_batches(
     device: torch.device | None = None,
     inputs_transform_fn: InputsTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
+    logger: logging.Logger | None = None,
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
@@ -214,6 +217,8 @@ def train_batches(
     Returns:
         Batch-level training log dictionary with aggregate loss statistics.
     """
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train.train_batches")
     if max_batches is None:
         max_batches = len(dataloader)
     batch_dlog = train_dlog_batch_initialize(max_batches, ["loss"], save_list=False)
