@@ -77,7 +77,7 @@ def checkpoint_path(
         Path to the checkpoint file for the selected epoch.
     """
     if n_epochs <= 0:
-        raise ValueError(f"Expected n_epochs > 0, got {n_epochs}.")
+        raise ValueError(f"expected n_epochs > 0, got {n_epochs}.")
     n_digits = int(math.ceil(math.log10(1.01 * n_epochs)))
     filename = f"{prefix}_e{epoch:0{n_digits}d}.pt"
     return pathlib.Path(checkpoint_dir) / filename

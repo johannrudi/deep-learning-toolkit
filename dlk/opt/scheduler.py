@@ -35,9 +35,9 @@ def create_linear_const_cosine_scheduler(
         ValueError: If any scheduler configuration parameter is invalid.
     """
     if n_epochs <= 0:
-        raise ValueError(f"Expected n_epochs > 0, got {n_epochs}.")
+        raise ValueError(f"expected n_epochs > 0, got {n_epochs}.")
     if learning_rate <= 0.0:
-        raise ValueError(f"Expected learning_rate > 0, got {learning_rate}.")
+        raise ValueError(f"expected learning_rate > 0, got {learning_rate}.")
 
     # set stage defaults
     if linear_epochs is None:
@@ -50,14 +50,14 @@ def create_linear_const_cosine_scheduler(
         final_learning_rate = learning_rate / 100.0
 
     if linear_epochs < 0:
-        raise ValueError(f"Expected linear_epochs >= 0, got {linear_epochs}.")
+        raise ValueError(f"expected linear_epochs >= 0, got {linear_epochs}.")
     if constant_epochs < 0:
-        raise ValueError(f"Expected constant_epochs >= 0, got {constant_epochs}.")
+        raise ValueError(f"expected constant_epochs >= 0, got {constant_epochs}.")
     if init_learning_rate <= 0.0:
-        raise ValueError(f"Expected init_learning_rate > 0, got {init_learning_rate}.")
+        raise ValueError(f"expected init_learning_rate > 0, got {init_learning_rate}.")
     if final_learning_rate < 0.0:
         raise ValueError(
-            f"Expected final_learning_rate >= 0, got {final_learning_rate}."
+            f"expected final_learning_rate >= 0, got {final_learning_rate}."
         )
 
     # calculate stage boundaries
@@ -68,7 +68,7 @@ def create_linear_const_cosine_scheduler(
     cosine_epochs = n_epochs - milestone_epochs[-1]
     if cosine_epochs <= 0:
         raise ValueError(
-            "Expected n_epochs > linear_epochs + constant_epochs so cosine decay "
+            "expected n_epochs > linear_epochs + constant_epochs so cosine decay "
             "has at least one epoch."
         )
 

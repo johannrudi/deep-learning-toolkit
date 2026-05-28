@@ -78,7 +78,7 @@ class DataLoaderWrapper:
         x_init = torch.randn_like(x_final)
 
         # sample time
-        t = torch.rand(x_final.shape[0], device=x_final.device)
+        t = torch.rand(x_final.shape[0], dtype=x_final.dtype, device=x_final.device)
 
         # compute sample along the probability path
         path_sample = self.diffusion_path.sample(x_0=x_init, x_1=x_final, t=t)
@@ -104,22 +104,22 @@ class DataLoaderWrapper:
         """
         for batch in self.dataloader:
             if self.conditional:
-                # get the target and conditional tensors; move to device
+                # get the data and conditional tensors; move to device
                 x, y = batch
                 x = x.to(self.device)
                 y = y.to(self.device)
 
-                # transform target and compute velocity
+                # transform data and compute velocity
                 x_t, t, dx_t = self.transform(x)
 
                 # set input tensors
                 inputs = x_t, t, y
             else:
-                # get the target tensor; move to device
+                # get the data tensor; move to device
                 x = batch
                 x = x.to(self.device)
 
-                # transform target and compute velocity
+                # transform data and compute velocity
                 x_t, t, dx_t = self.transform(x)
 
                 # set input tensors

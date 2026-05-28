@@ -26,7 +26,7 @@ def _normalize_parameter_format(parameter_format: str) -> str:
     normalized_format = parameter_format.strip().lower()
     if normalized_format not in _SUPPORTED_PARAMETER_FORMATS:
         raise ValueError(
-            f"Unsupported parameter format `{parameter_format}`."
+            f"unsupported parameter format `{parameter_format}`."
             + " Supported formats are: json, toml, yaml."
         )
     return "yaml" if normalized_format == "yml" else normalized_format
@@ -98,7 +98,7 @@ def _serialize_toml_value(value: Any) -> str:
         ]
         return "{ " + ", ".join(inline_fields) + " }"
     raise ValueError(
-        f"Unsupported type `{type(value).__name__}` for TOML serialization."
+        f"unsupported type `{type(value).__name__}` for TOML serialization."
     )
 
 
@@ -183,7 +183,7 @@ def load(filepath: str | pathlib.Path) -> dict[str, Any]:
             params = yaml.safe_load(f)
         else:
             raise ValueError(
-                f"Unsupported parameter file extension `{suffix}` for `{filepath}`."
+                f"unsupported parameter file extension `{suffix}` for `{filepath}`."
             )
     return params if params is not None else {}
 
@@ -223,7 +223,7 @@ def save(
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as error:
-        raise ValueError(f"Invalid path {save_dir}") from error
+        raise ValueError(f"invalid path {save_dir}") from error
     # save parameters in the requested format
     with open(path, "w+", encoding="utf-8") as f:
         if normalized_format == "json":
