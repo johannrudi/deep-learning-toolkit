@@ -1,6 +1,6 @@
 [project]
 name =  "deep-learning-toolkit"
-version = "0.3.1"
+version = "0.4.0"
 authors = [
     { name = "Johann Rudi", email = "jrudi@vt.edu" },
 ]
@@ -75,7 +75,7 @@ line-length = 88
 target-version = ["py311", "py312"]
 
 [tool.bumpver]
-current_version = "0.3.1"
+current_version = "0.4.0"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "Bump version {old_version} -> {new_version}"
 tag_name = "v{new_version}"
