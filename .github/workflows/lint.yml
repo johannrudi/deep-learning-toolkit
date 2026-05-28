@@ -24,7 +24,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           check-latest: true
       - name: Install package with dev dependencies
-        run: pip install -e ".[dev,kde]"
+        run: pip install -e ".[dev,diffusion,kde]"
       - name: Compile
         run: make compile
       - name: Lint
