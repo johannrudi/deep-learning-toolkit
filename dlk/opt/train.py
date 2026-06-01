@@ -60,7 +60,8 @@ def train_epochs(
         dataloader: Iterable of `(inputs, targets)` training batches.
         optimizer: Optimizer used to update model parameters.
         loss_fn: Callable that maps `(outputs, targets)` to a scalar loss tensor.
-        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net)`.
+        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net=net)`
+            before each epoch and once after training.
         lr_scheduler: Optional learning-rate scheduler with `get_last_lr` and `step`.
         device: Optional device used to move inputs and targets.
         inputs_transform_fn: Optional transform applied to each input batch.
@@ -111,7 +112,7 @@ def train_epochs(
 
             # call validation function
             if validation_fn is not None:
-                validation_fn(epoch_idx, net)
+                validation_fn(epoch_idx, net=net)
 
             # train on batches
             batch_dlog = train_batches(
@@ -157,7 +158,7 @@ def train_epochs(
 
     # call validation function---after training
     if validation_fn is not None:
-        validation_fn(n_epochs, net)
+        validation_fn(n_epochs, net=net)
     time_train = timeit.default_timer() - time_train
     # </training_loop_over_epochs>
 

@@ -16,6 +16,7 @@ from dlk.opt.utils import (
     EpochHookFn,
     LRSchedulerType,
     TrainLog,
+    ValidationFn,
     checkpoint_path,
     checkpoint_save,
     tqdm_disable,
@@ -47,7 +48,6 @@ DLOG_BASENAMES = [
 GANLossFn: TypeAlias = Callable[
     [torch.Tensor, torch.Tensor | None], tuple[torch.Tensor, torch.Tensor | None]
 ]
-GANValidationFn: TypeAlias = Callable[[int, torch.nn.Module, torch.nn.Module], None]
 LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
 
 
@@ -83,7 +83,7 @@ def train_epochs(
     d_opt_pre: int = 1,
     d_opt_post: int = 1,
     g_opt_freq: int = 1,
-    validation_fn: GANValidationFn | None = None,
+    validation_fn: ValidationFn | None = None,
     g_lr_scheduler: LRSchedulerType | None = None,
     d_lr_scheduler: LRSchedulerType | None = None,
     device: torch.device | None = None,
@@ -112,8 +112,9 @@ def train_epochs(
         d_opt_pre: Number of discriminator updates before generator update.
         d_opt_post: Number of discriminator updates after generator update.
         g_opt_freq: Frequency of generator updates in batch steps.
-        validation_fn: Optional callback invoked before each epoch and once after
-            training.
+        validation_fn: Optional callback invoked as
+            `validation_fn(epoch_idx, g_net=g_net, d_net=d_net)`
+            before each epoch and once after training.
         g_lr_scheduler: Optional generator learning-rate scheduler.
         d_lr_scheduler: Optional discriminator learning-rate scheduler.
         device: Optional device to move batch tensors to.
@@ -169,7 +170,7 @@ def train_epochs(
 
             # call validation function
             if validation_fn is not None:
-                validation_fn(epoch_idx, g_net, d_net)
+                validation_fn(epoch_idx, g_net=g_net, d_net=d_net)
 
             # train on batches
             batch_dlog = train_batches(
@@ -239,7 +240,7 @@ def train_epochs(
 
     # call validation function---after training
     if validation_fn is not None:
-        validation_fn(n_epochs, g_net, d_net)
+        validation_fn(n_epochs, g_net=g_net, d_net=d_net)
     time_train = timeit.default_timer() - time_train
     # </training_loop_over_epochs>
 

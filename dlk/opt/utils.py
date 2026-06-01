@@ -15,7 +15,6 @@ import torch
 EpochHookFn: TypeAlias = Callable[[int], None]
 BatchHookFn: TypeAlias = Callable[[int], None]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-ValidationFn: TypeAlias = Callable[[int, torch.nn.Module], None]
 TensorTransformFn: TypeAlias = Callable[[torch.Tensor], torch.Tensor]
 InputsTransformFn: TypeAlias = Callable[
     [torch.Tensor | tuple[torch.Tensor, ...]],
@@ -54,6 +53,10 @@ class DataLoaderType(Protocol):
     def __len__(self) -> int:
         """Return the number of batches."""
         ...
+
+
+class ValidationFn(Protocol):
+    def __call__(self, epoch_idx: int, **kwargs: torch.nn.Module) -> None: ...
 
 
 # --------------------------------------
