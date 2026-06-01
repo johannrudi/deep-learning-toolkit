@@ -65,7 +65,7 @@ def test_save_raises_for_unsupported_format(
     """Raise ValueError when an unsupported format is requested."""
     params = {"seed": 7}
 
-    with pytest.raises(ValueError, match="Unsupported parameter format"):
+    with pytest.raises(ValueError, match="unsupported parameter format"):
         save(
             params=params,
             save_dir=tmp_path,
