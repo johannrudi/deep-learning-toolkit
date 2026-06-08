@@ -2,25 +2,25 @@
 
 import logging
 import pathlib
+import sys
 import timeit
 from datetime import datetime
 
 import torch
+import torch.distributed as torch_dist
 from tqdm import tqdm
 
+from dlk import distributed as dist_utils
 from dlk.opt.utils import (
     BatchHookFn,
-    DataLoaderType,
     EpochHookFn,
-    InputsTransformFn,
     LossFn,
-    LRSchedulerType,
+    LRScheduler,
     TensorTransformFn,
     TrainLog,
     ValidationFn,
     checkpoint_path,
     checkpoint_save,
-    tqdm_disable,
     train_dlog_batch_finalize,
     train_dlog_batch_initialize,
     train_dlog_batch_update,
@@ -33,15 +33,15 @@ from dlk.opt.utils import (
 def train_epochs(
     n_epochs: int,
     net: torch.nn.Module,
-    dataloader: DataLoaderType,
+    dataloader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     validation_fn: ValidationFn | None = None,
-    lr_scheduler: LRSchedulerType | None = None,
+    lr_scheduler: LRScheduler | None = None,
     device: torch.device | None = None,
-    inputs_transform_fn: InputsTransformFn | None = None,
+    inputs_transform_fn: TensorTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
-    logger: logging.Logger | None = None,
+    logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
@@ -60,8 +60,7 @@ def train_epochs(
         dataloader: Iterable of `(inputs, targets)` training batches.
         optimizer: Optimizer used to update model parameters.
         loss_fn: Callable that maps `(outputs, targets)` to a scalar loss tensor.
-        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net=net)`
-            before each epoch and once after training.
+        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net)`.
         lr_scheduler: Optional learning-rate scheduler with `get_last_lr` and `step`.
         device: Optional device used to move inputs and targets.
         inputs_transform_fn: Optional transform applied to each input batch.
@@ -80,30 +79,42 @@ def train_epochs(
     """
     if n_epochs < 1:
         raise ValueError(f"n_epochs must be >= 1, got {n_epochs}")
-    if logger is None:
-        logger = logging.getLogger("dlk.opt.train.train_epochs")
-
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, ["loss_mean", "loss_std"])
 
     # set checkpoint directory; create if it doesn't exist
-    if checkpoint_epochs is not None:
+    main_process = dist_utils.is_main_process()
+    if checkpoint_epochs is not None and main_process:
         if checkpoint_epochs < 1:
             raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
         assert checkpoint_dir is not None
         checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
         checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
         checkpoint_dir_.mkdir(parents=True, exist_ok=True)
+    elif checkpoint_epochs is not None and checkpoint_epochs < 1:
+        raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
-    with tqdm(range(n_epochs), desc="epochs", disable=tqdm_disable()) as pbar:
+    with tqdm(
+        range(n_epochs),
+        desc="epochs",
+        disable=not main_process or not sys.stdout.isatty(),
+    ) as pbar:
         for epoch_idx in pbar:
+            sampler = getattr(dataloader, "sampler", None)
+            if hasattr(sampler, "set_epoch"):
+                sampler.set_epoch(epoch_idx)
+
             # initialize epoch
             if epoch_initialize_fn:
                 epoch_initialize_fn(epoch_idx)
 
             # save checkpoint
-            if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
+            if (
+                checkpoint_epochs is not None
+                and main_process
+                and (epoch_idx % checkpoint_epochs == 0)
+            ):
                 path = checkpoint_path(
                     checkpoint_dir_, n_epochs, prefix="net", epoch=epoch_idx
                 )
@@ -112,7 +123,7 @@ def train_epochs(
 
             # call validation function
             if validation_fn is not None:
-                validation_fn(epoch_idx, net=net)
+                validation_fn(epoch_idx, net)
 
             # train on batches
             batch_dlog = train_batches(
@@ -134,31 +145,33 @@ def train_epochs(
                     lr_current = f"{lr_current[0]:.6e}"
                 else:
                     lr_current = str(lr_current)
-                logger.debug(f"epoch {epoch_idx:4d}, learning_rate {lr_current}")
+                if main_process:
+                    logger.debug(f"epoch {epoch_idx:4d}, learning_rate {lr_current}")
                 lr_scheduler.step()
 
             # log
             train_dlog_epoch_update(
                 epoch_dlog, epoch_idx, ["loss_mean", "loss_std"], batch_dlog
             )
-            logger.info(
-                f"epoch {epoch_idx:4d}, "
-                f"loss mean {batch_dlog['loss_mean']:.6e} std {batch_dlog['loss_std']:.3e}"
-            )
+            if main_process:
+                logger.info(
+                    f"epoch {epoch_idx:4d}, "
+                    f"loss mean {batch_dlog['loss_mean']:.6e} std {batch_dlog['loss_std']:.3e}"
+                )
 
             # finalize epoch
             if epoch_finalize_fn:
                 epoch_finalize_fn(epoch_idx)
 
     # save checkpoint---after training
-    if checkpoint_epochs is not None:
+    if checkpoint_epochs is not None and main_process:
         path = checkpoint_path(checkpoint_dir_, n_epochs, prefix="net", epoch=n_epochs)
         logger.debug(f"epoch {n_epochs:4d}, save checkpoint to '{path}'")
         checkpoint_save(net, path, epoch=n_epochs, optimizer=optimizer)
 
     # call validation function---after training
     if validation_fn is not None:
-        validation_fn(n_epochs, net=net)
+        validation_fn(n_epochs, net)
     time_train = timeit.default_timer() - time_train
     # </training_loop_over_epochs>
 
@@ -167,19 +180,23 @@ def train_epochs(
 
     # print statistics
     n_steps = n_epochs * len(dataloader)
-    n_samples = (
+    n_samples = dist_utils.get_world_size() * (
         n_steps * dataloader.batch_size if dataloader.batch_size is not None else 0
     )
-    logger.info(
-        f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
-    )
+    if main_process:
+        logger.info(
+            f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
+        )
     time_per_epoch = time_train / n_epochs
     time_per_step = time_train / n_steps if n_steps > 0 else float("nan")
     samples_per_second = n_samples / time_train if time_train > 0 else float("nan")
-    logger.info(f"training time {time_train:g} sec, time/epoch {time_per_epoch:g} sec")
-    logger.info(
-        f"time/step {time_per_step:g} sec, samples/sec {samples_per_second:g} sec"
-    )
+    if main_process:
+        logger.info(
+            f"training time {time_train:g} sec, time/epoch {time_per_epoch:g} sec"
+        )
+        logger.info(
+            f"time/step {time_per_step:g} sec, samples/sec {samples_per_second:g} sec"
+        )
 
     # return log
     return epoch_dlog
@@ -188,13 +205,13 @@ def train_epochs(
 def train_batches(
     epoch_idx: int,
     net: torch.nn.Module,
-    dataloader: DataLoaderType,
+    dataloader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     device: torch.device | None = None,
-    inputs_transform_fn: InputsTransformFn | None = None,
+    inputs_transform_fn: TensorTransformFn | None = None,
     targets_transform_fn: TensorTransformFn | None = None,
-    logger: logging.Logger | None = None,
+    logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
@@ -218,8 +235,6 @@ def train_batches(
     Returns:
         Batch-level training log dictionary with aggregate loss statistics.
     """
-    if logger is None:
-        logger = logging.getLogger("dlk.opt.train.train_batches")
     if max_batches is None:
         max_batches = len(dataloader)
     batch_dlog = train_dlog_batch_initialize(max_batches, ["loss"], save_list=False)
@@ -239,10 +254,7 @@ def train_batches(
         # get input and target tensors
         inputs, targets = data
         if device is not None:
-            if isinstance(inputs, tuple):
-                inputs = tuple(x.to(device) for x in inputs)
-            else:
-                inputs = inputs.to(device)
+            inputs = inputs.to(device)
             targets = targets.to(device)
         if inputs_transform_fn is not None:
             inputs = inputs_transform_fn(inputs)
@@ -251,16 +263,12 @@ def train_batches(
 
         # zero the gradients (begin AD)
         optimizer.zero_grad()
-
-        # forward pass; unpack inputs tuple when applicable
-        outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
-
+        # forward pass
+        outputs = net(inputs)
         # calculate loss
         loss = loss_fn(outputs, targets)
-
         # calculate derivatives (end AD)
         loss.backward()
-
         # update network parameters
         optimizer.step()
 
@@ -276,4 +284,45 @@ def train_batches(
 
     # finalize and return log
     train_dlog_batch_finalize(batch_dlog, ["loss"])
+    _distributed_reduce_batch_dlog(batch_dlog, ["loss"])
     return batch_dlog
+
+
+@torch.no_grad()
+def _distributed_reduce_batch_dlog(
+    batch_dlog: TrainLog,
+    tags: list[str],
+) -> None:
+    """Reduce finalized batch metric statistics across distributed ranks."""
+    if not dist_utils.is_distributed():
+        return
+
+    for tag in tags:
+        count = float(batch_dlog[f"{tag}_mean_n"])
+        device = (
+            torch.device("cuda", dist_utils.get_local_rank())
+            if torch.cuda.is_available()
+            else torch.device("cpu")
+        )
+        stats = torch.tensor(
+            [
+                count,
+                batch_dlog[f"{tag}_mean"] * count,
+                batch_dlog[f"{tag}_sq_mean"] * count,
+            ],
+            dtype=torch.float64,
+            device=device,
+        )
+        torch_dist.all_reduce(stats, op=torch_dist.ReduceOp.SUM)
+
+        total_count = int(stats[0].item())
+        batch_dlog[f"{tag}_mean_n"] = total_count
+        if total_count > 0:
+            mean = (stats[1] / stats[0]).item()
+            sq_mean = (stats[2] / stats[0]).item()
+            variance = max(sq_mean - mean * mean, 0.0)
+            batch_dlog[f"{tag}_mean"] = mean
+            batch_dlog[f"{tag}_sq_mean"] = sq_mean
+            batch_dlog[f"{tag}_std"] = torch.sqrt(
+                torch.tensor(variance, dtype=torch.float64)
+            ).item()

@@ -2,11 +2,11 @@
 
 import math
 import pathlib
-import sys
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from typing import Any, Protocol, TypeAlias
 
 import torch
+from torch.nn.parallel import DistributedDataParallel
 
 # --------------------------------------
 # Types
@@ -15,15 +15,12 @@ import torch
 EpochHookFn: TypeAlias = Callable[[int], None]
 BatchHookFn: TypeAlias = Callable[[int], None]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+ValidationFn: TypeAlias = Callable[[int, torch.nn.Module], None]
 TensorTransformFn: TypeAlias = Callable[[torch.Tensor], torch.Tensor]
-InputsTransformFn: TypeAlias = Callable[
-    [torch.Tensor | tuple[torch.Tensor, ...]],
-    torch.Tensor | tuple[torch.Tensor, ...],
-]
 TrainLog: TypeAlias = dict[str, Any]
 
 
-class LRSchedulerType(Protocol):
+class LRScheduler(Protocol):
     """Protocol for learning-rate schedulers used during training."""
 
     def get_last_lr(self) -> list[float]:
@@ -33,30 +30,6 @@ class LRSchedulerType(Protocol):
     def step(self) -> None:
         """Advance the scheduler state by one step."""
         ...
-
-
-class DataLoaderType(Protocol):
-    """Protocol for objects that can serve as a dataloader in training loops.
-
-    Covers `torch.utils.data.DataLoader` and custom wrappers.
-    """
-
-    @property
-    def batch_size(self) -> int | None:
-        """Number of samples per batch, or `None` if not fixed."""
-        ...
-
-    def __iter__(self) -> Iterator[Any]:
-        """Yield batches."""
-        ...
-
-    def __len__(self) -> int:
-        """Return the number of batches."""
-        ...
-
-
-class ValidationFn(Protocol):
-    def __call__(self, epoch_idx: int, **kwargs: torch.nn.Module) -> None: ...
 
 
 # --------------------------------------
@@ -80,7 +53,7 @@ def checkpoint_path(
         Path to the checkpoint file for the selected epoch.
     """
     if n_epochs <= 0:
-        raise ValueError(f"expected n_epochs > 0, got {n_epochs}.")
+        raise ValueError(f"Expected n_epochs > 0, got {n_epochs}.")
     n_digits = int(math.ceil(math.log10(1.01 * n_epochs)))
     filename = f"{prefix}_e{epoch:0{n_digits}d}.pt"
     return pathlib.Path(checkpoint_dir) / filename
@@ -106,7 +79,11 @@ def checkpoint_save(
     torch.save(
         {
             "epoch": epoch,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": (
+                model.module.state_dict()
+                if isinstance(model, DistributedDataParallel)
+                else model.state_dict()
+            ),
             "optimizer_state_dict": optimizer.state_dict(),
         },
         filepath,
@@ -266,27 +243,3 @@ def train_dlog_epoch_finalize(
         None.
     """
     dlog["time_train"] = time_train
-
-
-# --------------------------------------
-
-
-def tqdm_disable() -> bool:
-    """Return True when tqdm output should be suppressed.
-
-    Notebooks are detected via IPython and always show tqdm. Non-TTY
-    environments (e.g. SLURM batch jobs) suppress it.
-
-    Returns:
-        True to disable tqdm, False to enable it.
-    """
-    # show in Jupyter notebooks regardless of TTY
-    try:
-        from IPython import get_ipython  # type: ignore[import-untyped]
-
-        if get_ipython() is not None:
-            return False
-    except ImportError:
-        pass
-    # suppress for non-interactive (e.g. SLURM) jobs
-    return not sys.stdout.isatty()
