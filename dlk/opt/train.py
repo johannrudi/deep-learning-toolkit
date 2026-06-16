@@ -1,8 +1,7 @@
-"""Provide reusable epoch and batch level training loops for supervised models."""
+"""Provide reusable epoch- and batch-level training loops for supervised models."""
 
 import logging
 import pathlib
-import sys
 import timeit
 from datetime import datetime
 
@@ -13,14 +12,16 @@ from tqdm import tqdm
 from dlk import distributed as dist_utils
 from dlk.opt.utils import (
     BatchHookFn,
+    DataLoaderType,
     EpochHookFn,
+    InputsTransformFn,
     LossFn,
-    LRScheduler,
-    TensorTransformFn,
+    LRSchedulerType,
     TrainLog,
     ValidationFn,
     checkpoint_path,
     checkpoint_save,
+    tqdm_disable,
     train_dlog_batch_finalize,
     train_dlog_batch_initialize,
     train_dlog_batch_update,
@@ -29,7 +30,6 @@ from dlk.opt.utils import (
     train_dlog_epoch_update,
 )
 
-
 def train_epochs(
     n_epochs: int,
     net: torch.nn.Module,
@@ -37,11 +37,11 @@ def train_epochs(
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     validation_fn: ValidationFn | None = None,
-    lr_scheduler: LRScheduler | None = None,
+    lr_scheduler: LRSchedulerType | None = None,
     device: torch.device | None = None,
-    inputs_transform_fn: TensorTransformFn | None = None,
-    targets_transform_fn: TensorTransformFn | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_epochs"),
+    inputs_transform_fn: InputsTransformFn | None = None,
+    targets_transform_fn: InputsTransformFn | None = None,
+    logger: logging.Logger | None = None,
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
@@ -60,7 +60,8 @@ def train_epochs(
         dataloader: Iterable of `(inputs, targets)` training batches.
         optimizer: Optimizer used to update model parameters.
         loss_fn: Callable that maps `(outputs, targets)` to a scalar loss tensor.
-        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net)`.
+        validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net=net)`
+        before each epoch and once after training.
         lr_scheduler: Optional learning-rate scheduler with `get_last_lr` and `step`.
         device: Optional device used to move inputs and targets.
         inputs_transform_fn: Optional transform applied to each input batch.
@@ -79,6 +80,9 @@ def train_epochs(
     """
     if n_epochs < 1:
         raise ValueError(f"n_epochs must be >= 1, got {n_epochs}")
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train.train_epochs")
+
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, ["loss_mean", "loss_std"])
 
     # set checkpoint directory; create if it doesn't exist
@@ -123,7 +127,7 @@ def train_epochs(
 
             # call validation function
             if validation_fn is not None:
-                validation_fn(epoch_idx, net)
+                validation_fn(epoch_idx, net=net)
 
             # train on batches
             batch_dlog = train_batches(
@@ -171,7 +175,7 @@ def train_epochs(
 
     # call validation function---after training
     if validation_fn is not None:
-        validation_fn(n_epochs, net)
+        validation_fn(n_epochs, net=net)
     time_train = timeit.default_timer() - time_train
     # </training_loop_over_epochs>
 
@@ -205,12 +209,12 @@ def train_epochs(
 def train_batches(
     epoch_idx: int,
     net: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
+    dataloader: DataLoaderType,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     device: torch.device | None = None,
-    inputs_transform_fn: TensorTransformFn | None = None,
-    targets_transform_fn: TensorTransformFn | None = None,
+    inputs_transform_fn: InputsTransformFn | None = None,
+    targets_transform_fn: InputsTransformFn | None = None,
     logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
@@ -240,6 +244,8 @@ def train_batches(
     Returns:
         Batch-level training log dictionary with aggregate loss statistics.
     """
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.train.train_batches")
     if max_batches is None:
         max_batches = len(dataloader)
     batch_dlog = train_dlog_batch_initialize(max_batches, ["loss"], save_list=False)
@@ -259,7 +265,10 @@ def train_batches(
         # get input and target tensors
         inputs, targets = data
         if device is not None:
-            inputs = inputs.to(device)
+            if isinstance(inputs, tuple):
+                inputs = tuple(x.to(device) for x in inputs)
+            else:
+                inputs = inputs.to(device)
             targets = targets.to(device)
         if inputs_transform_fn is not None:
             inputs = inputs_transform_fn(inputs)
@@ -268,12 +277,16 @@ def train_batches(
 
         # zero the gradients (begin AD)
         optimizer.zero_grad()
-        # forward pass
-        outputs = net(inputs)
+
+        # forward pass; unpack inputs tuple when applicable
+        outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
+
         # calculate loss
         loss = loss_fn(outputs, targets)
+
         # calculate derivatives (end AD)
         loss.backward()
+
         # update network parameters
         optimizer.step()
 
