@@ -17,6 +17,7 @@ from dlk.opt.utils import (
     InputsTransformFn,
     LossFn,
     LRSchedulerType,
+    TensorTransformFn,
     TrainLog,
     ValidationFn,
     checkpoint_path,
@@ -30,17 +31,18 @@ from dlk.opt.utils import (
     train_dlog_epoch_update,
 )
 
+
 def train_epochs(
     n_epochs: int,
     net: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
+    dataloader: DataLoaderType,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     validation_fn: ValidationFn | None = None,
     lr_scheduler: LRSchedulerType | None = None,
     device: torch.device | None = None,
     inputs_transform_fn: InputsTransformFn | None = None,
-    targets_transform_fn: InputsTransformFn | None = None,
+    targets_transform_fn: TensorTransformFn | None = None,
     logger: logging.Logger | None = None,
     checkpoint_epochs: int | None = None,
     checkpoint_dir: str = "checkpoints",
@@ -61,7 +63,7 @@ def train_epochs(
         optimizer: Optimizer used to update model parameters.
         loss_fn: Callable that maps `(outputs, targets)` to a scalar loss tensor.
         validation_fn: Optional callback invoked as `validation_fn(epoch_idx, net=net)`
-        before each epoch and once after training.
+            before each epoch and once after training.
         lr_scheduler: Optional learning-rate scheduler with `get_last_lr` and `step`.
         device: Optional device used to move inputs and targets.
         inputs_transform_fn: Optional transform applied to each input batch.
@@ -214,8 +216,8 @@ def train_batches(
     loss_fn: LossFn,
     device: torch.device | None = None,
     inputs_transform_fn: InputsTransformFn | None = None,
-    targets_transform_fn: InputsTransformFn | None = None,
-    logger: logging.Logger = logging.getLogger("dlk.opt.train_batches"),
+    targets_transform_fn: TensorTransformFn | None = None,
+    logger: logging.Logger | None = None,
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,

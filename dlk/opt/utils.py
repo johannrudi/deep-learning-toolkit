@@ -17,6 +17,7 @@ EpochHookFn: TypeAlias = Callable[[int], None]
 BatchHookFn: TypeAlias = Callable[[int], None]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 ValidationFn: TypeAlias = Callable[[int, torch.nn.Module], None]
+TensorTransformFn: TypeAlias = Callable[[torch.Tensor], torch.Tensor]
 InputsTransformFn: TypeAlias = Callable[
     [torch.Tensor | tuple[torch.Tensor, ...]],
     torch.Tensor | tuple[torch.Tensor, ...],
@@ -309,8 +310,10 @@ def train_dlog_epoch_finalize(
 
 def tqdm_disable() -> bool:
     """Return True when tqdm output should be suppressed.
+
     Notebooks are detected via IPython and always show tqdm. Non-TTY
     environments (e.g. SLURM batch jobs) suppress it.
+
     Returns:
         True to disable tqdm, False to enable it.
     """
@@ -324,3 +327,4 @@ def tqdm_disable() -> bool:
         pass
     # suppress for non-interactive (e.g. SLURM) jobs
     return not sys.stdout.isatty()
+    
