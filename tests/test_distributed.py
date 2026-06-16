@@ -1,7 +1,12 @@
+import pathlib
+
 import pytest
 import torch
 from torch.utils.data import TensorDataset
+
 from dlk import distributed
+from dlk.opt.train import _distributed_reduce_batch_dlog
+from dlk.opt.utils import checkpoint_load, checkpoint_save
 
 
 def test_torchrun_env_returns_none_when_required_variables_are_missing() -> None:
@@ -102,3 +107,61 @@ def test_unwrap_ddp_returns_module_unchanged_for_plain_model() -> None:
     model = torch.nn.Linear(2, 2)
 
     assert distributed.unwrap_ddp(model) is model
+
+
+def test_reduce_batch_dlog_is_noop_outside_distributed() -> None:
+    """Skip the all-reduce path when no process group is initialized."""
+    dlog = {
+        "loss_mean_n": 5,
+        "loss_mean": 1.25,
+        "loss_sq_mean": 2.5,
+        "loss_std": 0.5,
+    }
+    snapshot = dict(dlog)
+
+    _distributed_reduce_batch_dlog(dlog, ["loss"])
+
+    assert dlog == snapshot
+
+
+def test_checkpoint_load_restores_model_and_optimizer(tmp_path: pathlib.Path) -> None:
+    """Round-trip a checkpoint and verify weights and optimizer state restore."""
+    torch.manual_seed(0)
+    model_a = torch.nn.Linear(3, 2)
+    optimizer_a = torch.optim.SGD(model_a.parameters(), lr=0.1)
+
+    # take an optimizer step so state is non-empty
+    inputs = torch.randn(4, 3)
+    targets = torch.randn(4, 2)
+    loss = ((model_a(inputs) - targets) ** 2).mean()
+    loss.backward()
+    optimizer_a.step()
+
+    path = tmp_path / "ckpt.pt"
+    checkpoint_save(model_a, path, epoch=7, optimizer=optimizer_a)
+
+    model_b = torch.nn.Linear(3, 2)
+    optimizer_b = torch.optim.SGD(model_b.parameters(), lr=0.1)
+
+    epoch = checkpoint_load(path, model_b, optimizer=optimizer_b, map_location="cpu")
+
+    assert epoch == 7
+    for p_a, p_b in zip(model_a.parameters(), model_b.parameters()):
+        assert torch.equal(p_a, p_b)
+    assert optimizer_b.state_dict()["state"] == optimizer_a.state_dict()["state"]
+
+
+def test_checkpoint_load_without_optimizer(tmp_path: pathlib.Path) -> None:
+    """Allow loading model weights without restoring optimizer state."""
+    model_a = torch.nn.Linear(2, 2)
+    optimizer_a = torch.optim.SGD(model_a.parameters(), lr=0.01)
+    path = tmp_path / "ckpt.pt"
+    checkpoint_save(model_a, path, epoch=3, optimizer=optimizer_a)
+
+    model_b = torch.nn.Linear(2, 2)
+
+    epoch = checkpoint_load(path, model_b, map_location="cpu")
+
+    assert epoch == 3
+    for p_a, p_b in zip(model_a.parameters(), model_b.parameters()):
+        assert torch.equal(p_a, p_b)

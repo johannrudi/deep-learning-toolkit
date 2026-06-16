@@ -1,4 +1,4 @@
-"""Provide reusable epoch- and batch-level training loops for supervised models."""
+"""Provide reusable epoch and batch level training loops for supervised models."""
 
 import logging
 import pathlib
@@ -217,6 +217,11 @@ def train_batches(
     max_batches: int | None = None,
 ) -> TrainLog:
     """Run the training loop over batches for a single epoch.
+
+    In distributed runs, every rank must process the same number of batches.
+    A divergent ``len(dataloader)`` or ``max_batches`` across ranks will hang
+    the final ``all_reduce`` on loss statistics. Use a ``DistributedSampler``
+    and pass the same ``max_batches`` on all ranks.
 
     Args:
         epoch_idx: Current epoch index used in logging.

@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Mapping
+from datetime import timedelta
 
 import torch
 import torch.distributed as dist
@@ -38,8 +39,13 @@ def torchrun_env(env: Mapping[str, str] | None = None) -> dict[str, int] | None:
     return values
 
 
-def init_process_group() -> torch.device:
+def init_process_group(timeout: timedelta = timedelta(minutes=30)) -> torch.device:
     """Initialize torch distributed from ``torchrun`` variables when present.
+
+    Args:
+        timeout: Collective-operation timeout. Defaults to 30 minutes, matching
+            the NCCL default. Increase when rank 0 performs long setup work
+            (e.g., dataset preparation) before the first collective.
 
     Returns:
         The process-local compute device. In distributed CUDA runs, this is
@@ -58,7 +64,7 @@ def init_process_group() -> torch.device:
         backend = "gloo"
 
     if not dist.is_initialized():
-        dist.init_process_group(backend=backend)
+        dist.init_process_group(backend=backend, timeout=timeout)
     return device
 
 
@@ -96,7 +102,11 @@ def is_main_process() -> bool:
 
 def barrier() -> None:
     """Synchronize all ranks when distributed is initialized."""
-    if is_distributed():
+    if not is_distributed():
+        return
+    if torch.cuda.is_available() and dist.get_backend() == "nccl":
+        dist.barrier(device_ids=[get_local_rank()])
+    else:
         dist.barrier()
 
 

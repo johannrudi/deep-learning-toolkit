@@ -59,6 +59,38 @@ def checkpoint_path(
     return pathlib.Path(checkpoint_dir) / filename
 
 
+def checkpoint_load(
+    filepath: str | pathlib.Path,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer | None = None,
+    map_location: str | torch.device | None = None,
+) -> int:
+    """Load model and optimizer state dictionaries from a checkpoint file.
+
+    Resolves DDP wrappers so the same checkpoint loads cleanly whether the
+    target model is plain or wrapped in ``DistributedDataParallel``. When
+    resuming a distributed run, pass ``map_location`` (e.g., the rank-local
+    device) so tensors land on the correct device for each rank.
+
+    Args:
+        filepath: Checkpoint file path produced by ``checkpoint_save``.
+        model: Model into which state should be loaded.
+        optimizer: Optional optimizer whose state should be restored.
+        map_location: Optional device or torch.load map_location argument.
+
+    Returns:
+        Epoch index stored in the checkpoint.
+    """
+    checkpoint = torch.load(filepath, map_location=map_location, weights_only=False)
+    target = (
+        model.module if isinstance(model, DistributedDataParallel) else model
+    )
+    target.load_state_dict(checkpoint["model_state_dict"])
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    return int(checkpoint["epoch"])
+
+
 def checkpoint_save(
     model: torch.nn.Module,
     filepath: str | pathlib.Path,
