@@ -2,11 +2,39 @@ import pathlib
 
 import pytest
 import torch
-from torch.utils.data import TensorDataset
+import torch.distributed as torch_dist
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DistributedSampler, TensorDataset
 
 from dlk import distributed
+from dlk.opt import train as train_mod
 from dlk.opt.train import _distributed_reduce_batch_dlog
 from dlk.opt.utils import checkpoint_load, checkpoint_save
+
+
+class _FakeDDP(DistributedDataParallel):
+    """DDP subclass that skips process-group init for isinstance-based tests."""
+
+    def __init__(self, module: torch.nn.Module) -> None:
+        torch.nn.Module.__init__(self)
+        self.module = module
+
+
+@pytest.fixture
+def fake_dist(monkeypatch: pytest.MonkeyPatch) -> dict:
+    """Pretend a 2-rank gloo process group is up (this rank is rank 1)."""
+    state: dict = {"barrier_kwargs": None, "destroy_calls": 0}
+    for name, value in [
+        ("is_available", lambda: True),
+        ("is_initialized", lambda: True),
+        ("get_rank", lambda: 1),
+        ("get_world_size", lambda: 2),
+        ("get_backend", lambda: "gloo"),
+        ("barrier", lambda **kw: state.update(barrier_kwargs=kw)),
+        ("destroy_process_group", lambda: state.update(destroy_calls=state["destroy_calls"] + 1)),
+    ]:
+        monkeypatch.setattr(distributed.dist, name, value)
+    return state
 
 
 def test_torchrun_env_returns_none_when_required_variables_are_missing() -> None:
@@ -165,3 +193,64 @@ def test_checkpoint_load_without_optimizer(tmp_path: pathlib.Path) -> None:
     assert epoch == 3
     for p_a, p_b in zip(model_a.parameters(), model_b.parameters()):
         assert torch.equal(p_a, p_b)
+
+
+def test_helpers_and_sampler_use_distributed_state(fake_dist: dict) -> None:
+    """Rank, world size, main-process gate, and sampler shard from fake group."""
+    assert distributed.is_distributed()
+    assert distributed.get_rank() == 1
+    assert distributed.get_world_size() == 2
+    assert not distributed.is_main_process()
+
+    sampler = distributed.create_distributed_sampler(
+        TensorDataset(torch.arange(8)), shuffle=False
+    )
+    assert isinstance(sampler, DistributedSampler)
+    assert sampler.num_replicas == 2
+    assert sampler.rank == 1
+
+
+def test_barrier_and_cleanup_dispatch_to_dist(fake_dist: dict) -> None:
+    """barrier() goes to dist (gloo: no device_ids); cleanup() destroys group."""
+    distributed.barrier()
+    distributed.cleanup()
+
+    assert fake_dist["barrier_kwargs"] == {}
+    assert fake_dist["destroy_calls"] == 1
+
+
+def test_unwrap_and_checkpoint_handle_ddp_wrapper(tmp_path: pathlib.Path) -> None:
+    """unwrap_ddp peels module; checkpoint_save stores plain state dict."""
+    inner = torch.nn.Linear(2, 2)
+    wrapped = _FakeDDP(inner)
+    optimizer = torch.optim.SGD(inner.parameters(), lr=0.1)
+
+    assert distributed.unwrap_ddp(wrapped) is inner
+
+    path = tmp_path / "ddp.pt"
+    checkpoint_save(wrapped, path, epoch=1, optimizer=optimizer)
+    checkpoint = torch.load(path, weights_only=False)
+    assert set(checkpoint["model_state_dict"]) == set(inner.state_dict())
+
+
+def test_reduce_batch_dlog_aggregates_across_ranks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All-reduce sums per-rank stats; reduce rebuilds mean, sq_mean, std."""
+    monkeypatch.setattr(train_mod.dist_utils, "is_distributed", lambda: True)
+    monkeypatch.setattr(train_mod.dist_utils, "get_local_rank", lambda: 0)
+
+    def fake_all_reduce(tensor: torch.Tensor, op: object) -> None:
+        assert op is torch_dist.ReduceOp.SUM
+        tensor.mul_(2)  # simulate 2 ranks with identical local stats
+
+    monkeypatch.setattr(train_mod.torch_dist, "all_reduce", fake_all_reduce)
+
+    # Per-rank n=4, mean=2.0, sq_mean=5.0 → variance=1.0, std=1.0 after reduce.
+    dlog = {"loss_mean_n": 4, "loss_mean": 2.0, "loss_sq_mean": 5.0, "loss_std": None}
+    _distributed_reduce_batch_dlog(dlog, ["loss"])
+
+    assert dlog["loss_mean_n"] == 8
+    assert dlog["loss_mean"] == pytest.approx(2.0)
+    assert dlog["loss_sq_mean"] == pytest.approx(5.0)
+    assert dlog["loss_std"] == pytest.approx(1.0)
