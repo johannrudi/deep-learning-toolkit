@@ -87,24 +87,24 @@ def train_epochs(
 
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, ["loss_mean", "loss_std"])
 
-    # set checkpoint directory; create if it doesn't exist
+    # set checkpoint directory or create if it doesn't exist
     main_process = dist_utils.is_main_process()
-    if checkpoint_epochs is not None and main_process:
+    if checkpoint_epochs is not None:
         if checkpoint_epochs < 1:
             raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
-        assert checkpoint_dir is not None
-        checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
-        checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
-        checkpoint_dir_.mkdir(parents=True, exist_ok=True)
-    elif checkpoint_epochs is not None and checkpoint_epochs < 1:
-        raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
+        if main_process:
+            assert checkpoint_dir is not None
+            checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
+            checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
+            checkpoint_dir_.mkdir(parents=True, exist_ok=True)
+
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
     with tqdm(
         range(n_epochs),
         desc="epochs",
-        disable=not main_process or not sys.stdout.isatty(),
+        disable=not main_process or tqdm_disable(),
     ) as pbar:
         for epoch_idx in pbar:
             sampler = getattr(dataloader, "sampler", None)
@@ -293,7 +293,7 @@ def train_batches(
         optimizer.step()
 
         # log
-        loss_v = loss.item()
+        loss_v = loss.item() # loss.item() forces a CUDA sync
         train_dlog_batch_update(batch_dlog, batch_idx, {"loss": loss_v})
         logger.debug(f"epoch {epoch_idx:4d}, batch {batch_idx:4d}, loss {loss_v:.6e}")
 

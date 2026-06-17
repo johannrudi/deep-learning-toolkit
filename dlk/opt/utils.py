@@ -16,7 +16,6 @@ from torch.nn.parallel import DistributedDataParallel
 EpochHookFn: TypeAlias = Callable[[int], None]
 BatchHookFn: TypeAlias = Callable[[int], None]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
-ValidationFn: TypeAlias = Callable[[int, torch.nn.Module], None]
 TensorTransformFn: TypeAlias = Callable[[torch.Tensor], torch.Tensor]
 InputsTransformFn: TypeAlias = Callable[
     [torch.Tensor | tuple[torch.Tensor, ...]],
@@ -39,6 +38,7 @@ class LRSchedulerType(Protocol):
 
 class DataLoaderType(Protocol):
     """Protocol for objects that can serve as a dataloader in training loops.
+    
     Covers `torch.utils.data.DataLoader` and custom wrappers.
     """
 
@@ -57,7 +57,7 @@ class DataLoaderType(Protocol):
 
 
 class ValidationFn(Protocol):
-    def __call__(self, epoch_idx: int, **kwargs: torch.nn.Module) -> None: ...
+    def __call__(self, epoch_idx: int, *, net: torch.nn.Module) -> None: ...
 
 
 # --------------------------------------
