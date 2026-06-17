@@ -186,9 +186,14 @@ def train_epochs(
 
     # print statistics
     n_steps = n_epochs * len(dataloader)
-    n_samples = dist_utils.get_world_size() * (
-        n_steps * dataloader.batch_size if dataloader.batch_size is not None else 0
-    )
+    dataset = getattr(dataloader, "dataset", None)
+    if dataset is not None and hasattr(dataset, "__len__"):
+        # dataset length is invariant under DistributedSampler sharding
+        n_samples = n_epochs * len(dataset)
+    elif dataloader.batch_size is not None:
+        n_samples = dist_utils.get_world_size() * n_steps * dataloader.batch_size
+    else:
+        n_samples = 0
     if main_process:
         logger.info(
             f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
