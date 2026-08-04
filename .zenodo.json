@@ -1,0 +1,49 @@
+{
+  "title": "Deep Learning Toolkit: Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities",
+  "description": "<p>Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities.</p>",
+  "upload_type": "software",
+  "license": "GPL-3.0-only",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Rudi, Johann",
+      "affiliation": "Virginia Tech",
+      "orcid": "0000-0002-6563-9265"
+    }
+  ],
+  "keywords": [
+    "artificial intelligence",
+    "deep learning",
+    "machine learning",
+    "neural networks",
+    "scientific computing",
+    "pytorch"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.48550/arXiv.2012.06691",
+      "relation": "isDocumentedBy",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "10.1016/j.csda.2023.107762",
+      "relation": "isDocumentedBy",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "10.1137/24M1711480",
+      "relation": "isDocumentedBy",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "10.1029/2025JH000964",
+      "relation": "isReferencedBy",
+      "resource_type": "publication-article",
+      "scheme": "doi"
+    }
+  ],
+  "language": "eng"
+}

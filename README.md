@@ -26,6 +26,7 @@ networks, losses, training loops, and utilities.
 
 ### Runtime dependencies
 
+- `matplotlib>=3,<4`
 - `prettytable>=3,<4`
 - `pyyaml>=6,<7`
 - `torch>=2,<3`
@@ -48,6 +49,12 @@ pip install -e .
 
 #### Install with optional extras
 
+Dependencies for generative diffusion models:
+
+```sh
+pip install -e ".[diffusion]"
+```
+
 Dependencies for kernel density estimation:
 
 ```sh
@@ -60,13 +67,13 @@ Dependencies for running tests:
 pip install -e ".[test]"
 ```
 
-#### Install with optional extras for development
+#### Install with all optional extras for development
 
 ```sh
 pip install -e ".[dev]"
 ```
 
-Using `[dev]` includes extras from `[test]`.
+Using `[dev]` includes all extras listed above (`diffusion`, `kde`, `test`).
 
 ---
 
