@@ -11,6 +11,7 @@ from typing import Protocol, TypeAlias
 import torch
 from tqdm import tqdm
 
+from dlk.opt import distributed
 from dlk.opt.utils import (
     BatchHookFn,
     EpochHookFn,
@@ -20,6 +21,7 @@ from dlk.opt.utils import (
     checkpoint_path,
     checkpoint_save,
     tqdm_disable,
+    train_dlog_batch_all_reduce,
     train_dlog_batch_finalize,
     train_dlog_batch_initialize,
     train_dlog_batch_update,
@@ -99,6 +101,14 @@ def train_epochs(
     by `checkpoint_epochs`. If checkpointing is enabled, a timestamped directory is
     created under `checkpoint_dir`.
 
+    Under distributed training (DDP), wrap `g_net` and `d_net` independently;
+    `broadcast_buffers=False` is recommended for `d_net` (multiple discriminator
+    forwards per batch), and `find_unused_parameters`/`static_graph` must stay
+    False (the graph varies with `g_opt_freq` and `d_reg_fn`). Checkpointing and
+    validation run on the main process only, `validation_fn` receives the
+    unwrapped models, the distributed sampler's epoch is advanced automatically,
+    and loss statistics are reduced exactly across all processes.
+
     Args:
         n_epochs: Number of epochs to train.
         g_net: Generator network.
@@ -140,14 +150,16 @@ def train_epochs(
     DLOG_TAGS += [f"{name}_std" for name in DLOG_BASENAMES]
     epoch_dlog = train_dlog_epoch_initialize(n_epochs, DLOG_TAGS)
 
-    # set checkpoint directory; create if it doesn't exist
+    # set checkpoint directory on the main process only; create if it doesn't exist
+    checkpoint_dir_: pathlib.Path | None = None
     if checkpoint_epochs is not None:
         if checkpoint_epochs < 1:
             raise ValueError(f"checkpoint_epochs must be >= 1, got {checkpoint_epochs}")
         assert checkpoint_dir is not None
-        checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
-        checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
-        checkpoint_dir_.mkdir(parents=True, exist_ok=True)
+        if distributed.is_main_process():
+            checkpoint_time = datetime.now().strftime("%Y-%m-%d_t%H%M%S")
+            checkpoint_dir_ = pathlib.Path(checkpoint_dir) / checkpoint_time
+            checkpoint_dir_.mkdir(parents=True, exist_ok=True)
 
     # <training_loop_over_epochs>
     time_train = timeit.default_timer()
@@ -157,8 +169,15 @@ def train_epochs(
             if epoch_initialize_fn:
                 epoch_initialize_fn(epoch_idx)
 
-            # save checkpoint
-            if checkpoint_epochs is not None and (epoch_idx % checkpoint_epochs == 0):
+            # advance the distributed sampler's epoch (no-op otherwise)
+            distributed.sampler_set_epoch(dataloader, epoch_idx)
+
+            # save checkpoint (main process only)
+            if (
+                checkpoint_epochs is not None
+                and checkpoint_dir_ is not None
+                and epoch_idx % checkpoint_epochs == 0
+            ):
                 for tag_, net_, opt_ in zip(
                     ["g", "d"], [g_net, d_net], [g_optimizer, d_optimizer]
                 ):
@@ -168,9 +187,13 @@ def train_epochs(
                     logger.debug(f"epoch {epoch_idx:6d}, save checkpoint to '{path}'")
                     checkpoint_save(net_, path, epoch=epoch_idx, optimizer=opt_)
 
-            # call validation function
-            if validation_fn is not None:
-                validation_fn(epoch_idx, g_net=g_net, d_net=d_net)
+            # call validation function (main process only, with unwrapped models)
+            if validation_fn is not None and distributed.is_main_process():
+                validation_fn(
+                    epoch_idx,
+                    g_net=distributed.unwrap_ddp(g_net),
+                    d_net=distributed.unwrap_ddp(d_net),
+                )
 
             # train on batches
             batch_dlog = train_batches(
@@ -227,8 +250,8 @@ def train_epochs(
             if epoch_finalize_fn:
                 epoch_finalize_fn(epoch_idx)
 
-    # save checkpoint---after training
-    if checkpoint_epochs is not None:
+    # save checkpoint---after training (main process only)
+    if checkpoint_epochs is not None and checkpoint_dir_ is not None:
         for tag_, net_, opt_ in zip(
             ["g", "d"], [g_net, d_net], [g_optimizer, d_optimizer]
         ):
@@ -238,19 +261,25 @@ def train_epochs(
             logger.debug(f"epoch {n_epochs:6d}, save checkpoint to '{path}'")
             checkpoint_save(net_, path, epoch=n_epochs, optimizer=opt_)
 
-    # call validation function---after training
-    if validation_fn is not None:
-        validation_fn(n_epochs, g_net=g_net, d_net=d_net)
+    # call validation function---after training (main process only)
+    if validation_fn is not None and distributed.is_main_process():
+        validation_fn(
+            n_epochs,
+            g_net=distributed.unwrap_ddp(g_net),
+            d_net=distributed.unwrap_ddp(d_net),
+        )
     time_train = timeit.default_timer() - time_train
     # </training_loop_over_epochs>
 
     # finalize log
     train_dlog_epoch_finalize(epoch_dlog, time_train)
 
-    # print statistics
+    # print statistics; sample counts are global across all processes
     n_steps = n_epochs * len(dataloader)
     n_samples = (
-        n_steps * dataloader.batch_size if dataloader.batch_size is not None else 0
+        n_steps * dataloader.batch_size * distributed.get_world_size()
+        if dataloader.batch_size is not None
+        else 0
     )
     logger.info(
         f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
@@ -297,8 +326,11 @@ def _train_step_discriminator(
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
 
-    # generate outputs with `g_net`
-    x_gen = g_net(y_data, z).detach()
+    # generate outputs with `g_net` without tracking gradients
+    # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
+    # its gradient reducer for a backward pass that never happens
+    with torch.no_grad():
+        x_gen = g_net(y_data, z)
 
     # evalutate discriminator (begin AD)
     d_optimizer.zero_grad()
@@ -520,6 +552,9 @@ def train_batches(
         if batch_finalize_fn:
             batch_finalize_fn(batch_idx)
     # </training_loop_over_batches>
+
+    # reduce running aggregates across all processes (no-op otherwise)
+    train_dlog_batch_all_reduce(batch_dlog, DLOG_TAGS, device=device)
 
     # finalize and return log
     train_dlog_batch_finalize(batch_dlog, DLOG_TAGS)

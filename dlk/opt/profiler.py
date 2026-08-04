@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol, TypeAlias
 
 import torch
 
+from dlk.opt import distributed
 from dlk.opt.utils import (
     BatchHookFn,
     EpochHookFn,
@@ -52,7 +53,11 @@ class ProfilerLike(Protocol):
 
 
 class TrainEpochsFn(Protocol):
-    """Protocol for epoch-level training callables used by the profiler."""
+    """Protocol for epoch-level training callables used by the profiler.
+
+    Mirrors the signature of `dlk.opt.train.train_epochs`; update in lockstep
+    with any signature change there.
+    """
 
     def __call__(
         self,
@@ -78,7 +83,11 @@ class TrainEpochsFn(Protocol):
 
 
 class TrainBatchesFn(Protocol):
-    """Protocol for batch-level training callables used by the profiler."""
+    """Protocol for batch-level training callables used by the profiler.
+
+    Mirrors the signature of `dlk.opt.train.train_batches`; update in lockstep
+    with any signature change there.
+    """
 
     def __call__(
         self,
@@ -128,6 +137,10 @@ def trace_handler(
 
     Replaces the built-in handler: `torch.profiler.tensorboard_trace_handler(log_profile_dir)`
 
+    Under distributed training, every rank writes its own rank-suffixed table
+    and trace files (per-rank traces expose communication ops and stragglers),
+    while the table is printed on the main process only.
+
     Args:
         prof: Active profiler handle for the completed trace window.
         device: Optional accelerator name used for device-specific metrics.
@@ -138,6 +151,12 @@ def trace_handler(
     """
     profile_dir = pathlib.Path(log_profile_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
+
+    # suffix output files with the rank in distributed runs
+    if distributed.is_distributed():
+        rank_suffix = f"_rank{distributed.get_rank()}"
+    else:
+        rank_suffix = ""
 
     # generate profiler summary tables
     table = f"<profile_result step={prof.step_num}>\n"
@@ -151,14 +170,15 @@ def trace_handler(
         table += get_table(prof, f"self_{device}_memory_usage")
     table += "</profile_result>\n"
 
-    # write summary table to file and stdout
-    table_path = profile_dir / f"table_prof_step_{prof.step_num}.txt"
+    # write summary table to file on every rank; print on the main process only
+    table_path = profile_dir / f"table_prof_step_{prof.step_num}{rank_suffix}.txt"
     with open(table_path, "w", encoding="utf-8") as file_handle:
         file_handle.write(table)
-    print(table)
+    if distributed.is_main_process():
+        print(table)
 
     # write Chrome trace JSON
-    trace_path = profile_dir / f"trace_prof_step_{prof.step_num}.json"
+    trace_path = profile_dir / f"trace_prof_step_{prof.step_num}{rank_suffix}.json"
     prof.export_chrome_trace(str(trace_path))
 
 
@@ -199,6 +219,9 @@ def profile_train_epochs(
 
     Total number of profiling steps:
         (1 wait + 1 warmup + 3 active) * 2 repeats = 10 steps.
+
+    Under distributed training, call on every rank with a DDP-wrapped model;
+    each rank writes its own rank-suffixed trace showing communication ops.
 
     Source:
         https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html
@@ -291,6 +314,11 @@ def profile_train_batches(
 
     Total number of profiling steps:
         (1 wait + 1 warmup + 3 active) * 2 repeats = 10 steps.
+
+    Under distributed training, call on every rank with a DDP-wrapped model;
+    each rank writes its own rank-suffixed trace showing communication ops.
+    For meaningful (unpadded) profiled batches, the dataset should hold at
+    least `10 * batch_size * world_size` samples.
 
     Source:
         https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html

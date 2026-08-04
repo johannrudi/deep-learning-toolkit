@@ -135,6 +135,15 @@ class DataLoaderWrapper:
         """Number of samples per batch from the underlying dataloader."""
         return self.dataloader.batch_size
 
+    @property
+    def sampler(self) -> object | None:
+        """Sampler of the underlying dataloader, e.g. a `DistributedSampler`.
+
+        Exposed so that the train loop's per-epoch sampler handling reaches
+        through the wrapper.
+        """
+        return getattr(self.dataloader, "sampler", None)
+
     def __len__(self) -> int:
         """Return the number of batches in the underlying dataloader."""
         return len(self.dataloader)

@@ -8,6 +8,8 @@ from typing import Any, Protocol, TypeAlias
 
 import torch
 
+from dlk.opt import distributed
+
 # --------------------------------------
 # Types
 # --------------------------------------
@@ -94,6 +96,9 @@ def checkpoint_save(
 ) -> None:
     """Save model and optimizer state dictionaries to a checkpoint file.
 
+    DDP-wrapped models are unwrapped before saving, so checkpoints never
+    contain `module.`-prefixed keys.
+
     Args:
         model: Model whose parameters should be saved.
         filepath: Output checkpoint file path.
@@ -106,11 +111,48 @@ def checkpoint_save(
     torch.save(
         {
             "epoch": epoch,
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": distributed.unwrap_ddp(model).state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
         },
         filepath,
     )
+
+
+def checkpoint_load(
+    filepath: str | pathlib.Path,
+    model: torch.nn.Module,
+    optimizer: torch.optim.Optimizer | None = None,
+    map_location: str | torch.device | None = None,
+) -> int:
+    """Load model and optimizer state dictionaries from a checkpoint file.
+
+    DDP-wrapped models are unwrapped before loading, and a legacy `module.`
+    key prefix (from checkpoints saved with a wrapped model) is stripped.
+    Under DDP, every rank loads the same file; pass the process's device as
+    `map_location` and load preferably before wrapping with DDP.
+
+    Args:
+        filepath: Checkpoint file path written by `checkpoint_save`.
+        model: Model whose parameters are restored in place.
+        optimizer: Optional optimizer whose state is restored in place.
+        map_location: Device the stored tensors are mapped to; defaults to CPU.
+
+    Returns:
+        Epoch index stored in the checkpoint metadata.
+    """
+    checkpoint = torch.load(
+        filepath,
+        map_location=map_location if map_location is not None else "cpu",
+        weights_only=True,
+    )
+    model_state_dict = {
+        key.removeprefix("module."): value
+        for key, value in checkpoint["model_state_dict"].items()
+    }
+    distributed.unwrap_ddp(model).load_state_dict(model_state_dict)
+    if optimizer is not None:
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    return checkpoint["epoch"]
 
 
 @torch.no_grad()
@@ -169,6 +211,49 @@ def train_dlog_batch_update(
             dlog[f"{tag}_mean_n"] += 1
             dlog[f"{tag}_mean"] += val
             dlog[f"{tag}_sq_mean"] += val * val
+
+
+@torch.no_grad()
+def train_dlog_batch_all_reduce(
+    dlog: MutableMapping[str, Any],
+    tags: Sequence[str],
+    device: torch.device | None = None,
+) -> None:
+    r"""Sum batch-level running aggregates across all ranks, in place.
+
+    Reduces `{tag}_mean_n`, `{tag}_mean`, and `{tag}_sq_mean` with a single
+    all-reduce, so that a subsequent `train_dlog_batch_finalize` yields the
+    exact global mean and standard deviation over all ranks:
+
+        mean = (\sum_r \sum_i x_{r,i}) / (\sum_r n_r)
+
+    Call before `train_dlog_batch_finalize` (which divides by the counts).
+    No-op when not distributed.
+
+    Args:
+        dlog: Training log dictionary from `train_dlog_batch_initialize`.
+        tags: Metric names to reduce.
+        device: Device holding the reduction buffer; required to be this
+            process's GPU for the NCCL backend, CPU (`None`) for gloo.
+
+    Returns:
+        None.
+    """
+    if not distributed.is_distributed():
+        return
+    aggregate_names = ["_mean_n", "_mean", "_sq_mean"]
+    values = torch.tensor(
+        [dlog[f"{tag}{name}"] for tag in tags for name in aggregate_names],
+        dtype=torch.float64,
+        device=device,
+    )
+    distributed.all_reduce_sum_(values)
+    values_list = values.cpu().tolist()
+    for tag_idx, tag in enumerate(tags):
+        offset = tag_idx * len(aggregate_names)
+        dlog[f"{tag}_mean_n"] = int(values_list[offset])
+        dlog[f"{tag}_mean"] = values_list[offset + 1]
+        dlog[f"{tag}_sq_mean"] = values_list[offset + 2]
 
 
 @torch.no_grad()
@@ -275,11 +360,15 @@ def tqdm_disable() -> bool:
     """Return True when tqdm output should be suppressed.
 
     Notebooks are detected via IPython and always show tqdm. Non-TTY
-    environments (e.g. SLURM batch jobs) suppress it.
+    environments (e.g. SLURM batch jobs) and non-main ranks of distributed
+    runs suppress it.
 
     Returns:
         True to disable tqdm, False to enable it.
     """
+    # suppress on non-main ranks of distributed runs
+    if not distributed.is_main_process():
+        return True
     # show in Jupyter notebooks regardless of TTY
     try:
         from IPython import get_ipython  # type: ignore[import-untyped]
