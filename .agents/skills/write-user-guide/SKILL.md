@@ -31,7 +31,7 @@ The payoff shows up in the finished guide as specificity. Explaining that `creat
 
 Guides follow a consistent shape. See `template.md` in this skill directory for a fill-in skeleton.
 
-**Frontmatter.** `Title`, `Author`, `Co-Authored-By` when an agent helped, date, and tags.
+**Frontmatter.** `Title`, `Author`, `Co-Authored-By` when an agent helped, `Date`, and `tags`.
 
 **Title.** A gerund phrase naming the task and the subject: "Training with DDP across Multiple GPUs". Mirror it in the `Title` frontmatter field.
 
@@ -74,7 +74,7 @@ Every code block sits between two sentences: one saying what the command does, o
 
 ## Formatting conventions
 
-- The docs are plain Markdown, read in editors and on GitHub; a migration to Zensical is planned (`docs/migrations/2026.03__docs_with_zensical__0-todo.md`). Write admonitions in the Zensical form, `!!! note "An optional title"` / `!!! tip`, where an empty line separates a 4-spaces indented message text; they read fine as plain text today and render after the migration.
+- The docs are plain Markdown, read in editors and on GitHub; a migration to Zensical is planned. Write admonitions in the Zensical form, `!!! note "An optional title"` / `!!! tip`, where an empty line separates a 4-spaces indented message text; they read fine as plain text today and render after the migration.
 - Do *not* wrap prose; write paragraphs, list items, etc. in one line; don't use line breaks.
 - Separate top-level sections with `---` when the guide has distinct phases.
 - Use lists over tables.

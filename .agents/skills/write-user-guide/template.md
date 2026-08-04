@@ -3,6 +3,9 @@ Title: <Gerund phrase naming the task and the subject>
 Author: <name>
 Co-Authored-By: <agent model, when one helped>
 Date: <YYYY-MM-DD>
+tags:
+  - <topic>
+  - <topic>
 ---
 
 # <Gerund phrase naming the task and the subject>
