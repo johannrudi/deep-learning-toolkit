@@ -55,10 +55,10 @@ test: compile
 	@$(PY_TEST)
 
 testq: compile
-	@$(PY_TEST) -q
+	@$(PY_TEST) --quiet
 
 testv: compile
-	@$(PY_TEST) -v
+	@$(PY_TEST) --verbose
 
 testvv: compile
-	@$(PY_TEST) -sv
+	@$(PY_TEST) --verbose --capture=no
