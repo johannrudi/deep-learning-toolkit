@@ -9,14 +9,11 @@ readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICEN[CS]E*"]
 classifiers = [
-    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
 ]
 keywords = [
     "artificial intelligence",
@@ -26,6 +23,7 @@ keywords = [
     "scientific computing",
     "pytorch",
 ]
+requires-python = ">=3.11"
 dependencies = [
     "matplotlib>=3,<4",
     "prettytable>=3,<4",
@@ -33,24 +31,25 @@ dependencies = [
     "torch>=2,<3",
     "tqdm>=4,<5",
 ]
-requires-python = ">=3.11"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
-    "basedpyright",
+    "basedpyright>=1.39,<2",
     "black>=25,<26",
-    "build",
-    "bumpver",
+    "build>=1.5.0,<2",
+    "bumpver>=2026",
+    "flow-matching>=1.0.10,<2",
     "isort>=5,<6",
-    "pip-tools",
+    "pip-tools>=7,<8",
     "pytest>=8,<9",
-    "twine",
+    "torch-kde>=0.1.5",
+    "twine>=7,<8",
 ]
 diffusion = [
-    "flow-matching>=1.0.10,<2"
+    "flow-matching>=1.0.10,<2",
 ]
 kde = [
-    "torch-kde",
+    "torch-kde>=0.1.5",
 ]
 test = [
     "pytest>=8,<9",
@@ -64,16 +63,19 @@ Issues = "https://github.com/johannrudi/deep-learning-toolkit/issues"
 #[project.scripts]
 #dlk = "dlk.__main__:main"
 
-[build-system]
-requires = ["setuptools>=77", "wheel"]
-build-backend = "setuptools.build_meta"
+# --------------------------------------
+# Tools
+# --------------------------------------
 
 [tool.basedpyright]
+pythonVersion = "3.11"
 typeCheckingMode = "basic"
+venvPath = "."
+venv = ".venv"
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py312"]
+target-version = ["py311"]
 
 [tool.bumpver]
 current_version = "0.4.1"
@@ -100,6 +102,14 @@ src_paths = ["dlk", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+
+# --------------------------------------
+# Build System
+# --------------------------------------
+
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["dlk*"]

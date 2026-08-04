@@ -12,12 +12,12 @@ RM     := rm -f
 SED    := sed
 TEST   := test
 
-# set Python tools
-PY_FORMAT := black
-PY_IMPORT_FORMAT := isort
-PY_LINT := basedpyright
-PY_COMPILE := python -m compileall -q -f
-PY_TEST := pytest
+# set Python commands
+PY_FORMAT        := uv run black
+PY_IMPORT_FORMAT := uv run isort
+PY_LINT          := uv run basedpyright
+PY_COMPILE       := uv run python -m compileall -q -f
+PY_TEST          := uv run pytest
 
 # set directories
 PACKAGE_DIR := dlk
