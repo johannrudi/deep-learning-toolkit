@@ -19,6 +19,10 @@
 - run `make testv` to run `pytest -v` across the codebase
 - run `make testvv` to run `pytest -sv` across the codebase
 
+## Git
+
+- use git worktrees only with the user's permission; the user tracks changes normally with git branches
+
 ## Code rules
 
 - use `r"""..."""` docstrings for math notation when needed
