@@ -4,9 +4,9 @@ version = "0.4.1"
 authors = [
     { name = "Johann Rudi", email = "jrudi@vt.edu" },
 ]
-description = "Deep Learning Toolkit — Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities."
+description = "Deep Learning Toolkit — Reusable PyTorch building blocks for artificial intelligence and scientific machine learning: networks, losses, training loops, and utilities."
 readme = "README.md"
-license = "GPL-3.0-only"
+license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -94,6 +94,9 @@ push = false
 ]
 "dlk/__init__.py" = [
     '__version__ = "{version}"',
+]
+"CITATION.cff" = [
+    'version: "{version}"',
 ]
 
 [tool.isort]

@@ -3,10 +3,11 @@
 ## Setup
 
 - use Python `>=3.11`
-- run `pip install -e .`
-- run `pip install -e ".[dev]"`
-- run `pip install -e ".[test]"` when you only need test dependencies
-- run `pip install -e ".[kde]"` when you work on KDE features
+- use `uv` version `>=0.12.1,<0.13`
+- run `uv sync` to create `.venv` and install the default `dev` dependency group
+- run `uv sync --all-extras` to also install the `diffusion` and `kde` extras
+- run `uv lock` and commit `uv.lock` after changing dependencies in `pyproject.toml`
+- do not run `pip install -e ".[dev]"`; `dev` is a dependency group, not an extra
 
 ## Tests
 
@@ -18,6 +19,24 @@
 - run `make testq` to run `pytest -q` across the codebase
 - run `make testv` to run `pytest -v` across the codebase
 - run `make testvv` to run `pytest -sv` across the codebase
+
+## CI
+
+- `.github/workflows/ci.yml` runs `make compile`, `make format-check`, `make lint`, and `make test` on Python 3.11
+- CI sets `UV_LOCKED=1`; a stale `uv.lock` fails the build
+
+## Release
+
+- run `uv run bumpver update --patch` (or `--minor`, `--major`) to bump the version in `pyproject.toml`, `dlk/__init__.py`, and `CITATION.cff`
+- update `date-released` in `CITATION.cff` manually
+- run `uvx cffconvert --validate` after editing `CITATION.cff`
+- run `uv build --no-sources` to build the sdist and wheel
+- publish by creating a GitHub release; CI uploads to PyPI with trusted publishing
+
+## License
+
+- the project is licensed under `Apache-2.0`
+- keep the license consistent in `LICENSE`, `pyproject.toml`, `.zenodo.json` (lowercase `apache-2.0`), and `CITATION.cff` (SPDX `Apache-2.0`)
 
 ## Git
 

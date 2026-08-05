@@ -7,8 +7,17 @@
 <!-- NOTE: shields.io badges work *only* with public repos -->
 [![CI](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/ci.yml?style=for-the-badge&label=CI)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml)
 
-Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
-networks, losses, training loops, and utilities.
+Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities.
+
+The *Deep Learning Toolkit* is a Python library of reusable [PyTorch](https://pytorch.org/) components for artificial intelligence and scientific machine learning. It is designed to be composed into research codes (not a standalone application) and accelerate development of such codes.
+
+The package provides:
+
+- **Network architectures**: multilayer perceptrons with residual and attention blocks, 1D and 2D convolutional networks, UNets, 1D transformers with patch embeddings, autoencoders, and more.
+- **Training and optimization**: epoch- and batch-level training loops with checkpointing and validation hooks, distributed training, GAN training loops, and multi-stage learning rate schedulers.
+- **Supporting components**: loss functions, evaluation metrics, plotting helpers, and configuration management.
+
+Network modules share a consistent activation-aware parameter initialization scheme, and training routines return structured logs of per-epoch and per-batch loss statistics.
 
 ---
 
@@ -34,8 +43,7 @@ pip install deep-learning-toolkit
 
 ### Install the package in editable mode
 
-When using a clone of the [Git repository](https://github.com/johannrudi/deep-learning-toolkit/),
-run this command from inside the cloned directory:
+When using a clone of the [Git repository](https://github.com/johannrudi/deep-learning-toolkit/), run this command from inside the cloned directory:
 
 ```sh
 pip install -e .
@@ -55,19 +63,32 @@ Dependencies for kernel density estimation:
 pip install -e ".[kde]"
 ```
 
-Dependencies for running tests:
+### Set up a development environment
+
+This project is managed with [uv](https://docs.astral.sh/uv/). The development
+dependencies are declared as a dependency group rather than as extras, so they
+are installed by `uv` instead of `pip`:
 
 ```sh
-pip install -e ".[test]"
+uv sync
 ```
 
-#### Install with all optional extras for development
+This creates `.venv` from the pinned versions in `uv.lock` and installs the
+default `dev` group, which covers formatting, linting, and testing.
+
+To additionally install the published extras:
 
 ```sh
-pip install -e ".[dev]"
+uv sync --all-extras
 ```
 
-Using `[dev]` includes all extras listed above (`diffusion`, `kde`, `test`).
+After changing dependencies in `pyproject.toml`, refresh and commit the lock file:
+
+```sh
+uv lock
+```
+
+Continuous integration runs with `UV_LOCKED=1`, so a stale `uv.lock` fails the build.
 
 ---
 
@@ -148,3 +169,25 @@ Training functions return detailed logging dictionaries (`dlog`) containing:
 - `make testq`: run `pytest -q` (after `make compile`)
 - `make testv`: run `pytest -v` (after `make compile`)
 - `make testvv`: run `pytest -sv` (after `make compile`)
+
+All targets run their tools through `uv run`, so `uv` must be installed.
+
+### Building a distribution
+
+```sh
+uv build --no-sources
+```
+
+---
+
+## Citing
+
+Citation metadata is provided in [`CITATION.cff`](CITATION.cff), which GitHub
+renders under "Cite this repository". Releases are archived on
+[Zenodo](https://zenodo.org/), which mints a DOI for each version.
+
+---
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
