@@ -2,16 +2,10 @@
 
 <!-- NOTE: github badges work with private repos -->
 <!--
-[![Format](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
-[![Compile](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
-[![Lint](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
-[![Test](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
+[![CI](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml)
 -->
-<!-- NOTE: shields.io badges only work with public repos -->
-[![Format](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/format.yml?style=for-the-badge&label=Format)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
-[![Compile](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/compile.yml?style=for-the-badge&label=Compile)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
-[![Lint](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/lint.yml?style=for-the-badge&label=Lint)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/tests.yml?style=for-the-badge&label=Tests)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/tests.yml)
+<!-- NOTE: shields.io badges work *only* with public repos -->
+[![CI](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/ci.yml?style=for-the-badge&label=CI)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml)
 
 Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
 networks, losses, training loops, and utilities.

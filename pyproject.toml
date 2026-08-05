@@ -24,6 +24,8 @@ keywords = [
     "pytorch",
 ]
 requires-python = ">=3.11"
+
+# Normal dependencies
 dependencies = [
     "matplotlib>=3,<4",
     "prettytable>=3,<4",
@@ -32,27 +34,26 @@ dependencies = [
     "tqdm>=4,<5",
 ]
 
+# Development dependencies
+# (https://docs.astral.sh/uv/concepts/projects/dependencies/#development-dependencies)
 [dependency-groups]
 dev = [
     "basedpyright>=1.39,<2",
     "black>=25,<26",
-    "build>=1.5.0,<2",
     "bumpver>=2026",
     "flow-matching>=1.0.10,<2",
     "isort>=5,<6",
-    "pip-tools>=7,<8",
     "pytest>=8,<9",
     "torch-kde>=0.1.5",
-    "twine>=7,<8",
 ]
+
+# Published optional dependencies
+[project.optional-dependencies]
 diffusion = [
     "flow-matching>=1.0.10,<2",
 ]
 kde = [
     "torch-kde>=0.1.5",
-]
-test = [
-    "pytest>=8,<9",
 ]
 
 [project.urls]
@@ -108,10 +109,13 @@ addopts = "-ra"
 # --------------------------------------
 
 [build-system]
-requires = ["setuptools>=77", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
 
-[tool.setuptools.packages.find]
-include = ["dlk*"]
-exclude = ["tests*", "_*"]
-namespaces = false  # do not add folders without `__init__.py` file
+[tool.uv]
+required-version = ">=0.12.1,<0.13"
+
+# set a custom module location
+[tool.uv.build-backend]
+module-name = "dlk"
+module-root = ""
