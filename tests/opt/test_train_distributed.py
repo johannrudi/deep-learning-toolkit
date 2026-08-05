@@ -33,12 +33,12 @@ def _train_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None:
     distributed.seed_random_generators(42)
 
     dataset = _make_dataset()
-    sampler = distributed.create_distributed_sampler(dataset, shuffle=True, seed=0)
+    sampler = distributed.sampler_create(dataset, shuffle=True, seed=0)
     assert sampler is not None
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, sampler=sampler)
 
     # per-rank initialization differs; DDP broadcasts rank 0's parameters on wrap
-    net = distributed.wrap_ddp(_make_net(), ctx.device)
+    net = distributed.wrap_net(_make_net(), ctx.device)
     optimizer = torch.optim.SGD(net.parameters(), lr=0.1)
 
     validation_calls: list[int] = []
@@ -101,7 +101,7 @@ def _train_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None:
     params_restored = torch.nn.utils.parameters_to_vector(net_restored.parameters())
     assert torch.equal(params_restored, params)
 
-    distributed.finalize_distributed()
+    distributed.finalize()
 
 
 def test_two_process_training_synchronizes_and_checkpoints(

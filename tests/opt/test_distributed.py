@@ -26,7 +26,7 @@ def test_single_process_context_and_helpers(
     for name in ["RANK", "LOCAL_RANK", "WORLD_SIZE", "SLURM_PROCID"]:
         monkeypatch.delenv(name, raising=False)
 
-    ctx = distributed.init_distributed()
+    ctx = distributed.initialize()
 
     assert ctx.rank == 0
     assert ctx.local_rank == 0
@@ -39,7 +39,7 @@ def test_single_process_context_and_helpers(
     assert distributed.is_main_process()
     # no-ops must not raise
     distributed.barrier()
-    distributed.finalize_distributed()
+    distributed.finalize()
 
 
 def test_single_process_wrap_and_sampler_passthrough() -> None:
@@ -47,9 +47,9 @@ def test_single_process_wrap_and_sampler_passthrough() -> None:
     net = torch.nn.Linear(2, 2)
     dataset = torch.utils.data.TensorDataset(torch.zeros((4, 2)))
 
-    assert distributed.wrap_ddp(net, torch.device("cpu")) is net
-    assert distributed.unwrap_ddp(net) is net
-    assert distributed.create_distributed_sampler(dataset) is None
+    assert distributed.wrap_net(net, torch.device("cpu")) is net
+    assert distributed.unwrap_net(net) is net
+    assert distributed.sampler_create(dataset) is None
 
 
 def test_single_process_seed_returns_base_seed() -> None:
@@ -114,7 +114,7 @@ def _context_worker(rank: int, world_size: int, port: int) -> None:
     distributed.all_reduce_sum_(values)
     assert values.tolist() == [3.0, 20.0]
 
-    distributed.finalize_distributed()
+    distributed.finalize()
     assert not distributed.is_distributed()
 
 
@@ -124,14 +124,14 @@ def test_two_process_context_and_all_reduce() -> None:
 
 
 def _slurm_fallback_worker(rank: int, world_size: int, port: int) -> None:
-    """Verify the Slurm environment fallback of `init_distributed`."""
+    """Verify the Slurm environment fallback of `initialize`."""
     ctx = init_worker(rank, world_size, port, slurm_style=True)
 
     assert ctx.rank == rank
     assert ctx.world_size == world_size
     assert ctx.is_distributed
 
-    distributed.finalize_distributed()
+    distributed.finalize()
 
 
 def test_two_process_slurm_environment_fallback() -> None:
@@ -163,7 +163,7 @@ def _dlog_all_reduce_worker(rank: int, world_size: int, port: int) -> None:
     assert dlog["loss_std"] == pytest.approx(expected_std)
     assert dlog["loss_mean_n"] == 5
 
-    distributed.finalize_distributed()
+    distributed.finalize()
 
 
 def test_two_process_dlog_all_reduce_exactness() -> None:

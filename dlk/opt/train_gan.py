@@ -191,8 +191,8 @@ def train_epochs(
             if validation_fn is not None and distributed.is_main_process():
                 validation_fn(
                     epoch_idx,
-                    g_net=distributed.unwrap_ddp(g_net),
-                    d_net=distributed.unwrap_ddp(d_net),
+                    g_net=distributed.unwrap_net(g_net),
+                    d_net=distributed.unwrap_net(d_net),
                 )
 
             # train on batches
@@ -265,8 +265,8 @@ def train_epochs(
     if validation_fn is not None and distributed.is_main_process():
         validation_fn(
             n_epochs,
-            g_net=distributed.unwrap_ddp(g_net),
-            d_net=distributed.unwrap_ddp(d_net),
+            g_net=distributed.unwrap_net(g_net),
+            d_net=distributed.unwrap_net(d_net),
         )
     time_train = timeit.default_timer() - time_train
     # </training_loop_over_epochs>

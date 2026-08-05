@@ -27,7 +27,7 @@ def init_worker(
     port: int,
     slurm_style: bool = False,
 ) -> distributed.DistributedContext:
-    """Initialize a spawned test worker through `init_distributed`.
+    """Initialize a spawned test worker through `initialize`.
 
     Sets the launcher environment variables (torchrun-style by default,
     Slurm-style when requested) and hides CUDA devices so that tests run on
@@ -40,7 +40,7 @@ def init_worker(
         slurm_style: Whether to exercise the Slurm environment fallback.
 
     Returns:
-        Context returned by `init_distributed`.
+        Context returned by `initialize`.
     """
     # hide GPUs before the first CUDA query in this process
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -56,7 +56,7 @@ def init_worker(
         os.environ["RANK"] = str(rank)
         os.environ["LOCAL_RANK"] = str(rank)
         os.environ["WORLD_SIZE"] = str(world_size)
-    return distributed.init_distributed()
+    return distributed.initialize()
 
 
 def run_distributed(

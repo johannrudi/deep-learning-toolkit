@@ -103,6 +103,23 @@ def barrier() -> None:
         torch.distributed.barrier()
 
 
+def all_reduce_sum_(values: torch.Tensor) -> None:
+    """Sum a tensor elementwise across all ranks, in place.
+
+    No-op when not distributed. With the NCCL backend the tensor must reside
+    on this process's GPU; with gloo it must reside on the CPU.
+
+    Args:
+        values: Tensor to reduce; overwritten with the global sum.
+
+    Returns:
+        None.
+    """
+    if not is_distributed():
+        return
+    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.SUM)
+
+
 def _read_launcher_environment() -> tuple[int, int, int] | None:
     """Read rank information from torchrun or Slurm environment variables.
 
@@ -136,7 +153,7 @@ def _read_launcher_environment() -> tuple[int, int, int] | None:
     return None
 
 
-def init_distributed(
+def initialize(
     backend: str | None = None,
     timeout_seconds: float = 1800.0,
     logger: logging.Logger | None = None,
@@ -160,7 +177,7 @@ def init_distributed(
         Context describing this process's rank, device, and distributed state.
     """
     if logger is None:
-        logger = logging.getLogger("dlk.opt.distributed.init_distributed")
+        logger = logging.getLogger("dlk.opt.distributed.initialize")
 
     launcher_env = _read_launcher_environment()
     if launcher_env is None:
@@ -204,7 +221,7 @@ def init_distributed(
     )
 
 
-def finalize_distributed() -> None:
+def finalize() -> None:
     """Synchronize and destroy the process group; no-op when not distributed.
 
     Returns:
@@ -215,7 +232,7 @@ def finalize_distributed() -> None:
         torch.distributed.destroy_process_group()
 
 
-def wrap_ddp(
+def wrap_net(
     net: torch.nn.Module,
     device: torch.device,
     find_unused_parameters: bool = False,
@@ -265,7 +282,7 @@ def wrap_ddp(
     )
 
 
-def unwrap_ddp(net: torch.nn.Module) -> torch.nn.Module:
+def unwrap_net(net: torch.nn.Module) -> torch.nn.Module:
     """Return the underlying model of a DDP-wrapped model.
 
     Args:
@@ -279,7 +296,7 @@ def unwrap_ddp(net: torch.nn.Module) -> torch.nn.Module:
     return net
 
 
-def create_distributed_sampler(
+def sampler_create(
     dataset: "torch.utils.data.Dataset[object]",
     shuffle: bool = True,
     seed: int = 0,
@@ -338,7 +355,7 @@ def seed_random_generators(base_seed: int, rank_offset: bool = True) -> int:
 
     Each rank seeds with `base_seed + rank` so that per-rank random draws
     (e.g. latent samples, data augmentation) differ across processes. Note
-    that `create_distributed_sampler` must receive `base_seed`, not the
+    that `sampler_create` must receive `base_seed`, not the
     returned rank-offset seed.
 
     Args:
@@ -360,20 +377,3 @@ def seed_random_generators(base_seed: int, rank_offset: bool = True) -> int:
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
     return seed
-
-
-def all_reduce_sum_(values: torch.Tensor) -> None:
-    """Sum a tensor elementwise across all ranks, in place.
-
-    No-op when not distributed. With the NCCL backend the tensor must reside
-    on this process's GPU; with gloo it must reside on the CPU.
-
-    Args:
-        values: Tensor to reduce; overwritten with the global sum.
-
-    Returns:
-        None.
-    """
-    if not is_distributed():
-        return
-    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.SUM)

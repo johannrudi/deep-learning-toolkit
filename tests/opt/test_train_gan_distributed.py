@@ -81,13 +81,13 @@ def _train_gan_worker(rank: int, world_size: int, port: int) -> None:
     x_data = torch.randn((64, 4), generator=generator, dtype=torch.float32)
     y_data = torch.randn((64, 3), generator=generator, dtype=torch.float32)
     dataset = torch.utils.data.TensorDataset(x_data, y_data)
-    sampler = distributed.create_distributed_sampler(dataset, shuffle=True, seed=0)
+    sampler = distributed.sampler_create(dataset, shuffle=True, seed=0)
     assert sampler is not None
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, sampler=sampler)
 
     # per-rank initialization differs; DDP broadcasts rank 0's parameters on wrap
-    g_net = distributed.wrap_ddp(_Generator(), ctx.device)
-    d_net = distributed.wrap_ddp(_Discriminator(), ctx.device, broadcast_buffers=False)
+    g_net = distributed.wrap_net(_Generator(), ctx.device)
+    d_net = distributed.wrap_net(_Discriminator(), ctx.device, broadcast_buffers=False)
     g_optimizer = torch.optim.SGD(g_net.parameters(), lr=0.05)
     d_optimizer = torch.optim.SGD(d_net.parameters(), lr=0.05)
 
@@ -120,7 +120,7 @@ def _train_gan_worker(rank: int, world_size: int, port: int) -> None:
         torch.distributed.all_gather(values_list, values)
         assert torch.equal(values_list[0], values_list[1])
 
-    distributed.finalize_distributed()
+    distributed.finalize()
 
 
 def test_two_process_gan_training_with_gradient_penalty() -> None:

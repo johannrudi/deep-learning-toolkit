@@ -111,7 +111,7 @@ def checkpoint_save(
     torch.save(
         {
             "epoch": epoch,
-            "model_state_dict": distributed.unwrap_ddp(model).state_dict(),
+            "model_state_dict": distributed.unwrap_net(model).state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
         },
         filepath,
@@ -149,7 +149,7 @@ def checkpoint_load(
         key.removeprefix("module."): value
         for key, value in checkpoint["model_state_dict"].items()
     }
-    distributed.unwrap_ddp(model).load_state_dict(model_state_dict)
+    distributed.unwrap_net(model).load_state_dict(model_state_dict)
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     return checkpoint["epoch"]

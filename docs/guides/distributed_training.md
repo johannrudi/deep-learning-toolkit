@@ -11,7 +11,7 @@ tags:
 
 `dlk` trains with **DDP** (`DistributedDataParallel`): a launcher starts one process per GPU, each process holds a full replica of the model, and gradients are averaged across processes during the backward pass. Going distributed asks more of an application than a bigger batch size does. Each process must discover its **rank** (its index in the run) and device, see a distinct shard of the data, and agree with every other process on the loss statistics it reports.
 
-`dlk.opt.distributed` makes this opt-in. Every helper checks whether a process group is initialized before doing anything: without a launcher, `wrap_ddp` returns the model unchanged, `create_distributed_sampler` returns `None`, and `barrier` returns immediately, so the same script keeps running single-process exactly as before (`tests/opt/test_train_single_process_regression.py` pins this down with frozen loss trajectories). Going distributed is the six code changes below plus a launch command.
+`dlk.opt.distributed` makes this opt-in. Every helper checks whether a process group is initialized before doing anything: without a launcher, `wrap_net` returns the model unchanged, `sampler_create` returns `None`, and `barrier` returns immediately, so the same script keeps running single-process exactly as before (`tests/opt/test_train_single_process_regression.py` pins this down with frozen loss trajectories). Going distributed is the six code changes below plus a launch command.
 
 !!! note
 
@@ -21,12 +21,12 @@ tags:
 
 ### Step 1: Initialize the process group
 
-`init_distributed` replaces manual device selection. It reads the launcher's environment variables and returns a `DistributedContext` with `rank`, `local_rank`, `world_size`, `device`, `is_main`, and `is_distributed`.
+`initialize` replaces manual device selection. It reads the launcher's environment variables and returns a `DistributedContext` with `rank`, `local_rank`, `world_size`, `device`, `is_main`, and `is_distributed`.
 
 ```python
 from dlk.opt import distributed
 
-ctx = distributed.init_distributed()
+ctx = distributed.initialize()
 device = ctx.device
 ```
 
@@ -54,17 +54,17 @@ Single-process runs keep their unsuffixed file names, so nothing changes for exi
 
 ### Step 4: Wrap the models
 
-Wrap each model after moving it to the device; `wrap_ddp` requires the model to reside on `device` already.
+Wrap each model after moving it to the device; `wrap_net` requires the model to reside on `device` already.
 
 ```python
-net = distributed.wrap_ddp(net.to(device), device)
+net = distributed.wrap_net(net.to(device), device)
 ```
 
 For GAN training, wrap the generator and the discriminator independently, and pass `broadcast_buffers=False` for the discriminator: it runs several forward passes per batch, and each one would otherwise pay a buffer synchronization.
 
 ```python
-g_net = distributed.wrap_ddp(g_net, device)
-d_net = distributed.wrap_ddp(d_net, device, broadcast_buffers=False)
+g_net = distributed.wrap_net(g_net, device)
+d_net = distributed.wrap_net(d_net, device, broadcast_buffers=False)
 ```
 
 Keep `find_unused_parameters=False` and `static_graph=False` (the defaults); the train loops are written for them.
@@ -74,7 +74,7 @@ Keep `find_unused_parameters=False` and `static_graph=False` (the defaults); the
 Create the sampler with the **base** seed and thread it into the DataLoader:
 
 ```python
-sampler = distributed.create_distributed_sampler(dataset, shuffle=shuffle, seed=base_seed)
+sampler = distributed.sampler_create(dataset, shuffle=shuffle, seed=base_seed)
 if sampler is not None:
     dataloader_kwargs["sampler"] = sampler
     dataloader_kwargs["shuffle"] = False
@@ -91,12 +91,12 @@ The base seed matters. All ranks must compute the same shuffle permutation befor
 After training, tear down the process group and let only the main process continue to predict, evaluate, and plot:
 
 ```python
-distributed.finalize_distributed()
+distributed.finalize()
 if not ctx.is_main:
     return
 ```
 
-`finalize_distributed` runs a barrier before destroying the process group, so no rank exits while another still trains. Everything after this point is ordinary single-process code operating on the unwrapped model (`distributed.unwrap_ddp(net)` returns it if you kept a wrapped reference).
+`finalize` runs a barrier before destroying the process group, so no rank exits while another still trains. Everything after this point is ordinary single-process code operating on the unwrapped model (`distributed.unwrap_net(net)` returns it if you kept a wrapped reference).
 
 ## Launching on the cluster
 
@@ -111,8 +111,8 @@ torchrun --standalone --nproc-per-node=4 run.py
 Every rank logs its own lines, so expect each message multiplied by the world size. The identical loss values across ranks are the reduction from the note above at work:
 
 ```text
-INFO:dlk.opt.distributed.init_distributed:distributed run, rank 0/2, local_rank 0, device cpu, backend gloo
-INFO:dlk.opt.distributed.init_distributed:distributed run, rank 1/2, local_rank 1, device cpu, backend gloo
+INFO:dlk.opt.distributed.initialize:distributed run, rank 0/2, local_rank 0, device cpu, backend gloo
+INFO:dlk.opt.distributed.initialize:distributed run, rank 1/2, local_rank 1, device cpu, backend gloo
 INFO:dlk.opt.train.train_epochs:epoch    0, loss mean 1.184511e+00 std 5.070e-01
 INFO:dlk.opt.train.train_epochs:epoch    0, loss mean 1.184511e+00 std 5.070e-01
 ```
@@ -173,7 +173,7 @@ To resume, every rank loads the same file onto its own device, preferably before
 from dlk.opt.utils import checkpoint_load
 
 epoch = checkpoint_load(path, net, optimizer=optimizer, map_location=ctx.device)
-net = distributed.wrap_ddp(net, ctx.device)
+net = distributed.wrap_net(net, ctx.device)
 ```
 
 `checkpoint_load` returns the stored epoch, restores the optimizer state when one is passed, and strips a leading `module.` from parameter keys, so checkpoints written before this feature (or by other DDP code) load as well.
@@ -192,11 +192,11 @@ The per-rank traces are the point. Open one in [Perfetto] to see the communicati
 
 ## Things worth knowing
 
-**Shard padding.** `DistributedSampler` pads shards to equal length by repeating samples, so no rank runs out of batches early (a rank that stops while others continue deadlocks the collectives). The repeats bias epoch metrics slightly; pass `drop_last=True` to `create_distributed_sampler` to drop trailing samples instead.
+**Shard padding.** `DistributedSampler` pads shards to equal length by repeating samples, so no rank runs out of batches early (a rank that stops while others continue deadlocks the collectives). The repeats bias epoch metrics slightly; pass `drop_last=True` to `sampler_create` to drop trailing samples instead.
 
 **DataLoader workers.** `multiprocessing_context="fork"` is unsafe once CUDA is initialized; under DDP use `"spawn"` or `num_workers=0`. `num_workers` counts per rank, so 4 ranks with 8 workers each start 32 loader processes.
 
-**CPU clusters.** The same commands work without GPUs; the backend auto-selects gloo when CUDA is unavailable, and `init_distributed(backend="gloo")` forces it.
+**CPU clusters.** The same commands work without GPUs; the backend auto-selects gloo when CUDA is unavailable, and `initialize(backend="gloo")` forces it.
 
 **NCCL debugging.** `export NCCL_DEBUG=INFO` makes NCCL log its topology and transport decisions; `NCCL_SOCKET_IFNAME=<iface>` pins the network interface when rendezvous picks the wrong one.
 

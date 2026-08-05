@@ -33,10 +33,10 @@ def _profile_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None
 
     # 10 profiled batches per rank at batch_size 4 across 2 ranks
     dataset = _make_dataset(10 * 4 * world_size)
-    sampler = distributed.create_distributed_sampler(dataset, shuffle=False, seed=0)
+    sampler = distributed.sampler_create(dataset, shuffle=False, seed=0)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=4, sampler=sampler)
 
-    net = distributed.wrap_ddp(_make_net(), ctx.device)
+    net = distributed.wrap_net(_make_net(), ctx.device)
     optimizer = torch.optim.SGD(net.parameters(), lr=0.1)
 
     profile_train_batches(
@@ -60,7 +60,7 @@ def _profile_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None
             assert len(tables) > 0, f"missing profiler tables for {suffix}"
             assert len(traces) > 0, f"missing profiler traces for {suffix}"
 
-    distributed.finalize_distributed()
+    distributed.finalize()
 
 
 def test_two_process_profiling_writes_rank_suffixed_files(
