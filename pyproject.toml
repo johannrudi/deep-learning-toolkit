@@ -40,7 +40,6 @@ dependencies = [
 dev = [
     "basedpyright>=1.39,<2",
     "black>=25,<26",
-    "bumpver>=2026",
     "flow-matching>=1.0.10,<2",
     "isort>=5,<6",
     "pytest>=8,<9",
@@ -77,27 +76,6 @@ venv = ".venv"
 [tool.black]
 line-length = 88
 target-version = ["py311"]
-
-[tool.bumpver]
-current_version = "0.4.1"
-version_pattern = "MAJOR.MINOR.PATCH"
-commit_message = "Bump version {old_version} -> {new_version}"
-tag_name = "v{new_version}"
-commit = true
-tag = false
-push = false
-
-[tool.bumpver.file_patterns]
-"pyproject.toml" = [
-    'current_version = "{version}"',
-    'version = "{version}"',
-]
-"dlk/__init__.py" = [
-    '__version__ = "{version}"',
-]
-"CITATION.cff" = [
-    'version: "{version}"',
-]
 
 [tool.isort]
 profile = "black"
