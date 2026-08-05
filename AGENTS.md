@@ -36,11 +36,6 @@
 - tag the release commit as `v{version}` and push the tag
 - publish by creating a GitHub release; CI uploads to PyPI with trusted publishing
 
-## License
-
-- the project is licensed under `Apache-2.0`
-- keep the license consistent in `LICENSE`, `pyproject.toml`, `.zenodo.json` (lowercase `apache-2.0`), and `CITATION.cff` (SPDX `Apache-2.0`)
-
 ## Git
 
 - use git worktrees only with the user's permission; the user tracks changes normally with git branches
