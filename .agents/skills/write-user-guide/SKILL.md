@@ -31,7 +31,7 @@ The payoff shows up in the finished guide as specificity. Explaining that `creat
 
 Guides follow a consistent shape. See `template.md` in this skill directory for a fill-in skeleton.
 
-**Frontmatter.** `Title`, `Author`, `Co-Authored-By` when an agent helped, `Date`, and `tags`.
+**Frontmatter.** `Title`, `Author`, `Co-Authored-By` when an agent helped, `Date`, and `tags`. An optional `link` field carries an Obsidian wikilink to a related document, `link: "[[2026.01__build_and_tools_to_uv__1-spec]]"`; it resolves in Obsidian and is inert elsewhere, so add it only when a related plan, spec, or survey exists.
 
 **Title.** A gerund phrase naming the task and the subject: "Training with DDP across Multiple GPUs". Mirror it in the `Title` frontmatter field.
 
@@ -79,6 +79,7 @@ Every code block sits between two sentences: one saying what the command does, o
 - Separate top-level sections with `---` when the guide has distinct phases.
 - Use lists over tables.
 - Reference repository files by path in backticks, so readers can search for them: `dlk/opt/distributed.py`, `tests/opt/test_train_distributed.py`.
+- Write external links in reference style, `[torchrun documentation]` in the prose, and collect every definition in one block at the bottom of the file. The prose stays readable, and the block is where you check the URLs when a guide is revised.
 
 ## Anti-patterns
 
