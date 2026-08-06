@@ -1,14 +1,22 @@
 {
-  "title": "Deep Learning Toolkit: Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities",
-  "description": "<p>Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities.</p>",
+  "title": "Deep Learning Toolkit: Reusable PyTorch Building Blocks for Artificial Intelligence and Scientific Machine Learning",
+  "description": "<p>The Deep Learning Toolkit is a Python library of reusable PyTorch components for artificial intelligence and scientific machine learning. It is designed to be composed into research codes (not a standalone application) and accelerate development of such codes.</p><p>The package provides:</p><ul><li><strong>Network architectures</strong>: multilayer perceptrons with residual and attention blocks, 1D and 2D convolutional networks, UNets, 1D transformers with patch embeddings, autoencoders, and more.</li><li><strong>Training and optimization</strong>: epoch- and batch-level training loops with checkpointing and validation hooks, distributed training, GAN training loops, and multi-stage learning rate schedulers.</li><li><strong>Supporting components</strong>: loss functions, evaluation metrics, plotting helpers, and configuration management.</li></ul><p>Network modules share a consistent activation-aware parameter initialization scheme, and training routines return structured logs of per-epoch and per-batch loss statistics.</p>",
   "upload_type": "software",
-  "license": "GPL-3.0-only",
+  "license": "Apache-2.0",
   "access_right": "open",
   "creators": [
     {
       "name": "Rudi, Johann",
       "affiliation": "Virginia Tech",
       "orcid": "0000-0002-6563-9265"
+    }
+  ],
+  "contributors": [
+    {
+      "name": "Goldwyn, Harrison",
+      "affiliation": "National Laboratory of the Rockies",
+      "orcid": "0000-0002-7184-2120",
+      "type": "Researcher"
     }
   ],
   "keywords": [

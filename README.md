@@ -2,19 +2,22 @@
 
 <!-- NOTE: github badges work with private repos -->
 <!--
-[![Format](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
-[![Compile](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
-[![Lint](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
-[![Test](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/test.yml)
+[![CI](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml)
 -->
-<!-- NOTE: shields.io badges only work with public repos -->
-[![Format](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/format.yml?style=for-the-badge&label=Format)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/format.yml)
-[![Compile](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/compile.yml?style=for-the-badge&label=Compile)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/compile.yml)
-[![Lint](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/lint.yml?style=for-the-badge&label=Lint)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/lint.yml)
-[![Tests](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/tests.yml?style=for-the-badge&label=Tests)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/tests.yml)
+<!-- NOTE: shields.io badges work *only* with public repos -->
+[![CI](https://img.shields.io/github/actions/workflow/status/johannrudi/deep-learning-toolkit/ci.yml?style=for-the-badge&label=CI)](https://github.com/johannrudi/deep-learning-toolkit/actions/workflows/ci.yml)
 
-Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning:
-networks, losses, training loops, and utilities.
+Reusable [PyTorch](https://pytorch.org/) building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities.
+
+The *Deep Learning Toolkit* is a Python library of reusable [PyTorch](https://pytorch.org/) components for artificial intelligence and scientific machine learning. It is designed to be composed into research codes (not a standalone application) and accelerate development of such codes.
+
+The package provides:
+
+- **Network architectures**: multilayer perceptrons with residual and attention blocks, 1D and 2D convolutional networks, UNets, 1D transformers with patch embeddings, autoencoders, and more.
+- **Training and optimization**: epoch- and batch-level training loops with checkpointing and validation hooks, distributed training, GAN training loops, and multi-stage learning rate schedulers.
+- **Supporting components**: loss functions, evaluation metrics, plotting helpers, and configuration management.
+
+Network modules share a consistent activation-aware parameter initialization scheme, and training routines return structured logs of per-epoch and per-batch loss statistics.
 
 ---
 
@@ -22,29 +25,20 @@ networks, losses, training loops, and utilities.
 
 ### Requirements
 
-- Python `>=3.11`
+- Python version `>=3.11`
 
 ### Runtime dependencies
 
-- `matplotlib>=3,<4`
-- `prettytable>=3,<4`
-- `pyyaml>=6,<7`
-- `torch>=2,<3`
-- `tqdm>=4,<5`
+- `matplotlib` version `>=3,<4`
+- `prettytable` version `>=3,<4`
+- `pyyaml` version `>=6,<7`
+- **`torch` version `>=2,<3`**
+- `tqdm` version `>=4,<5`
 
-### Install in regular mode
+### Install commands using `pip`
 
 ```sh
 pip install deep-learning-toolkit
-```
-
-### Install the package in editable mode
-
-When using a clone of the [Git repository](https://github.com/johannrudi/deep-learning-toolkit/),
-run this command from inside the cloned directory:
-
-```sh
-pip install -e .
 ```
 
 #### Install with optional extras
@@ -52,28 +46,14 @@ pip install -e .
 Dependencies for generative diffusion models:
 
 ```sh
-pip install -e ".[diffusion]"
+pip install deep-learning-toolkit[diffusion]
 ```
 
 Dependencies for kernel density estimation:
 
 ```sh
-pip install -e ".[kde]"
+pip install deep-learning-toolkit[kde]
 ```
-
-Dependencies for running tests:
-
-```sh
-pip install -e ".[test]"
-```
-
-#### Install with all optional extras for development
-
-```sh
-pip install -e ".[dev]"
-```
-
-Using `[dev]` includes all extras listed above (`diffusion`, `kde`, `test`).
 
 ---
 
@@ -94,7 +74,7 @@ net = MLPNet(input_size=784, output_size=10)
 # train the model
 train_epochs(n_epochs=100, net=net, dataloader=..., optimizer=..., loss_fn=...)
 
-# evaluate
+# evaluate on your data
 ...
 ```
 
@@ -144,13 +124,71 @@ Training functions return detailed logging dictionaries (`dlog`) containing:
 
 ## Development
 
+### Set up a development environment
+
+Obtain a clone of the [git repository](https://github.com/johannrudi/deep-learning-toolkit/). This project is managed with [uv](https://docs.astral.sh/uv/). The development dependencies are declared as a *dependency group*, so they are installed by `uv` instead of `pip`:
+
+```sh
+uv sync
+```
+
+This creates `.venv` from the pinned versions in `uv.lock` and installs the default `dev` group, which covers formatting, linting, and testing.
+
+To additionally install the published extras:
+
+```sh
+uv sync --all-extras
+```
+
+#### Select a PyTorch build
+
+By default, `torch` resolves from PyPI, which serves CUDA-enabled wheels on Linux and CPU-only wheels on macOS and Windows. To choose a specific build, enable one of the accelerator dependency groups, for example the CPU-only one:
+
+```sh
+uv sync --group cpu
+```
+
+The available groups are `cpu`, `cu126`, `cu128`, and `cu130`. Each points `torch` at the matching [PyTorch index](https://pytorch.org/get-started/locally/), and the default `dev` group is still installed alongside it.
+
+The groups are declared as mutually exclusive, so enable at most one; combining them, including via `uv sync --all-groups`, is rejected. Dependency groups are not published in the package metadata, so `pip install deep-learning-toolkit` is unaffected by this configuration.
+
+After changing dependencies in `pyproject.toml`, refresh and commit the lock file:
+
+```sh
+uv lock
+```
+
+Continuous integration runs with `UV_LOCKED=1`, so a stale `uv.lock` fails the build. It also syncs the `cpu` group, which keeps the CUDA wheels out of the runner.
+
 ### Commands for development
+
+All make targets run their tools through `uv run`:
 
 - `make format`: run `isort` and `black` on `dlk/` and `tests/`
 - `make format-check`: check `isort` and `black` formatting without modifying files
-- `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
 - `make lint`: run `basedpyright` on `dlk/` and `tests/`
-- `make test`: run `pytest` (after `make compile`)
-- `make testq`: run `pytest -q` (after `make compile`)
-- `make testv`: run `pytest -v` (after `make compile`)
-- `make testvv`: run `pytest -sv` (after `make compile`)
+- `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
+- `make test`: run `pytest`
+- `make testq`: run `pytest -quiet`
+- `make testv`: run `pytest --verbose`
+- `make testvv`: run `pytest --verbose --capture=no`
+
+All test targets depend on the `compile` target.
+
+### Building a distribution
+
+```sh
+uv build --no-sources
+```
+
+---
+
+## Citing
+
+Citation metadata is provided in [`CITATION.cff`](CITATION.cff), which GitHub renders under "Cite this repository". Releases are archived on [Zenodo](https://zenodo.org/), which mints a DOI for each version.
+
+---
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).

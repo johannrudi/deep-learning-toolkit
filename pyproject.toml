@@ -4,9 +4,9 @@ version = "0.4.1"
 authors = [
     { name = "Johann Rudi", email = "jrudi@vt.edu" },
 ]
-description = "Deep Learning Toolkit — Reusable PyTorch building blocks for artificial intelligence & scientific machine learning: networks, losses, training loops, and utilities."
+description = "Deep Learning Toolkit: Reusable PyTorch building blocks for artificial intelligence and scientific machine learning: networks, losses, training loops, and utilities."
 readme = "README.md"
-license = "GPL-3.0-only"
+license = "Apache-2.0"
 license-files = ["LICEN[CS]E*"]
 classifiers = [
     "Intended Audience :: Developers",
@@ -24,6 +24,8 @@ keywords = [
     "pytorch",
 ]
 requires-python = ">=3.11"
+
+# Normal dependencies
 dependencies = [
     "matplotlib>=3,<4",
     "prettytable>=3,<4",
@@ -32,27 +34,34 @@ dependencies = [
     "tqdm>=4,<5",
 ]
 
+# Development dependencies
+# (https://docs.astral.sh/uv/concepts/projects/dependencies/#development-dependencies)
 [dependency-groups]
 dev = [
     "basedpyright>=1.39,<2",
     "black>=25,<26",
-    "build>=1.5.0,<2",
-    "bumpver>=2026",
     "flow-matching>=1.0.10,<2",
     "isort>=5,<6",
-    "pip-tools>=7,<8",
     "pytest>=8,<9",
     "torch-kde>=0.1.5",
-    "twine>=7,<8",
 ]
+
+# Accelerator groups for PyTorch
+# (select a build variant with, e.g., `uv sync --group cpu`)
+# (without a group, `torch` resolves from PyPI: CUDA on Linux, CPU on macOS/Windows)
+# (each group repeats `torch` because uv requires the package under the gated group)
+cpu = ["torch>=2,<3"]
+cu126 = ["torch>=2,<3"]
+cu128 = ["torch>=2,<3"]
+cu130 = ["torch>=2,<3"]
+
+# Published optional dependencies
+[project.optional-dependencies]
 diffusion = [
     "flow-matching>=1.0.10,<2",
 ]
 kde = [
     "torch-kde>=0.1.5",
-]
-test = [
-    "pytest>=8,<9",
 ]
 
 [project.urls]
@@ -77,24 +86,6 @@ venv = ".venv"
 line-length = 88
 target-version = ["py311"]
 
-[tool.bumpver]
-current_version = "0.4.1"
-version_pattern = "MAJOR.MINOR.PATCH"
-commit_message = "Bump version {old_version} -> {new_version}"
-tag_name = "v{new_version}"
-commit = true
-tag = false
-push = false
-
-[tool.bumpver.file_patterns]
-"pyproject.toml" = [
-    'current_version = "{version}"',
-    'version = "{version}"',
-]
-"dlk/__init__.py" = [
-    '__version__ = "{version}"',
-]
-
 [tool.isort]
 profile = "black"
 src_paths = ["dlk", "tests"]
@@ -108,10 +99,58 @@ addopts = "-ra"
 # --------------------------------------
 
 [build-system]
-requires = ["setuptools>=77", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
 
-[tool.setuptools.packages.find]
-include = ["dlk*"]
-exclude = ["tests*", "_*"]
-namespaces = false  # do not add folders without `__init__.py` file
+[tool.uv]
+required-version = ">=0.12.1,<0.13"
+
+# allow at most one accelerator group per environment
+# (uv locks each variant separately; `uv sync --all-groups` is rejected)
+conflicts = [
+    [
+        { group = "cpu" },
+        { group = "cu126" },
+        { group = "cu128" },
+        { group = "cu130" },
+    ],
+]
+
+# set a custom module location
+[tool.uv.build-backend]
+module-name = "dlk"
+module-root = ""
+
+# --------------------------------------
+# Package URLs
+# --------------------------------------
+
+# route `torch` to an accelerator index when the matching group is enabled
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cu126", group = "cu126" },
+    { index = "pytorch-cu128", group = "cu128" },
+    { index = "pytorch-cu130", group = "cu130" },
+]
+
+# PyTorch indexes, marked explicit so they serve only the pinned packages
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

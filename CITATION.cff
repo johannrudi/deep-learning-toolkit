@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+title: "Deep Learning Toolkit: Reusable PyTorch building blocks for artificial intelligence and scientific machine learning"
+abstract: "A Python library of reusable PyTorch components for artificial intelligence and scientific machine learning: neural network architectures, training loops, learning rate schedulers, loss functions, metrics, and utilities."
+type: software
+authors:
+  - family-names: Rudi
+    given-names: Johann
+    affiliation: Virginia Tech
+    orcid: "https://orcid.org/0000-0002-6563-9265"
+version: "0.4.1"
+date-released: "2026-08-05"
+license: Apache-2.0
+repository-code: "https://github.com/johannrudi/deep-learning-toolkit"
+url: "https://github.com/johannrudi/deep-learning-toolkit"
+keywords:
+  - artificial intelligence
+  - deep learning
+  - machine learning
+  - neural networks
+  - scientific computing
+  - pytorch

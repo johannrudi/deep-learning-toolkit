@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "next"]
+  pull_request:
+
+# cancel superseded runs on the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  UV_LOCKED: 1
+  # keep `uv run` in the Makefile from resyncing away the CPU-only environment
+  UV_NO_SYNC: 1
+
+jobs:
+  check:
+    name: ${{ matrix.target }} @py${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+        target: [compile, format-check, lint, test]
+    steps:
+      - uses: actions/checkout@v4
+      # install uv, which manages the venv built from uv.lock
+      - uses: astral-sh/setup-uv@v9
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+      # create .venv with the CPU-only torch build, skipping the CUDA wheels
+      - name: Sync with the cpu group
+        run: uv sync --group cpu
+      - name: Run make ${{ matrix.target }}
+        run: make ${{ matrix.target }}

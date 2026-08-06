@@ -26,6 +26,9 @@ tags  # auto-generated tag files
 .history/  # local history
 *.vsix  # built extensions
 
+# Obsidian-related configuration
+.obsidian/**/*
+
 #
 # Python (https://github.com/github/gitignore/blob/main/Python.gitignore)
 #
