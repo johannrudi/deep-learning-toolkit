@@ -46,6 +46,15 @@ dev = [
     "torch-kde>=0.1.5",
 ]
 
+# Accelerator groups for PyTorch
+# (select a build variant with, e.g., `uv sync --group cpu`)
+# (without a group, `torch` resolves from PyPI: CUDA on Linux, CPU on macOS/Windows)
+# (each group repeats `torch` because uv requires the package under the gated group)
+cpu = ["torch>=2,<3"]
+cu126 = ["torch>=2,<3"]
+cu128 = ["torch>=2,<3"]
+cu130 = ["torch>=2,<3"]
+
 # Published optional dependencies
 [project.optional-dependencies]
 diffusion = [
@@ -96,7 +105,52 @@ build-backend = "uv_build"
 [tool.uv]
 required-version = ">=0.12.1,<0.13"
 
+# allow at most one accelerator group per environment
+# (uv locks each variant separately; `uv sync --all-groups` is rejected)
+conflicts = [
+    [
+        { group = "cpu" },
+        { group = "cu126" },
+        { group = "cu128" },
+        { group = "cu130" },
+    ],
+]
+
 # set a custom module location
 [tool.uv.build-backend]
 module-name = "dlk"
 module-root = ""
+
+# --------------------------------------
+# Package URLs
+# --------------------------------------
+
+# route `torch` to an accelerator index when the matching group is enabled
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", group = "cpu" },
+    { index = "pytorch-cu126", group = "cu126" },
+    { index = "pytorch-cu128", group = "cu128" },
+    { index = "pytorch-cu130", group = "cu130" },
+]
+
+# PyTorch indexes, marked explicit so they serve only the pinned packages
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

@@ -13,6 +13,8 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   UV_LOCKED: 1
+  # keep `uv run` in the Makefile from resyncing away the CPU-only environment
+  UV_NO_SYNC: 1
 
 jobs:
   check:
@@ -25,10 +27,13 @@ jobs:
         target: [compile, format-check, lint, test]
     steps:
       - uses: actions/checkout@v4
-      # install uv, which creates and syncs the venv from uv.lock
+      # install uv, which manages the venv built from uv.lock
       - uses: astral-sh/setup-uv@v9
         with:
           python-version: ${{ matrix.python-version }}
           enable-cache: true
+      # create .venv with the CPU-only torch build, skipping the CUDA wheels
+      - name: Sync with the cpu group
+        run: uv sync --group cpu
       - name: Run make ${{ matrix.target }}
         run: make ${{ matrix.target }}

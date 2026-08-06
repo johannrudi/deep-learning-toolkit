@@ -82,13 +82,34 @@ To additionally install the published extras:
 uv sync --all-extras
 ```
 
+#### Select a PyTorch build
+
+By default, `torch` resolves from PyPI, which serves CUDA-enabled wheels on
+Linux and CPU-only wheels on macOS and Windows. To choose a specific build,
+enable one of the accelerator dependency groups, for example the CPU-only one:
+
+```sh
+uv sync --group cpu
+```
+
+The available groups are `cpu`, `cu126`, `cu128`, and `cu130`. Each points
+`torch` at the matching [PyTorch index](https://pytorch.org/get-started/locally/),
+and the default `dev` group is still installed alongside it.
+
+The groups are declared as mutually exclusive, so enable at most one; combining
+them, including via `uv sync --all-groups`, is rejected. Dependency groups are
+not published in the package metadata, so `pip install deep-learning-toolkit`
+is unaffected by this configuration.
+
 After changing dependencies in `pyproject.toml`, refresh and commit the lock file:
 
 ```sh
 uv lock
 ```
 
-Continuous integration runs with `UV_LOCKED=1`, so a stale `uv.lock` fails the build.
+Continuous integration runs with `UV_LOCKED=1`, so a stale `uv.lock` fails the
+build. It also syncs the `cpu` group, which keeps the CUDA wheels out of the
+runner.
 
 ---
 

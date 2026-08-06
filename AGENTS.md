@@ -6,6 +6,9 @@
 - use `uv` version `>=0.12.1,<0.13`
 - run `uv sync` to create `.venv` and install the default `dev` dependency group
 - run `uv sync --all-extras` to also install the `diffusion` and `kde` extras
+- run `uv sync --group cpu` to install the CPU-only `torch` build; use `cu126`, `cu128`, or `cu130` for CUDA builds
+- without an accelerator group, `torch` resolves from PyPI: CUDA on Linux, CPU on macOS and Windows
+- enable at most one accelerator group; they are declared in `tool.uv.conflicts` and `uv sync --all-groups` fails
 - run `uv lock` and commit `uv.lock` after changing dependencies in `pyproject.toml`
 - do not run `pip install -e ".[dev]"`; `dev` is a dependency group, not an extra
 
@@ -24,6 +27,7 @@
 
 - `.github/workflows/ci.yml` runs `make compile`, `make format-check`, `make lint`, and `make test` on Python 3.11
 - CI sets `UV_LOCKED=1`; a stale `uv.lock` fails the build
+- CI runs `uv sync --group cpu` and sets `UV_NO_SYNC=1`, so `uv run` in the Makefile reuses that environment
 
 ## Release
 
@@ -34,7 +38,7 @@
 - run `uvx cffconvert --validate` after editing `CITATION.cff`
 - run `uv build --no-sources` to build the sdist and wheel
 - tag the release commit as `v{version}` and push the tag
-- publish by creating a GitHub release; CI uploads to PyPI with trusted publishing
+- publish by creating a GitHub release; `.github/workflows/release.yml` uploads to PyPI with trusted publishing
 
 ## Git
 
