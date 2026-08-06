@@ -55,7 +55,7 @@ Guides follow a consistent shape. See `template.md` in this skill directory for 
 
 **Write sentences that move forward.** Avoid the "not X, but Y" construction and its relatives. Presenting a wrong answer before the right one makes the reader hold two things in mind to receive one. Say the true thing directly: write "`validation_fn` receives the unwrapped module" rather than "`validation_fn` does not receive the DDP-wrapped model, but instead the underlying module".
 
-**Avoid n-dashes / m-dashes with rare exceptions.** These dashes break the flow and burden with another thought to keep in mind: "A leads to B—with X, Y, and Z—and results in C." This makes the reader forget what the sentence started with or what it wants to focus on. When m-dashes are used, do not put spaces around them; spaces are for n-dashes.
+**Avoid en-dashes / em-dashes with rare exceptions.** These dashes break the flow and burden with another thought to keep in mind: "A leads to B—with X, Y, and Z—and results in C." This makes the reader forget what the sentence started with or what it wants to focus on. When m-dashes are used, do not put spaces around them; spaces are for n-dashes.
 
 **Let one aside per section reward attention.** A short evaluative remark keeps a technical document alive: "which is a miserable bug to chase", "That reduction is worth appreciating." Use these sparingly and only where you mean them.
 
@@ -89,7 +89,7 @@ Recognizing these in a draft is faster than avoiding them while writing, so rere
 - **Undefined jargon.** Any term a newcomer would have to look up needs a clause of definition at first use.
 - **Commands without reasons.** A step that says what to type and not why is a step the reader cannot adapt when their situation differs.
 - **"Not X, but Y."** Also "rather than X, Y" used purely for contrast. State the fact.
-- **n-dashes / m-dashes.** Are often used for contrast that's distracting; use very sparingly and with good reason.
+- **en-dashes / em-dashes.** Are often used for contrast that's distracting; use very sparingly and with good reason.
 - **Restating the code.** Explaining that `wrap_ddp` calls `DistributedDataParallel` helps nobody. Explaining that it returns the model unchanged in a single-process run, so applications wrap unconditionally, helps everybody.
 - **A summary section.** The reader finished the guide thirty seconds ago.
 - **Author-machine paths, hardcoded versions in prose, and unverified output.**
