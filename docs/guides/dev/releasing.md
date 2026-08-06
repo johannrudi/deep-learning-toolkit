@@ -1,7 +1,7 @@
 ---
 Title: Releasing a New Version to PyPI and Zenodo
 Author: Johann Rudi
-Co-Authored-By: Oz
+Co-Authored-By: Oz, Claude Opus 5, Claude Sonnet 5
 Date: 2026-08-05
 tags:
   - release
