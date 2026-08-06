@@ -13,16 +13,17 @@ SED    := sed
 TEST   := test
 
 # set Python commands
-PY_FORMAT        := uv run black
-PY_IMPORT_FORMAT := uv run isort
-PY_LINT          := uv run basedpyright
-PY_COMPILE       := uv run python -m compileall -q -f
-PY_TEST          := uv run pytest
+PY_FORMAT        := uv run --no-sync black
+PY_IMPORT_FORMAT := uv run --no-sync isort
+PY_LINT          := uv run --no-sync basedpyright
+PY_COMPILE       := uv run --no-sync python -m compileall -q -f
+PY_TEST          := uv run --no-sync pytest
 PY_VERSION       := uv version
 
 # set directories
-PACKAGE_DIR := dlk
-TESTS_DIR := tests
+PACKAGE_DIR  := dlk
+TESTS_DIR    := tests
+RELEASES_DIR := docs/releases
 
 # set files
 CITATION_FILE := CITATION.cff
@@ -67,7 +68,7 @@ testv: compile
 testvv: compile
 	@$(PY_TEST) --verbose --capture=no
 
-.PHONY: version version-patch version-minor version-major citation
+.PHONY: version version-patch version-minor version-major
 
 version:
 	@$(PY_VERSION) --short
@@ -84,6 +85,8 @@ version-major:
 	$(PY_VERSION) --bump major
 	@$(MAKE) --no-print-directory citation
 
+.PHONY: citation
+
 # sync the version and release date into the citation metadata
 citation:
 	@version=$$($(PY_VERSION) --short); \
@@ -91,3 +94,13 @@ citation:
 	$(SED) -i "s|^version: .*|version: \"$$version\"|" $(CITATION_FILE); \
 	$(SED) -i "s|^date-released: .*|date-released: \"$$date\"|" $(CITATION_FILE); \
 	echo "updated $(CITATION_FILE): version $$version, date-released $$date"
+
+.PHONY: release-body
+
+# print the release notes of the current version without frontmatter and title,
+# which is the body of the GitHub release
+release-body:
+	@version=$$($(PY_VERSION) --short); \
+	file=$(RELEASES_DIR)/v$$version.md; \
+	$(TEST) -f $$file || { echo "missing release notes: $$file" >&2; exit 1; }; \
+	$(SED) '1,/^# /d' $$file
