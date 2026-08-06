@@ -23,14 +23,15 @@ prev="$(git describe --tags --abbrev=0)"
 git --no-pager log --no-merges --pretty=format:'%h %s%n%b' "$prev"..HEAD
 ```
 
-Backfilling a tag walks back from the commit before it, and the range usually does contain bump commits, sometimes more than one when the tag was placed after the bump:
+Backfilling an existing tag walks back from the commit before it instead, and the range usually does contain bump commits, sometimes more than one when the tag was placed after the bump:
 
 ```sh
+tag="v<version>"  # the tag being backfilled
 prev="$(git describe --tags --abbrev=0 "$tag^")"
 git --no-pager log --no-merges --pretty=format:'%h %s%n%b' "$prev".."$tag"
 ```
 
-The first release of a repository has no earlier tag. `git describe` fails there; list the history from the root instead with `git log --no-merges <tag>`.
+Run only the block for the mode you are in; the two are alternatives, not a sequence.
 
 ## 2. Read for user-visible effects
 
@@ -74,21 +75,11 @@ tags:
 - Drop version-bump commits.
 - Fold commits that formed one logical change into a single bullet, keeping the sha of the last one.
 
-Follow the house voice from `.agents/skills/write-user-guide/SKILL.md`: concrete nouns, no em dashes, no "not X, but Y". Descriptions after the scope start lowercase and stay on one line.
+Follow the voice from `.agents/skills/write-user-guide/SKILL.md`: concrete nouns, no en- and em-dashes, no "not X, but Y". Descriptions after the scope start lowercase and stay on one line (no line wrap).
 
 ## 4. Check the result
 
-- Every commit in the range is either in a bullet or deliberately dropped. Count them; a range of 30 commits that produced 8 bullets needs the folding to be visible, not accidental.
+- Every commit in the range is either in a bullet or deliberately dropped. Count them; a range of 30 commits that produced 8 bullets needs the folding to be visible (not accidental).
 - The file name matches `uv version --short` exactly, including the `v` prefix on the file but not in the version itself.
 - The Summary claims only things a reader can observe from outside the repository.
 - Nothing in the Summary was invented to fill space. A small release gets a short summary.
-
-## 5. Hand it to the GitHub release
-
-The release body is the file without its frontmatter and title, which the `release-body` make target prints:
-
-```sh
-make release-body | gh release create "$tag" --verify-tag --notes-file -
-```
-
-The target resolves the file from `uv version --short`, deletes everything through the first line starting with `# `, and fails when the file is missing. GitHub already shows the tag as the release title, which is why the page title is dropped.

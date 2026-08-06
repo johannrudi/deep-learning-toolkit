@@ -18,15 +18,15 @@ A release is four things produced from one commit:
 3. a GitHub release, and
 4. the distributions uploaded to PyPI by `.github/workflows/release.yml`.
 
-The upload uses **[trusted publishing]**, an OpenID Connect exchange in which GitHub proves the workflow's identity to PyPI, so no API token exists anywhere in the repository or in the repository secrets. Zenodo watches the same GitHub release and archives a snapshot of the source tree under a DOI.
+The upload uses [trusted publishing], an OpenID Connect exchange in which GitHub proves the workflow's identity to PyPI, so no API token exists anywhere in the repository or in the repository secrets. Zenodo watches the same GitHub release and archives a snapshot of the source tree under a DOI.
 
-The step that surprises people is the trigger. Pushing a tag publishes nothing. The workflow listens only for a **published** GitHub release, which means a draft release sits inert until you publish it. Everything before that point is reversible, and everything after it is permanent, because PyPI refuses to reuse a filename and Zenodo cannot delete a record.
+The step that surprises people is the trigger. Pushing a tag publishes nothing. The workflow listens only for a **published GitHub release**, which means a draft release sits inert until you publish it. Everything before that point is reversible, and everything after it becomes permanent, because PyPI refuses to reuse a filename and Zenodo cannot delete a record.
 
 !!! note "Before you start"
 
     `release.yml` reacts to the release event regardless of which commit the tag names, so it will publish from any branch. Decide which branch releases come off and merge into it before you begin; nothing in the tooling enforces it. You also need `gh` authenticated against the repository, permission to push tags, and, for the archive half, the repository already enabled in Zenodo ([archiving a GitHub repository]).
 
-    The tooling does enforce two constraints for you. `[tool.uv] required-version` in `pyproject.toml` pins the supported `uv` range, and a `uv` outside it refuses to run any command here. The build job compares the tag against `project.version` and fails before building if they disagree, which is what catches a mistyped tag.
+    The tooling does enforce two constraints. `[tool.uv] required-version` in `pyproject.toml` pins the supported `uv` range, and a `uv` outside it refuses to run any command here. The build job compares the tag against `project.version` and fails before building if they disagree, which is what catches a mistyped tag.
 
 ## Verifying the working tree
 
@@ -42,10 +42,12 @@ make format-check lint test
 The test target compiles the package first, so a syntax error surfaces before pytest starts. Expect a clean formatting report, a silent `basedpyright` pass, and a pytest summary with no failures:
 
 ```text
-================== <N> passed, <W> warnings in <T>s ==================
+================ <N> passed, <W> warnings in <T>s ================
 ```
 
-The profiler test reports that `torch.profiler` clears events at the end of each cycle, and that warning is expected. Read anything else `pytest` prints before you continue.
+!!! info "pytest warnings"
+
+	The profiler test reports that `torch.profiler` clears events at the end of each cycle, and that warning is expected. Read anything else `pytest` prints before you continue.
 
 ### Step 2: Confirm the lock file is current
 
@@ -69,7 +71,7 @@ A stale one exits non-zero and names its own fix. Run `uv lock` and commit the r
 
 ### Step 3: Bump the version
 
-Pick the target by what changed for people importing `dlk`. Use `make version-patch` for bug fixes and internal changes, `make version-minor` for new public API, and `make version-major` for a breaking change to existing API. To see the transition before anything is written, run `uv version --bump patch --dry-run` first; it reports the same line without touching a file.
+Pick the new version by what changed for people importing `dlk`. Use `make version-patch` for bug fixes and internal changes, `make version-minor` for new public API, and `make version-major` for a breaking change to existing API. To see the transition before anything is written, run `uv version --bump patch --dry-run` first; it reports the same line without touching a file.
 
 Capture the outgoing version first, so the commit message in Step 5 can name both ends of the bump without you retyping either.
 
@@ -81,8 +83,8 @@ make version-patch
 The target bumps `project.version` and then synchronizes the citation metadata, so the tail of the output names both effects:
 
 ```text
-deep-learning-toolkit 0.4.1 => 0.4.2
-updated CITATION.cff: version 0.4.2, date-released <YYYY-MM-DD>
+deep-learning-toolkit <prev_version> => <new_version>
+updated CITATION.cff: version <new_version>, date-released <YYYY-MM-DD>
 ```
 
 `date-released` records the day the version goes out, and `make citation` fills in today's UTC date. If you bump today and release next week, re-run `make citation` on the day you publish, or edit the field by hand.
@@ -91,13 +93,19 @@ updated CITATION.cff: version 0.4.2, date-released <YYYY-MM-DD>
 
 The notes live at `docs/releases/v<version>.md`, one page per released version, and the same text becomes the GitHub release body in Step 7. Writing them now, before the commit, means the tagged commit carries its own notes.
 
-Hand this to an agent with the `write-release-notes` skill (`.agents/skills/write-release-notes/SKILL.md`), which fixes the range, the two-part shape, and the bullet format, so successive releases read alike. The commits to summarize are the ones since the previous tag:
+Hand this to an agent with the `write-release-notes` skill (`.agents/skills/write-release-notes/SKILL.md`), which fixes the range, the two-part shape, and the bullet format, so successive releases read alike. 
 
-```sh
-git --no-pager log --no-merges --pretty=format:'%h %s' "$(git describe --tags --abbrev=0)"..HEAD
-```
+!!! tip "Double-check the agent's output"
 
-Read the result before committing it. An agent can group and phrase the entries, and it cannot know which of them a user actually cares about, so the `## Summary` is the part worth rewriting by hand.
+	Read the result before committing it. An agent can group and phrase the entries, and it cannot know which of them a user actually cares about, so the `## Summary` is the part worth rewriting by hand.
+
+!!! info
+
+	The agent will find the relevant commits since the previous tag and summarize those:
+
+	```sh
+	git --no-pager log --no-merges --pretty=format:'%h %s' "$(git describe --tags --abbrev=0)"..HEAD
+	```
 
 ### Step 5: Review and commit four files
 
@@ -108,7 +116,7 @@ git status --short
 git --no-pager diff
 ```
 
-Four files change, and a fifth would be a red flag:
+Four files must change—a fifth would be a red flag:
 
 - `pyproject.toml`, where `project.version` moves.
 - `uv.lock`, where the root package entry moves. `uv version` locks and syncs by default, which is why this stays consistent without a separate `uv lock` run.
@@ -117,7 +125,7 @@ Four files change, and a fifth would be a red flag:
 
 !!! note
 
-    `dlk/__init__.py` is absent from that list on purpose. `__version__` is read from the installed package metadata through `importlib.metadata`, so `pyproject.toml` is the only place a version literal lives in the source tree. Adding one back to `__init__.py` reintroduces a value that can drift.
+    `dlk/__init__.py` is absent from that list on purpose. `__version__` is read from the installed package metadata through `importlib.metadata`, so `pyproject.toml` is the only place a version literal lives in the source tree.
 
 Validate the citation file before committing, since an invalid one breaks GitHub's citation widget quietly.
 
@@ -125,15 +133,18 @@ Validate the citation file before committing, since an invalid one breaks GitHub
 uvx cffconvert --validate
 ```
 
+A successful output is:
+
 ```text
 Citation metadata are valid according to schema version 1.2.0.
 ```
 
-Commit the four together, using a consistent message convention so the history stays greppable.
+Commit the four together, using a consistent message convention so the history stays *greppable*.
 
 ```sh
-git add pyproject.toml uv.lock CITATION.cff "docs/releases/v$(uv version --short).md"
-git commit -m "Bump version $old -> $(uv version --short)"
+new="$(uv version --short)"
+git add pyproject.toml uv.lock CITATION.cff "docs/releases/v$(new).md"
+git commit -m "Bump version $old -> $(new)"
 ```
 
 Push the branch and **let CI confirm the bumped state is green** before you tag anything. A tag pointing at a commit that fails CI is more annoying to withdraw than to avoid.
@@ -147,7 +158,7 @@ Push the branch and **let CI confirm the bumped state is green** before you tag 
 Derive the tag from the version you just committed instead of retyping it. `uv version --short` prints the bare version, so one assignment gives you a value to reuse for the rest of the release.
 
 ```sh
-tag="v$(uv version --short)"
+tag="v$(uv version --short)"  # note the "v" prefix
 git tag -a "$tag" -m "Release $tag"
 git push origin "$tag"
 ```
@@ -174,7 +185,9 @@ make release-body | gh release create "$tag" --verify-tag --notes-file -
 
 The command prints the URL of the new release. `--verify-tag` makes it fail if the tag is missing instead of creating one silently, which matters because a tag created by `gh` points at whatever the default branch currently is. See the [gh release create] manual for the remaining flags.
 
-To see the rendered result before anything publishes, add `--draft`, check it on the web, then press the publish button.
+!!! tip "Review release draft"
+
+	To see the rendered result before anything publishes, add `--draft`, check it on the web, then press the publish button.
 
 ---
 
@@ -187,7 +200,11 @@ gh run list --workflow=release.yml --limit 1
 gh run watch
 ```
 
-The run builds the distributions in one job and uploads them in a second, which `.github/workflows/release.yml` spells out. The part worth knowing before you watch it: the upload job targets the `pypi` deployment environment, so required reviewers configured on that environment hold the run until someone approves it.
+The run builds the distributions in one job and uploads them in a second, which `.github/workflows/release.yml` spells out. 
+
+!!! note
+
+	The part worth knowing before you watch it: the upload job targets the `pypi` deployment environment, so required reviewers configured on that environment hold the run until someone approves it.
 
 Confirm the published package installs and imports from a clean environment, which exercises the real wheel rather than your editable checkout.
 
@@ -222,7 +239,9 @@ uv run python -m zipfile --list dist/*.whl
 
 The wheel should contain the `dlk` tree, a `dist-info/METADATA` whose `License-Expression` matches `project.license`, and the license text at `dist-info/licenses/LICENSE`. It should not contain `tests/`, which the single-module layout excludes structurally.
 
-`uv publish --dry-run` exists to walk the upload path without transferring files. It still resolves credentials, so outside a workflow with the trusted publisher available it tells you little.
+!!! info
+
+	`uv publish --dry-run` exists to walk the upload path without transferring files. It still resolves credentials, so outside a workflow with the trusted publisher available it tells you little.
 
 ---
 
