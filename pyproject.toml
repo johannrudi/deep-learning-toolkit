@@ -94,17 +94,8 @@ src_paths = ["dlk", "tests"]
 testpaths = ["tests"]
 addopts = "-ra"
 
-# --------------------------------------
-# Build System
-# --------------------------------------
-
-[build-system]
-requires = ["uv_build>=0.12.1,<0.13.0"]
-build-backend = "uv_build"
-
 [tool.uv]
 required-version = ">=0.12.1,<0.13"
-
 # allow at most one accelerator group per environment
 # (uv locks each variant separately; `uv sync --all-groups` is rejected)
 conflicts = [
@@ -116,13 +107,21 @@ conflicts = [
     ],
 ]
 
+# --------------------------------------
+# Build System
+# --------------------------------------
+
+[build-system]
+requires = ["uv_build>=0.12.1,<0.13.0"]
+build-backend = "uv_build"
+
 # set a custom module location
 [tool.uv.build-backend]
 module-name = "dlk"
 module-root = ""
 
 # --------------------------------------
-# Package URLs
+# Package Sources
 # --------------------------------------
 
 # route `torch` to an accelerator index when the matching group is enabled
