@@ -5,6 +5,7 @@ Co-Authored-By: Claude Fable 5
 Date: 2026-08-04
 tags:
   - training
+  - profiling
 ---
 
 # Running Distributed Training with DDP
