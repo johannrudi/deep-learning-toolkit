@@ -6,6 +6,8 @@ Date: 2026-08-04
 tags:
   - training
   - profiling
+  - performance
+  - distributed
 ---
 
 # Running Distributed Training with DDP
