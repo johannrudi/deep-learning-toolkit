@@ -16,15 +16,15 @@ A release is four things produced from one commit:
 1. a bumped version in `pyproject.toml`,
 2. a git tag,
 3. a GitHub release, and
-4. the distributions uploaded to PyPI by `.github/workflows/publish.yml`.
+4. the distributions uploaded to PyPI by `.github/workflows/release.yml`.
 
 The upload uses **[trusted publishing]**, an OpenID Connect exchange in which GitHub proves the workflow's identity to PyPI, so no API token exists anywhere in the repository or in the repository secrets. Zenodo watches the same GitHub release and archives a snapshot of the source tree under a DOI.
 
-The step that surprises people is the trigger. Pushing a tag publishes nothing. The publish workflow listens only for a **published** GitHub release, which means a draft release sits inert until you publish it. Everything before that point is reversible, and everything after it is permanent, because PyPI refuses to reuse a filename and Zenodo cannot delete a record.
+The step that surprises people is the trigger. Pushing a tag publishes nothing. The workflow listens only for a **published** GitHub release, which means a draft release sits inert until you publish it. Everything before that point is reversible, and everything after it is permanent, because PyPI refuses to reuse a filename and Zenodo cannot delete a record.
 
 !!! note "Before you start"
 
-    The publish workflow reacts to the release event regardless of which commit the tag names, so it will publish from any branch. Decide which branch releases come off and merge into it before you begin; nothing in the tooling enforces it. You also need `gh` authenticated against the repository, permission to push tags, and, for the archive half, the repository already enabled in Zenodo ([archiving a GitHub repository]).
+    `release.yml` reacts to the release event regardless of which commit the tag names, so it will publish from any branch. Decide which branch releases come off and merge into it before you begin; nothing in the tooling enforces it. You also need `gh` authenticated against the repository, permission to push tags, and, for the archive half, the repository already enabled in Zenodo ([archiving a GitHub repository]).
 
     The tooling does enforce two constraints for you. `[tool.uv] required-version` in `pyproject.toml` pins the supported `uv` range, and a `uv` outside it refuses to run any command here. The build job compares the tag against `project.version` and fails before building if they disagree, which is what catches a mistyped tag.
 
@@ -65,13 +65,13 @@ A stale one exits non-zero and names its own fix. Run `uv lock` and commit the r
 
 ---
 
-## Bumping the version
+## Preparing the release commit
 
 ### Step 3: Bump the version
 
 Pick the target by what changed for people importing `dlk`. Use `make version-patch` for bug fixes and internal changes, `make version-minor` for new public API, and `make version-major` for a breaking change to existing API. To see the transition before anything is written, run `uv version --bump patch --dry-run` first; it reports the same line without touching a file.
 
-Capture the outgoing version first, so the commit message in Step 4 can name both ends of the bump without you retyping either.
+Capture the outgoing version first, so the commit message in Step 5 can name both ends of the bump without you retyping either.
 
 ```sh
 old="$(uv version --short)"
@@ -87,7 +87,19 @@ updated CITATION.cff: version 0.4.2, date-released <YYYY-MM-DD>
 
 `date-released` records the day the version goes out, and `make citation` fills in today's UTC date. If you bump today and release next week, re-run `make citation` on the day you publish, or edit the field by hand.
 
-### Step 4: Review and commit three files
+### Step 4: Write the release notes
+
+The notes live at `docs/releases/v<version>.md`, one page per released version, and the same text becomes the GitHub release body in Step 7. Writing them now, before the commit, means the tagged commit carries its own notes.
+
+Hand this to an agent with the `write-release-notes` skill (`.agents/skills/write-release-notes/SKILL.md`), which fixes the range, the two-part shape, and the bullet format, so successive releases read alike. The commits to summarize are the ones since the previous tag:
+
+```sh
+git --no-pager log --no-merges --pretty=format:'%h %s' "$(git describe --tags --abbrev=0)"..HEAD
+```
+
+Read the result before committing it. An agent can group and phrase the entries, and it cannot know which of them a user actually cares about, so the `## Summary` is the part worth rewriting by hand.
+
+### Step 5: Review and commit four files
 
 Confirm the bump touched exactly what it should.
 
@@ -96,11 +108,12 @@ git status --short
 git --no-pager diff
 ```
 
-Three files change, and a fourth would be a red flag:
+Four files change, and a fifth would be a red flag:
 
 - `pyproject.toml`, where `project.version` moves.
 - `uv.lock`, where the root package entry moves. `uv version` locks and syncs by default, which is why this stays consistent without a separate `uv lock` run.
 - `CITATION.cff`, where `version` and `date-released` move. The `cff-version` line must be untouched; the synchronizing `sed` is anchored to avoid it.
+- `docs/releases/v<version>.md`, the new release notes from Step 4.
 
 !!! note
 
@@ -116,10 +129,10 @@ uvx cffconvert --validate
 Citation metadata are valid according to schema version 1.2.0.
 ```
 
-Commit the three together, using a consistent message convention so the history stays greppable.
+Commit the four together, using a consistent message convention so the history stays greppable.
 
 ```sh
-git add pyproject.toml uv.lock CITATION.cff
+git add pyproject.toml uv.lock CITATION.cff "docs/releases/v$(uv version --short).md"
 git commit -m "Bump version $old -> $(uv version --short)"
 ```
 
@@ -129,7 +142,7 @@ Push the branch and **let CI confirm the bumped state is green** before you tag 
 
 ## Releasing on GitHub
 
-### Step 5: Tag the release commit
+### Step 6: Tag the release commit
 
 Derive the tag from the version you just committed instead of retyping it. `uv version --short` prints the bare version, so one assignment gives you a value to reuse for the rest of the release.
 
@@ -145,91 +158,36 @@ The convention is `v` followed by the version. The build job's guard strips an o
 
 The pushed tag is your last cheap checkpoint. Nothing has reached PyPI yet, and `git push --delete origin "$tag"` undoes it.
 
-### Step 6: Draft the release notes
-
-The notes take a two-part shape: a `## Summary` in prose for readers who will never open the commit log, then a `## Changelog` of one-line entries grouped by kind. Start by listing the commits since the previous tag.
-
-```sh
-prev="$(git describe --tags --abbrev=0 "$tag^")"
-git --no-pager log --no-merges --pretty=format:'%h %s' "$prev".."$tag"
-```
-
-```text
-89850d0 Bump version 0.4.0 -> 0.4.1
-614c019 opt: Make the type hint for validation callback functions more flexible.
-26e7895 New directory for evaluation/prediction from trained models. Add eval for diffusion models.
-18a5cea Improve comments and error messages.
-```
-
-`git describe --tags --abbrev=0 "$tag^"` walks back from the commit before the tag to the nearest earlier tag, so the range never needs a hardcoded version. Hand it to an agent with a prompt that fixes the format, so successive releases read alike:
-
-```text
-Write release notes for tag $tag of this repository.
-
-Read the commits with:
-  git log --no-merges --pretty=format:'%h %s%n%b' $prev..$tag
-
-Produce exactly two sections and nothing else.
-
-## Summary
-
-One to three short paragraphs of prose, opening with "This version ". Describe
-user-visible effects for someone who imports `dlk` and never reads commits.
-Name the modules or workflows affected. Leave out file-level detail.
-
-## Changelog
-
-Bullets grouped under "### Features", "### Bug fixes", "### Refactorings", and
-"### Documentation". Omit any group with no entries. Each bullet reads:
-
-  - <short sha> <scope>: <lowercase description>
-
-where <scope> comes from the commit subject prefix when it has one, and
-otherwise from the top-level package under `dlk/` that the commit touches, or
-from the area for repository-wide work (build, ci, docs). Several scopes are
-allowed, comma-separated. Append "(#N)" when a commit references an issue or
-pull request.
-
-Drop version-bump commits. Fold commits that formed one logical change into a
-single bullet, keeping the sha of the last one.
-```
-
-Read the result before publishing it. An agent can group and phrase the entries, and it cannot know which of them a user actually cares about, so the `## Summary` is the part worth rewriting by hand.
-
-```sh
-$EDITOR RELEASE_NOTES.md
-```
-
-Keep `RELEASE_NOTES.md` untracked and delete it once the release is out, or add it to `.gitignore` if this becomes routine.
-
 ### Step 7: Create the GitHub release
 
 !!! warning
 
     Publishing is the irreversible step.
 
-Create the release from the existing tag, attaching the notes from Step 6.
+Create the release from the existing tag, using the notes committed in Step 4 as the body.
 
 ```sh
-gh release create "$tag" --verify-tag --notes-file RELEASE_NOTES.md
+make release-body | gh release create "$tag" --verify-tag --notes-file -
 ```
+
+`release-body` reads `docs/releases/v<version>.md` for the current version and drops everything through the page title, so the release body starts at `## Summary`; GitHub already shows the tag as the title. It fails loudly when the file is missing. Reading the notes from the committed file keeps the release page and the documentation identical by construction.
 
 The command prints the URL of the new release. `--verify-tag` makes it fail if the tag is missing instead of creating one silently, which matters because a tag created by `gh` points at whatever the default branch currently is. See the [gh release create] manual for the remaining flags.
 
-To see the rendered result before anything publishes, add `--draft`, check it on the web, then press the publish button. Passing `--generate-notes` in place of `--notes-file` falls back to GitHub's own list of commits and merged pull requests, which makes a serviceable seed for the agent in Step 6.
+To see the rendered result before anything publishes, add `--draft`, check it on the web, then press the publish button.
 
 ---
 
-## Watching the publish workflow
+## Watching the release workflow
 
-Optional; read this when you want to see the upload happen instead of learning about it from a failure notification. The `release: published` event starts `publish.yml`. Follow it from the terminal.
+Optional; read this when you want to see the upload happen instead of learning about it from a failure notification. The `release: published` event starts `release.yml`. Follow it from the terminal.
 
 ```sh
-gh run list --workflow=publish.yml --limit 1
+gh run list --workflow=release.yml --limit 1
 gh run watch
 ```
 
-The run builds the distributions in one job and uploads them in a second, which `.github/workflows/publish.yml` spells out. The part worth knowing before you watch it: the upload job targets the `pypi` deployment environment, so required reviewers configured on that environment hold the run until someone approves it.
+The run builds the distributions in one job and uploads them in a second, which `.github/workflows/release.yml` spells out. The part worth knowing before you watch it: the upload job targets the `pypi` deployment environment, so required reviewers configured on that environment hold the run until someone approves it.
 
 Confirm the published package installs and imports from a clean environment, which exercises the real wheel rather than your editable checkout.
 
@@ -272,7 +230,7 @@ The wheel should contain the `dlk` tree, a `dist-info/METADATA` whose `License-E
 
 Optional; read this when a run went red. What to do depends on whether anything reached PyPI.
 
-**The build job failed.** Nothing was published. Fix the cause, then move the tag: `git tag -d "$tag"`, `git push --delete origin "$tag"`, delete the release with `gh release delete "$tag"`, and start again from Step 5. A tag guard failure means the tag and `project.version` disagree, so check which one is wrong before re-tagging.
+**The build job failed.** Nothing was published. Fix the cause, then move the tag: `git tag -d "$tag"`, `git push --delete origin "$tag"`, delete the release with `gh release delete "$tag"`, and start again from Step 6. A tag guard failure means the tag and `project.version` disagree, so check which one is wrong before re-tagging.
 
 **The publish job failed partway.** Re-run it with `gh run rerun --failed`. Re-uploading is safe against PyPI, which ignores files identical to ones it already holds, so a partial upload completes rather than colliding.
 
@@ -284,7 +242,9 @@ Optional; read this when a run went red. What to do depends on whether anything 
 
 ## Things worth knowing
 
-**Two workflows, two triggers.** `ci.yml` runs on pushes to the long-lived branches and on pull requests to any branch. `publish.yml` runs on published releases only. Adding a tag-push trigger to `publish.yml` would double-fire on every release and attempt a redundant upload.
+**Two workflows, two triggers.** `ci.yml` runs on pushes to the long-lived branches and on pull requests to any branch. `release.yml` runs on published releases only. Adding a tag-push trigger to `release.yml` would double-fire on every release and attempt a redundant upload.
+
+**The trusted publisher names the workflow file.** A publisher on PyPI is registered for one owner, repository, workflow file name, and environment, and the OIDC claim has to match all four. Renaming or moving `release.yml` therefore invalidates it, and the failure arrives at the upload step after a green build. Register the new file name under the project's publishing settings on PyPI before the rename reaches a release, and drop the stale entry once a release has gone through on the new one.
 
 **Attestations are not generated.** As of uv 0.12, `uv publish` uploads PEP 740 attestation files that already sit beside the distributions, and it does not create them (see [uploading attestations]). Distributions therefore ship without provenance attestations; generating them would take an extra step ahead of `uv publish`.
 
@@ -292,7 +252,7 @@ Optional; read this when a run went red. What to do depends on whether anything 
 
 **The license identifier is stated in three places.** `pyproject.toml`, `CITATION.cff`, and `.zenodo.json`. A license change therefore means editing all three files, and an invalid value in `.zenodo.json` aborts the archiving for that release, which you find out only after the release is public.
 
-**Changing your mind before you tag.** To undo an unpushed bump, `git restore pyproject.toml uv.lock CITATION.cff` if the commit has not happened, or `git reset --soft HEAD~1` and restore if it has. Re-run `make citation` afterwards if `CITATION.cff` ended up out of step with `pyproject.toml`; the target reads the version from `pyproject.toml`, so it always converges on whatever that file now says.
+**Changing your mind before you tag.** To undo an unpushed bump, `git restore pyproject.toml uv.lock CITATION.cff` and delete the new file under `docs/releases/` if the commit has not happened, or `git reset --soft HEAD~1` and do the same if it has. Re-run `make citation` afterwards if `CITATION.cff` ended up out of step with `pyproject.toml`; the target reads the version from `pyproject.toml`, so it always converges on whatever that file now says.
 
 
 [trusted publishing]: https://docs.pypi.org/trusted-publishers/
