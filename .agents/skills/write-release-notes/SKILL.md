@@ -11,7 +11,7 @@ Scripts do the mechanical work. Every value that can be read out of the reposito
 
 ## When this runs
 
-During a release, after `make version-*` and before the version-bump commit. The file `docs/releases/v<version>.md` is committed together with `pyproject.toml`, `uv.lock`, and `CITATION.cff`, so the tagged commit contains its own notes. The guide `docs/guides/dev/releasing.md` contains a step when the present skill is used.
+During a release, after `make version-*` and before the version-bump commit. The file `docs/releases/v<version>.md` is committed together with `pyproject.toml`, `uv.lock`, `CITATION.cff`, and the two index pages step 5 regenerates, so the tagged commit contains its own notes. The guide `docs/guides/dev/releasing.md` contains a step when the present skill is used.
 
 Outside a release, the same skill backfills notes for a tag that already exists. The commit range differs between the two, so step 1 works out which one is running.
 
@@ -21,6 +21,7 @@ Outside a release, the same skill backfills notes for a tag that already exists.
 - Run `git log`, `git show`, `git diff`, and `git status` to read history.
 - Read any file in the repository.
 - Create and edit one file, the `docs/releases/v<version>.md` that step 1 names.
+- Let the script in step 5 rewrite `CHANGELOG.md` and `docs/releases/index.md`. Both are generated, so never open either one in an editor.
 
 That is the whole list. Anything else belongs to the person running the release, including committing, tagging, pushing, editing other files, and running `uv`.
 
@@ -85,3 +86,20 @@ Then read the file once more for the things no script can see:
 - The Summary claims only what a reader can observe from outside the repository.
 - Nothing in the Summary was invented to fill space.
 - Folding is visible. A long range that produced few bullets should read as deliberate.
+
+## 5. Refresh the index pages
+
+```sh
+.agents/skills/write-release-notes/scripts/collect_changelog.sh
+```
+
+This rewrites `CHANGELOG.md` and `docs/releases/index.md` from every file in `docs/releases/`, newest release first. Each entry is the version, its date, and the Summary just written, under links to the full notes and to the comparison against the previous release.
+
+Run it last, once the Summary is final. It lifts that prose verbatim, so a Summary edited afterwards leaves both pages stale.
+
+Two consequences for the way the Summary is written:
+
+- It is read on its own, away from the rest of the file. A sentence pointing at "the changelog below" says nothing on a page that carries no changelog.
+- It is read on GitHub, in Obsidian, and on the documentation site. Keep to plain markdown and relative links.
+
+`collect_changelog.sh --check` reports whether either page is stale without writing anything.

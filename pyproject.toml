@@ -68,6 +68,7 @@ kde = [
 Homepage = "https://github.com/johannrudi/deep-learning-toolkit"
 Repository = "https://github.com/johannrudi/deep-learning-toolkit"
 Issues = "https://github.com/johannrudi/deep-learning-toolkit/issues"
+Changelog = "https://github.com/johannrudi/deep-learning-toolkit/blob/main/CHANGELOG.md"
 
 #[project.scripts]
 #dlk = "dlk.__main__:main"

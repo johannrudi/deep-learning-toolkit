@@ -183,6 +183,12 @@ uv build --no-sources
 
 ---
 
+## Releases
+
+Every released version is listed in [`CHANGELOG.md`](CHANGELOG.md), each entry summarizing what changed and linking to its full notes in [`docs/releases/`](docs/releases/). Those notes add the per-commit changelog and the changed files of the release.
+
+---
+
 ## Citing
 
 Citation metadata is provided in [`CITATION.cff`](CITATION.cff), which GitHub renders under "Cite this repository". Releases are archived on [Zenodo](https://zenodo.org/), which mints a DOI for each version.
