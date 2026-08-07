@@ -71,12 +71,12 @@ A stale one exits non-zero and names its own fix. Run `uv lock` and commit the r
 
 ### Step 3: Bump the version
 
-Pick the new version by what changed for people importing `dlk`. Use `make version-patch` for bug fixes and internal changes, `make version-minor` for new public API, and `make version-major` for a breaking change to existing API. To see the transition before anything is written, run `uv version --bump patch --dry-run` first; it reports the same line without touching a file.
+Pick the new version by what changed for people importing `dlk`. Use `make version-patch` for bug fixes and internal changes, `make version-minor` for new public API, and `make version-major` for a breaking change to existing API. To see the transition before anything is written, run `uv version --bump patch --dry-run` first; it reports the same line while leaving `pyproject.toml`, `uv.lock`, and the virtual environment untouched.
 
 Capture the outgoing version first, so the commit message in Step 5 can name both ends of the bump without you retyping either.
 
 ```sh
-old="$(uv version --short)"
+old="$(make version)"
 make version-patch
 ```
 
@@ -93,19 +93,27 @@ updated CITATION.cff: version <new_version>, date-released <YYYY-MM-DD>
 
 The notes live at `docs/releases/v<version>.md`, one page per released version, and the same text becomes the GitHub release body in Step 7. Writing them now, before the commit, means the tagged commit carries its own notes.
 
-Hand this to an agent with the `write-release-notes` skill (`.agents/skills/write-release-notes/SKILL.md`), which fixes the range, the two-part shape, and the bullet format, so successive releases read alike. 
+Hand this to an agent with the `write-release-notes` skill (`.agents/skills/write-release-notes/SKILL.md`), which fixes the range, the three-part shape, and the bullet format, so successive releases read alike.
+
+!!! warning "Step ordering constraint"
+
+	Run it after Step 3 and **never before**. The skill reads the new version out of `pyproject.toml`, and a version whose tag already exists with commits on top of it leaves it nothing to write up, so it stops and says so.
 
 !!! tip "Double-check the agent's output"
 
 	Read the result before committing it. An agent can group and phrase the entries, and it cannot know which of them a user actually cares about, so the `## Summary` is the part worth rewriting by hand.
 
+	The skill checks its own work with `draft_release_notes.sh --check`, which catches a leftover scaffold heading, a wrong date, and a commit no bullet cites. Whether the Summary is true is still yours to judge.
+
 !!! info
 
-	The agent will find the relevant commits since the previous tag and summarize those:
+	The agent works from scripts in the skill directory rather than commands typed by hand. It drafts the file with
 
 	```sh
-	git --no-pager log --no-merges --pretty=format:'%h %s' "$(git describe --tags --abbrev=0)"..HEAD
+	.agents/skills/write-release-notes/scripts/draft_release_notes.sh
 	```
+
+	which detects the commit range, drops the version-bump commits, and fills in the frontmatter, one bullet per commit, and the `## Changed files` histograms. The skill grants itself no permission beyond that one file, so the commit in Step 5 stays yours.
 
 ### Step 5: Review and commit four files
 
@@ -116,16 +124,18 @@ git status --short
 git --no-pager diff
 ```
 
-Four files must change—a fifth would be a red flag:
+Four files must change, and a fifth would be a red flag:
 
 - `pyproject.toml`, where `project.version` moves.
-- `uv.lock`, where the root package entry moves. `uv version` locks and syncs by default, which is why this stays consistent without a separate `uv lock` run.
+- `uv.lock`, where the root package entry moves. `uv version` re-locks the project, which is why this stays consistent without a separate `uv lock` run. The Makefile passes `--no-sync`, so the bump re-locks without rebuilding the virtual environment, and whichever accelerator group you synced survives the release.
 - `CITATION.cff`, where `version` and `date-released` move. The `cff-version` line must be untouched; the synchronizing `sed` is anchored to avoid it.
 - `docs/releases/v<version>.md`, the new release notes from Step 4.
 
 !!! note
 
     `dlk/__init__.py` is absent from that list on purpose. `__version__` is read from the installed package metadata through `importlib.metadata`, so `pyproject.toml` is the only place a version literal lives in the source tree.
+
+    That metadata is what `--no-sync` leaves behind: until you sync again, the installed version still reads as the old one, so `dlk.__version__` reports the previous number locally. Your usual `uv sync` command brings it up to date and keeps the accelerator group you chose. Step 7 verifies the published wheel from a clean environment, so nothing downstream depends on the local number.
 
 Validate the citation file before committing, since an invalid one breaks GitHub's citation widget quietly.
 
@@ -142,9 +152,9 @@ Citation metadata are valid according to schema version 1.2.0.
 Commit the four together, using a consistent message convention so the history stays *greppable*.
 
 ```sh
-new="$(uv version --short)"
-git add pyproject.toml uv.lock CITATION.cff "docs/releases/v$(new).md"
-git commit -m "Bump version $old -> $(new)"
+new="$(make version)"
+git add pyproject.toml uv.lock CITATION.cff "docs/releases/v$new.md"
+git commit -m "Bump version $old -> $new"
 ```
 
 Push the branch and **let CI confirm the bumped state is green** before you tag anything. A tag pointing at a commit that fails CI is more annoying to withdraw than to avoid.
@@ -155,10 +165,10 @@ Push the branch and **let CI confirm the bumped state is green** before you tag 
 
 ### Step 6: Tag the release commit
 
-Derive the tag from the version you just committed instead of retyping it. `uv version --short` prints the bare version, so one assignment gives you a value to reuse for the rest of the release.
+Derive the tag from the version you just committed instead of retyping it. `make version` prints the bare version and touches nothing, so one assignment gives you a value to reuse for the rest of the release.
 
 ```sh
-tag="v$(uv version --short)"  # note the "v" prefix
+tag="v$(make version)"  # note the "v" prefix
 git tag -a "$tag" -m "Release $tag"
 git push origin "$tag"
 ```
@@ -183,9 +193,11 @@ make release-body | gh release create "$tag" --verify-tag --notes-file -
 
 `release-body` reads `docs/releases/v<version>.md` for the current version and drops everything through the page title, so the release body starts at `## Summary`; GitHub already shows the tag as the title. It fails loudly when the file is missing. Reading the notes from the committed file keeps the release page and the documentation identical by construction.
 
+The `## Changed files` histograms travel with the body. GitHub strips the inline colors out of them, which is why the skill draws the bars with block characters that carry the same information in monochrome.
+
 The command prints the URL of the new release. `--verify-tag` makes it fail if the tag is missing instead of creating one silently, which matters because a tag created by `gh` points at whatever the default branch currently is. See the [gh release create] manual for the remaining flags.
 
-!!! tip "Review release draft"
+!!! tip "Review a release draft"
 
 	To see the rendered result before anything publishes, add `--draft`, check it on the web, then press the publish button.
 

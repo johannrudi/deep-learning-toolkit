@@ -18,7 +18,9 @@ PY_IMPORT_FORMAT := uv run --no-sync isort
 PY_LINT          := uv run --no-sync basedpyright
 PY_COMPILE       := uv run --no-sync python -m compileall -q -f
 PY_TEST          := uv run --no-sync pytest
-PY_VERSION       := uv version
+PY_VERSION       := uv version --no-sync
+# Bare version & no color codes (e.g., for a filename):
+PY_VERSION_READ  := NO_COLOR=1 $(PY_VERSION) --short
 
 # set directories
 PACKAGE_DIR  := dlk
@@ -71,7 +73,7 @@ testvv: compile
 .PHONY: version version-patch version-minor version-major
 
 version:
-	@$(PY_VERSION) --short
+	@$(PY_VERSION_READ)
 
 version-patch:
 	$(PY_VERSION) --bump patch
@@ -89,7 +91,7 @@ version-major:
 
 # sync the version and release date into the citation metadata
 citation:
-	@version=$$($(PY_VERSION) --short); \
+	@version=$$($(PY_VERSION_READ)); \
 	date=$$(date -u +%F); \
 	$(SED) -i "s|^version: .*|version: \"$$version\"|" $(CITATION_FILE); \
 	$(SED) -i "s|^date-released: .*|date-released: \"$$date\"|" $(CITATION_FILE); \
@@ -100,7 +102,7 @@ citation:
 # print the release notes of the current version without frontmatter and title,
 # which is the body of the GitHub release
 release-body:
-	@version=$$($(PY_VERSION) --short); \
+	@version=$$($(PY_VERSION_READ)); \
 	file=$(RELEASES_DIR)/v$$version.md; \
 	$(TEST) -f $$file || { echo "missing release notes: $$file" >&2; exit 1; }; \
 	$(SED) '1,/^# /d' $$file

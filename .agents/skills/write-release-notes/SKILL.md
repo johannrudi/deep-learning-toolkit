@@ -7,79 +7,81 @@ description: Write the release notes for a version of the Deep Learning Toolkit 
 
 One text with two destinations. `docs/releases/v<version>.md` is the artifact and the source of truth: a page of the documentation that stays readable years later. The GitHub release body is that same file with its frontmatter and title stripped, so the two can never disagree.
 
+Scripts do the mechanical work. Every value that can be read out of the repository comes from a script, so the writing left over is prose and judgement.
+
 ## When this runs
 
-During a release, after `make version-*` and before the version-bump commit. The file is committed together with `pyproject.toml`, `uv.lock`, and `CITATION.cff`, so the tagged commit contains its own notes. Step 4 of `docs/guides/dev/releasing.md` is the caller.
+During a release, after `make version-*` and before the version-bump commit. The file `docs/releases/v<version>.md` is committed together with `pyproject.toml`, `uv.lock`, and `CITATION.cff`, so the tagged commit contains its own notes. The guide `docs/guides/dev/releasing.md` contains a step when the present skill is used.
 
-Outside a release, the same skill backfills notes for a tag that already exists. Say which mode you are in before you start, because the commit range differs.
+Outside a release, the same skill backfills notes for a tag that already exists. The commit range differs between the two, so step 1 works out which one is running.
 
-## 1. Establish the range
+## What you may do
 
-In a release, the bump is not committed yet, so the range ends at `HEAD` and contains no bump commit:
+- Run the scripts in `.agents/skills/write-release-notes/scripts/`.
+- Run `git log`, `git show`, `git diff`, and `git status` to read history.
+- Read any file in the repository.
+- Create and edit one file, the `docs/releases/v<version>.md` that step 1 names.
+
+That is the whole list. Anything else belongs to the person running the release, including committing, tagging, pushing, editing other files, and running `uv`.
+
+## 1. Draft the file
 
 ```sh
-version="$(uv version --short)"
-prev="$(git describe --tags --abbrev=0)"
-git --no-pager log --no-merges --pretty=format:'%h %s%n%b' "$prev"..HEAD
+.agents/skills/write-release-notes/scripts/draft_release_notes.sh
 ```
 
-Backfilling an existing tag walks back from the commit before it instead, and the range usually does contain bump commits, sometimes more than one when the tag was placed after the bump:
+This writes the file and prints the commits in range with their bodies. It fills in the frontmatter, the file name, the date, the author, one bullet per commit with its scope, and the changed-files histograms. What it leaves are lines marked `TODO`.
 
-```sh
-tag="v<version>"  # the tag being backfilled
-prev="$(git describe --tags --abbrev=0 "$tag^")"
-git --no-pager log --no-merges --pretty=format:'%h %s%n%b' "$prev".."$tag"
-```
+Read what it prints before doing anything else. It names the version, the mode, and the range it chose.
 
-Run only the block for the mode you are in; the two are alternatives, not a sequence.
+To write up a version that is already tagged, name the tag: `draft_release_notes.sh v0.3.1`.
 
-## 2. Read for user-visible effects
+The script stops when `pyproject.toml` names a version whose tag already exists and commits sit on top of it, because that state does not say which version to write up. Do what the message says. Never guess a range.
 
-Commit subjects are an index, not the content. Read the bodies, and for anything that moves a signature, a default, or a dependency, read the change itself with `git show --stat <sha>`. The Summary is written for someone who imports `dlk` and will never open the log: they care that parameter files now default to YAML, not that a file was renamed.
+It also stops when the file already exists, so a draft is never overwritten by accident.
+
+## 2. Read the commits for user-visible effects
+
+Commit subjects are an index. Read the bodies the script printed, and for anything that moves a signature, a default, or a dependency, read the change itself with `git show --stat <sha>`.
+
+The Summary is written for someone who imports `dlk` and will never open the log. They care that a training loop now takes a validation callback. File renames stay out.
 
 Decide which commits form one logical change while you read. A refactor spread over four commits is one bullet.
 
-## 3. Write the file
+## 3. Write the prose
 
-Write `docs/releases/v<version>.md`, one file per released version:
+Replace every `TODO` line in the draft.
 
-```markdown
----
-Title: Release v<version>
-Author: <repository author>
-Co-Authored-By: <model name, when an agent wrote the notes>
-Date: <YYYY-MM-DD>
-tags:
-  - release
-  - changelog
----
+**Summary.** One to three short paragraphs, opening with "This version ". Describe user-visible effects and name the modules or workflows affected. Leave out file-level detail. A small release gets a short summary.
 
-# Release v<version>
+**Changelog.** Move each bullet out of `### Unsorted` into one of these groups, in this order, and delete the groups that stay empty:
 
-## Summary
+`### Features`, `### Bug fixes`, `### Refactorings`, `### Documentation`, `### Build and CI`
 
-<One to three short paragraphs of prose, opening with "This version ".>
+Then delete the `### Unsorted` heading.
 
-## Changelog
+Bullets keep the shape the draft gave them, `- <short sha> <scope>: <lowercase description>`, with these corrections:
 
-### Features
-
-- <short sha> <scope>: <lowercase description>
-```
-
-- `Date` is the day the version is released, matching `date-released` in `CITATION.cff`.
-- The Summary describes user-visible effects and names the modules or workflows affected. Leave out file-level detail.
-- Changelog groups appear in this order, and any group with no entries is omitted: `### Features`, `### Bug fixes`, `### Refactorings`, `### Documentation`, `### Build and CI`.
-- `<scope>` comes from the commit subject prefix when it has one, otherwise from the top-level package under `dlk/` that the commit touches, otherwise from the area for repository-wide work (build, ci, docs). Several scopes are allowed, comma-separated.
-- Append `(#N)` only when the commit message itself references an issue or pull request. Never infer a number.
-- Drop version-bump commits.
 - Fold commits that formed one logical change into a single bullet, keeping the sha of the last one.
+- Fill in a scope the script left blank, and fix one it guessed wrong. A scope is the top-level package under `dlk/` that the commit touches, or the area for repository-wide work (build, ci, docs). Several are allowed, comma-separated.
+- Append `(#N)` only when the commit message itself references an issue or pull request. Never infer a number.
 
-Follow the voice from `.agents/skills/write-user-guide/SKILL.md`: concrete nouns, no en- and em-dashes, no "not X, but Y". Descriptions after the scope start lowercase and stay on one line (no line wrap).
+**Changed files.** Leave this section alone. Paste nothing into it and edit nothing in it. Where a renamed file matters to a reader, say the old name in the Changelog bullet, because the histogram lists a renamed file under its new path only.
+
+Follow the voice from `.agents/skills/write-user-guide/SKILL.md`: concrete nouns, no en- and em-dashes, no "not X, but Y". Descriptions after the scope start lowercase and stay on one line, with no line wrap.
 
 ## 4. Check the result
 
-- Every commit in the range is either in a bullet or deliberately dropped. Count them; a range of 30 commits that produced 8 bullets needs the folding to be visible (not accidental).
-- The file name matches `uv version --short` exactly, including the `v` prefix on the file but not in the version itself.
-- The Summary claims only things a reader can observe from outside the repository.
-- Nothing in the Summary was invented to fill space. A small release gets a short summary.
+```sh
+.agents/skills/write-release-notes/scripts/draft_release_notes.sh --check
+```
+
+It verifies the date, the title, and that no `TODO` or scaffold heading survives. It also re-renders the changed-files histograms and compares them to what the file holds, line by line, so a bar that was retyped rather than pasted is caught. Fix every `FAIL` and run it again.
+
+A line marked `INFO` reports commits the file never cites. That is correct where those commits were folded into another bullet, and a mistake where they were dropped by accident. Decide which, one sha at a time.
+
+Then read the file once more for the things no script can see:
+
+- The Summary claims only what a reader can observe from outside the repository.
+- Nothing in the Summary was invented to fill space.
+- Folding is visible. A long range that produced few bullets should read as deliberate.
