@@ -197,7 +197,7 @@ The per-rank traces are the point. Open one in [Perfetto] to see the communicati
 
 **Shard padding.** `DistributedSampler` pads shards to equal length by repeating samples, so no rank runs out of batches early (a rank that stops while others continue deadlocks the collectives). The repeats bias epoch metrics slightly; pass `drop_last=True` to `sampler_create` to drop trailing samples instead.
 
-**DataLoader workers.** `multiprocessing_context="fork"` is unsafe once CUDA is initialized; under DDP use `"spawn"` or `num_workers=0`. `num_workers` counts per rank, so 4 ranks with 8 workers each start 32 loader processes.
+**DataLoader workers.** `multiprocessing_context="fork"` is unsafe once CUDA is initialized; under DDP use `"spawn"` or `num_workers=0`. `num_workers` counts per rank, so 4 ranks with 8 workers each start 32 loader processes. See the [torch multiprocessing documentation].
 
 **CPU clusters.** The same commands work without GPUs; the backend auto-selects gloo when CUDA is unavailable, and `initialize(backend="gloo")` forces it.
 
@@ -207,4 +207,5 @@ The per-rank traces are the point. Open one in [Perfetto] to see the communicati
 
 
 [torchrun documentation]: https://docs.pytorch.org/docs/stable/elastic/run.html
+[torch multiprocessing documentation]: https://docs.pytorch.org/docs/main/notes/multiprocessing.html
 [Perfetto]: https://ui.perfetto.dev

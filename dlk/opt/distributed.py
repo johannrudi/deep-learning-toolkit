@@ -207,10 +207,17 @@ def initialize(
         init_method="env://",
         timeout=datetime.timedelta(seconds=timeout_seconds),
     )
-    logger.info(
-        f"distributed run, rank {rank}/{world_size}, local_rank {local_rank}, "
-        f"device {device}, backend {backend}"
-    )
+    if world_size <= 8:
+        logger.info(
+            f"distributed run, rank {rank}/{world_size}, local_rank {local_rank}, "
+            f"device {device}, backend {backend}"
+        )
+    elif is_main_process():
+        logger.info(
+            f"distributed run, world_size {world_size}, "
+            f"device {device}, backend {backend}"
+        )
+
     return DistributedContext(
         rank=rank,
         local_rank=local_rank,
@@ -299,7 +306,7 @@ def unwrap_net(net: torch.nn.Module) -> torch.nn.Module:
 def sampler_create(
     dataset: "torch.utils.data.Dataset[object]",
     shuffle: bool = True,
-    seed: int = 0,
+    seed: int | None = None,
     drop_last: bool = False,
 ) -> torch.utils.data.DistributedSampler | None:
     """Create a `DistributedSampler` when distributed, otherwise `None`.
@@ -321,6 +328,8 @@ def sampler_create(
     """
     if not is_distributed():
         return None
+    if seed is None:
+        seed = 0
     return torch.utils.data.DistributedSampler(
         dataset,
         shuffle=shuffle,
