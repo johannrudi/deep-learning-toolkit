@@ -14,6 +14,15 @@ Release notes for the *Deep Learning Toolkit*, newest first. Each entry links to
 its full notes, which add the per-commit changelog and the changed-file
 histograms.
 
+## [v0.5.0](https://github.com/johannrudi/deep-learning-toolkit/releases/tag/v0.5.0) · 2026-08-07
+
+This version introduces full Distributed Data Parallel (DDP) support for training on multi-GPU systems. `dlk.opt` now provides building blocks for distributed training, rank-aware train loops for both supervised learning and GAN training, and distributed profiling to measure performance scaling. The release also includes distributed checkpoint loading and a comprehensive guide to distributed training workflows.
+
+Alongside DDP, this release fixes a CPU floating-point nondeterminism issue that caused regression tests to fail randomly across different hardware, and improves type hints for learning rate schedulers. Build improvements include support for PyTorch version selection via dependency groups (CPU-only, CUDA 12.6, 12.8, 13.0) and a streamlined release process with automated changelog generation.
+
+[Full notes](v0.5.0.md) ·
+[Compare](https://github.com/johannrudi/deep-learning-toolkit/compare/v0.4.1...v0.5.0)
+
 ## [v0.4.1](https://github.com/johannrudi/deep-learning-toolkit/releases/tag/v0.4.1) · 2026-06-01
 
 This version separates evaluation from training. `dlk.eval` is a new module for prediction and evaluation from trained models, and it starts with the diffusion case, which previously had no home outside the training loop.
