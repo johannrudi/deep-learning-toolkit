@@ -28,8 +28,13 @@ TrainLog: TypeAlias = dict[str, Any]
 class LRSchedulerType(Protocol):
     """Protocol for learning-rate schedulers used during training."""
 
-    def get_last_lr(self) -> list[float]:
-        """Return learning rates for each optimizer parameter group."""
+    def get_last_lr(self) -> Sequence[float | torch.Tensor]:
+        """Return learning rates for each optimizer parameter group.
+
+        Mirrors `torch.optim.lr_scheduler.LRScheduler.get_last_lr`, which may
+        return tensor learning rates. The return type is a covariant `Sequence`
+        so schedulers returning `list[float]` also satisfy the protocol.
+        """
         ...
 
     def step(self) -> None:

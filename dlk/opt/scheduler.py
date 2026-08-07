@@ -2,6 +2,8 @@
 
 import torch
 
+from dlk.opt.utils import LRSchedulerType
+
 
 def create_linear_const_cosine_scheduler(
     optimizer: torch.optim.Optimizer,
@@ -11,7 +13,7 @@ def create_linear_const_cosine_scheduler(
     constant_epochs: int | None = None,
     init_learning_rate: float | None = None,
     final_learning_rate: float | None = None,
-) -> torch.optim.lr_scheduler.SequentialLR:
+) -> LRSchedulerType:
     """Create a staged learning-rate schedule.
 
     The scheduler has three stages:
@@ -100,7 +102,7 @@ def create_learning_rate_scheduler_from_config(
     optimizer: torch.optim.Optimizer,
     opt_params: dict,
     n_epochs: int,
-) -> torch.optim.lr_scheduler.LRScheduler | None:
+) -> LRSchedulerType | None:
     """Create a learning rate scheduler, or return None if not configured.
 
     Supports:
