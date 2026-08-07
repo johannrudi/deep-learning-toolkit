@@ -9,6 +9,16 @@ One text with two destinations. `docs/releases/v<version>.md` is the artifact an
 
 Scripts do the mechanical work. Every value that can be read out of the repository comes from a script, so the writing left over is prose and judgement.
 
+## Target model tier
+
+> **Small model.** Claude Haiku / GPT mini / GLM Air
+
+The steps below stay within that reach because the scripts carry the load. They supply every value the repository can answer for, and they check the written file afterwards, where a wrong date, a leftover scaffold, or a retyped histogram bar turns up as a `FAIL` line.
+
+What the model contributes is the prose, and three decisions no script can make: which commits form one logical change, which of those changes a reader who imports `dlk` can observe, and which changelog group each bullet belongs in.
+
+A larger model writes a better Summary. It follows the same steps and uses the same checks.
+
 ## When this runs
 
 During a release, after `make version-*` and before the version-bump commit. The file `docs/releases/v<version>.md` is committed together with `pyproject.toml`, `uv.lock`, `CITATION.cff`, and the two index pages step 5 regenerates, so the tagged commit contains its own notes. The guide `docs/guides/dev/releasing.md` contains a step when the present skill is used.

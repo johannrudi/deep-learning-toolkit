@@ -1,11 +1,19 @@
 ---
-name: feature-plan
+name: plan-feature
 description: Plan a new feature for this codebase and write the plan as a dated document in docs/features/. Use when the user asks to plan, design, or scope a feature or extension (e.g. "let's plan X", "write a plan for Y", "we will work on extending Z").
 ---
 
 # Feature planning workflow
 
 Produce a concise, executable plan document in `docs/features/`, following the process that worked for the DDP feature (`2026.02__ddp__1-plan.md`, whose Section 14 addendum records what this skill's improvements come from).
+
+## Target model tier
+
+> **Large model.** Claude Opus / flagship GPT / Kimi K2 class
+
+Nothing here is mechanical. Step 1 asks for gaps, meaning the operation a module lacks, which is harder to see than the one it has. Step 2 asks for a core principle that collapses many small decisions into one. Both are synthesis, and both fail quietly: a plan naming a generic principle and listing no gaps reads like a plan.
+
+Nothing checks the result at the time it is written. Before implementing a plan, confirm the `file:line` anchors still resolve and that each claimed gap is real.
 
 ## 1. Gather (do this in parallel, before designing anything)
 

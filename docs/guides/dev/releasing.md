@@ -95,6 +95,10 @@ The notes live at `docs/releases/v<version>.md`, one page per released version, 
 
 Hand this to an agent with the `write-release-notes` skill (`.agents/skills/write-release-notes/SKILL.md`), which fixes the range, the three-part shape, and the bullet format, so successive releases read alike.
 
+!!! info "Target model tier"
+
+	A small model suffices: Claude Haiku, the GPT mini models, or an open-weight model of the GLM Air class. The skill's scripts fill in every mechanical value and check the result, leaving the agent the Summary prose and the grouping of the bullets.
+
 !!! warning "Step ordering constraint"
 
 	Run it after Step 3 and **never before**. The skill reads the new version out of `pyproject.toml`, and a version whose tag already exists with commits on top of it leaves it nothing to write up, so it stops and says so.

@@ -7,6 +7,16 @@ description: Write or revise a user-facing guide under docs/guides/ in the Deep 
 
 A guide teaches a reader to do one thing, end to end, and leaves them understanding why it worked. Reference documentation lists what exists; a guide walks a path through it. Keep that distinction in mind, because it decides what belongs in the file and what does not.
 
+## Target model tier
+
+> **Mid-size model** to write a guide from source. Claude Sonnet / GPT / GLM
+>
+> **Small model** to revise one against the rules. Claude Haiku / GPT mini / GLM Air
+
+Writing from source is the demanding half. "Ground every claim in the source" means tracing an argument from a public function to the code that consumes it and explaining why the behavior follows. A smaller model writes fluent prose over an unread implementation and invents a log line that resembles the real one.
+
+Revising is lighter. Checking a draft against the anti-patterns, the formatting conventions, and the voice rules is rule following, and `references/examples.md` shows what each rule looks like when kept and when broken. Leave the source-grounding rule out of that pass.
+
 ## The reader
 
 Assume a competent scientist or engineer who knows PyTorch but has never used this feature. They read fast, they like learning, and their time is expensive. Two consequences shape every sentence:
