@@ -30,7 +30,7 @@ dependencies = [
     "matplotlib>=3,<4",
     "prettytable>=3,<4",
     "pyyaml>=6,<7",
-    "torch>=2,<3",
+    "torch>=2.11,<3",
     "tqdm>=4,<5",
 ]
 
@@ -50,10 +50,10 @@ dev = [
 # (select a build variant with, e.g., `uv sync --group cpu`)
 # (without a group, `torch` resolves from PyPI: CUDA on Linux, CPU on macOS/Windows)
 # (each group repeats `torch` because uv requires the package under the gated group)
-cpu = ["torch>=2,<3"]
-cu126 = ["torch>=2,<3"]
-cu128 = ["torch>=2,<3"]
-cu130 = ["torch>=2,<3"]
+cpu = ["torch>=2.11,<3"]
+cu126 = ["torch>=2.11,<3"]
+cu128 = ["torch>=2.11,<3"]
+cu130 = ["torch>=2.11,<3"]
 
 # Published optional dependencies
 [project.optional-dependencies]
