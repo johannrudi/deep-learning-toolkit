@@ -33,7 +33,7 @@ def _train_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None:
     distributed.seed_random_generators(42)
 
     dataset = _make_dataset()
-    sampler = distributed.sampler_create(dataset, shuffle=True, seed=0)
+    sampler = distributed.sampler_create(dataset, shuffle=True, base_seed=0)
     assert sampler is not None
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, sampler=sampler)
 

@@ -33,7 +33,7 @@ def _profile_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None
 
     # 10 profiled batches per rank at batch_size 4 across 2 ranks
     dataset = _make_dataset(10 * 4 * world_size)
-    sampler = distributed.sampler_create(dataset, shuffle=False, seed=0)
+    sampler = distributed.sampler_create(dataset, shuffle=False, base_seed=0)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=4, sampler=sampler)
 
     net = distributed.wrap_net(_make_net(), ctx.device)

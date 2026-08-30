@@ -21,6 +21,43 @@ def find_free_port() -> int:
         return sock.getsockname()[1]
 
 
+def set_launcher_environment(
+    rank: int,
+    world_size: int,
+    port: int,
+    slurm_style: bool = False,
+) -> None:
+    """Set the launcher environment variables read by `initialize` or `session`.
+
+    Sets the launcher environment variables (torchrun-style by default,
+    Slurm-style when requested) and hides CUDA devices so that tests run on
+    CPU with the gloo backend everywhere.
+
+    Args:
+        rank: Global rank of this worker.
+        world_size: Total number of workers.
+        port: Rendezvous port shared by all workers.
+        slurm_style: Whether to exercise the Slurm environment fallback.
+
+    Returns:
+        None.
+    """
+    # hide GPUs before the first CUDA query in this process
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = str(port)
+    if slurm_style:
+        os.environ.pop("RANK", None)
+        os.environ.pop("WORLD_SIZE", None)
+        os.environ["SLURM_PROCID"] = str(rank)
+        os.environ["SLURM_LOCALID"] = str(rank)
+        os.environ["SLURM_NTASKS"] = str(world_size)
+    else:
+        os.environ["RANK"] = str(rank)
+        os.environ["LOCAL_RANK"] = str(rank)
+        os.environ["WORLD_SIZE"] = str(world_size)
+
+
 def init_worker(
     rank: int,
     world_size: int,
@@ -42,20 +79,7 @@ def init_worker(
     Returns:
         Context returned by `initialize`.
     """
-    # hide GPUs before the first CUDA query in this process
-    os.environ["CUDA_VISIBLE_DEVICES"] = ""
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = str(port)
-    if slurm_style:
-        os.environ.pop("RANK", None)
-        os.environ.pop("WORLD_SIZE", None)
-        os.environ["SLURM_PROCID"] = str(rank)
-        os.environ["SLURM_LOCALID"] = str(rank)
-        os.environ["SLURM_NTASKS"] = str(world_size)
-    else:
-        os.environ["RANK"] = str(rank)
-        os.environ["LOCAL_RANK"] = str(rank)
-        os.environ["WORLD_SIZE"] = str(world_size)
+    set_launcher_environment(rank, world_size, port, slurm_style=slurm_style)
     return distributed.initialize()
 
 

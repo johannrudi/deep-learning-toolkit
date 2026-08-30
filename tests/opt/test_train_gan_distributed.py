@@ -81,7 +81,7 @@ def _train_gan_worker(rank: int, world_size: int, port: int) -> None:
     x_data = torch.randn((64, 4), generator=generator, dtype=torch.float32)
     y_data = torch.randn((64, 3), generator=generator, dtype=torch.float32)
     dataset = torch.utils.data.TensorDataset(x_data, y_data)
-    sampler = distributed.sampler_create(dataset, shuffle=True, seed=0)
+    sampler = distributed.sampler_create(dataset, shuffle=True, base_seed=0)
     assert sampler is not None
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, sampler=sampler)
 
