@@ -1,8 +1,8 @@
 ---
 Title: Diagnosing PyTorch CPU Multithreading Behavior
 Author: Johann Rudi
-Co-Authored-By: Claude Sonnet 5
-Date: 2026-08-06
+Co-Authored-By: Claude Fable 5 and Claude Opus 5
+Date: 2026-08-29
 tags:
   - cpu
   - multithreading
@@ -20,15 +20,14 @@ A CPU-only PyTorch training run decides how many threads to use for its tensor m
 - a handful of environment variables (`OMP_NUM_THREADS`, `MKL_NUM_THREADS`), and,
 - on machines with an Intel MKL build, a runtime heuristic called `MKL_DYNAMIC` that can override all of the above per call.
 
-Nothing in the `deep-learning-toolkit` sets a thread count explicitly, so the same training run can use every core on *one* machine and a single core on *another* without any code difference between them, purely because the surrounding environment differs.
+Nothing in the `deep-learning-toolkit` sets a thread count; `dlk.opt.distributed` only records the count each rank ends up with (see the warning in Step 1). The chain above decides alone, so the same training run can use every core on *one* machine and a single core on *another* without any code difference between them, purely because the surrounding environment differs.
 
-This guide walks through that chain of defaults in the order to check them, from the cheapest read of PyTorch's own state down to NUMA topology and CPU pinning. Each step narrows the possible causes, so it's recommended to run them in order. The guide closes with how PyTorch's DataLoader workers fit into the same thread budget, since they are a separate process pool that most of the diagnostics above do not see.
+The steps below check that chain from the cheapest read of PyTorch's own state down to NUMA topology and CPU pinning; each step narrows the possible causes, so run them in order. The guide closes with how PyTorch's DataLoader workers fit into the same thread budget, since they are a separate process pool that most of these diagnostics do not see.
 
-!!! note "Before you start"
-
-    Everything here is Linux-specific: `/proc`, `taskset`, `numactl`, and cgroup files have no equivalent on macOS. If you are diagnosing a Mac, PyTorch's own reporting (Step 1) still works, but affinity and NUMA pinning (Steps 3 through 8) do not apply. The guide also assumes a CPU-only PyTorch build (installed with `uv sync --group cpu` in this repository); a CUDA build adds `torch.cuda` device transfers to the picture that this guide does not cover.
-
-    The tooling used here is [uv] and [numactl].
+> [!NOTE]
+> **Before you start.** Everything here is Linux-specific: `/proc`, `taskset`, `numactl`, and cgroup files have no equivalent on macOS. If you are diagnosing a Mac, PyTorch's own reporting (Step 1) still works, but affinity and NUMA pinning (Steps 3 through 8) do not apply. The guide also assumes a CPU-only PyTorch build (installed with `uv sync --group cpu` in this repository); a CUDA build adds `torch.cuda` device transfers to the picture that this guide does not cover.
+>
+> The tooling used here is [uv] and [numactl].
 
 ## Reading what PyTorch already reports
 
@@ -65,6 +64,9 @@ Environment variables:
 ATen parallel backend: OpenMP
 ```
 
+> [!WARNING]
+> **A distributed run reports this number per rank.** A `dlk.opt.distributed` session never calls `torch.set_num_threads`; each rank keeps whatever the environment established, records it as `ctx.num_threads`, and prints it at the end of its initialization log line: `distributed run, rank 0/2, local_rank 0/2, device cpu, backend gloo, num_threads 8`. Mind that torchrun exports `OMP_NUM_THREADS=1` when the variable is unset, so an unset variable shows up here as `num_threads 1`, not as the core count. Read [Running Distributed Training with DDP](distributed_training.md) for sizing the variable per launcher.
+
 A `mkl_get_max_threads()` line means the build links Intel MKL for its BLAS routines, which matters later: MKL has its own thread-count heuristic that a plain OpenMP-only build does not. If this number already matches what you expect (roughly your physical core count, or an explicit value you exported), PyTorch's own configuration is not the problem, and the cause lives further down this list, in the OS or in MKL's runtime decisions rather than in torch's reported settings.
 
 ### Step 2: Check for thread-limiting environment variables
@@ -78,7 +80,7 @@ env | grep -Ei 'OMP_|MKL_|OPENBLAS|NUMEXPR|KMP_|GOMP|VECLIB|SLURM_CPUS'
 - `OMP_NUM_THREADS` and `MKL_NUM_THREADS` are the two that matter for PyTorch's own ops; if both are unset, PyTorch picks a default based on the visible core count.
 - `OPENBLAS_NUM_THREADS` and `NUMEXPR_NUM_THREADS` matter only if NumPy or another library in the pipeline was built against OpenBLAS or uses `numexpr`, which this project's dependency stack does not by default.
 - `KMP_AFFINITY` and `KMP_BLOCKTIME` configure Intel's OpenMP runtime (`libiomp5`) specifically and are worth noting if present, since they can pin threads to cores independently of the process's own affinity mask (see Step 7).
-- `SLURM_CPUS_PER_TASK` is worth checking on a cluster node: batch job wrapper scripts commonly do `export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK`, and that value silently becomes `1` if the job was submitted without requesting multiple CPUs per task.
+- `SLURM_CPUS_PER_TASK` is worth checking on a cluster node: batch job wrapper scripts commonly do `export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK`, and that value silently becomes `1` if the job was submitted without requesting multiple CPUs per task. Under `srun torchrun`, where several ranks share one Slurm task, exporting the whole task's allocation to every rank oversubscribes the node by the number of ranks; export the per-rank share instead.
 
 If an interactive shell and the actual training invocation see different values here, for instance because a login shell exports one thing and a batch scheduler exports another, that mismatch is the more likely explanation than anything in PyTorch. Confirm by running Step 1 inside the exact invocation used for training, not in a separate diagnostic shell.
 
@@ -98,7 +100,7 @@ nproc          # affinity-aware
 nproc --all    # ignores affinity, total cores on the box
 ```
 
-If `nproc` reports far fewer cores than `nproc --all`, the process is affinity-restricted and that restriction, explains a low thread count. If the two numbers match, affinity is not the cause and the next step is to watch the real training process.
+If `nproc` reports far fewer cores than `nproc --all`, the process is affinity-restricted and that restriction explains a low thread count. If the two numbers match, affinity is not the cause and the next step is to watch the real training process.
 
 ### Step 4: Watch the real training process, not a diagnostic script
 
@@ -131,14 +133,13 @@ If Steps 1 through 5 show correct affinity and a correct `OMP_NUM_THREADS`, but 
 ### Step 6: Force MKL to honor the requested thread count
 
 ```sh
-MKL_DYNAMIC=FALSE OMP_NUM_THREADS=<N> ./uv run python3 run.py <args>
+MKL_DYNAMIC=FALSE OMP_NUM_THREADS=<N> uv run python3 run.py <args>
 ```
 
 Watch per-core utilization (`htop`, pressing `t` for the tree view or looking at the per-core meters directly) while this runs. If cores light up that did not before, `MKL_DYNAMIC` was overriding the requested thread count; the number of cores that light up should match `<N>` exactly, since `MKL_DYNAMIC=FALSE` removes MKL's discretion entirely. A run that used one core at `OMP_NUM_THREADS=48` and correctly used all forty-eight once `MKL_DYNAMIC=FALSE` was added confirms this mechanism.
 
-!!! tip
-
-    Getting MKL to use the requested thread count is not the same as getting the fastest training run. More threads add coordination overhead per call, and on a multi-socket machine, threads split across sockets add cross-socket memory latency on top of that. A configuration that correctly uses every requested core can still be slower than a smaller thread count that stays within one socket. Compare wall-clock time across a few values before picking one; see "Sweeping thread counts to find the true optimum" below.
+> [!TIP]
+> Getting MKL to use the requested thread count is not the same as getting the fastest training run. More threads add coordination overhead per call, and on a multi-socket machine, threads split across sockets add cross-socket memory latency on top of that. A configuration that correctly uses every requested core can still be slower than a smaller thread count that stays within one socket. Compare wall-clock time across a few values before picking one; see "Sweeping thread counts to find the true optimum" below.
 
 ### Step 7: Read the machine's NUMA topology
 
@@ -176,13 +177,13 @@ The free-memory line is worth reading too. A large imbalance, here 205 GB free o
 With the topology from Step 7 in hand, bind both CPU execution and memory allocation to a single node's physical cores:
 
 ```sh
-numactl --physcpubind=0-23 --membind=0 env OMP_NUM_THREADS=24 ./uv_run_localdev run.py <args>
+numactl --physcpubind=0-23 --membind=0 env OMP_NUM_THREADS=24 uv run python3 run.py <args>
 ```
 
 - `--physcpubind` takes the physical-core range read from `numactl --hardware`, deliberately excluding the hyperthread siblings from Step 7's caveat.
 - `--membind=0` forces every memory allocation onto node 0, so a large free-memory node from Step 7 actually gets used rather than only being available in principle.
 
-Where `numactl` is not installed, `taskset -c 0-23` pins CPU execution alone, without the memory guarantee. `taskset` is however *not* able to provide anything analogous to `numactl`'s `--membind`.
+Where `numactl` is not installed, `taskset -c 0-23` pins CPU execution alone; it has no equivalent of `--membind`, so memory can still be allocated on the other node.
 
 Confirm the binding took effect while training runs:
 
@@ -204,7 +205,7 @@ Every DataLoader worker calls `torch.set_num_threads(1)` at startup (as of torch
 
 ### Workers still compete for cores, and they inherit your pinning
 
-You can increase the workers, for instance, `num_workers = 2` for a CPU-only run, and having two separate DataLoaders, one for training and one for evaluation, both with `persistent_workers=True`. In practice that is four worker processes alive alongside the main process for most of a run, not two; `pgrep -fa run.py` during training shows one PID for the main process and four more for the workers. Each worker is single-threaded internally, per the point above, but each is still a separate OS process wanting scheduler time, so the true core budget for a pinned run is the intra-op thread count from Step 8 plus the worker count, not the thread count alone.
+A typical CPU-only run has `num_workers=2` and two separate DataLoaders, one for training and one for evaluation, both with `persistent_workers=True`. That is four worker processes alive alongside the main process for most of the run, not two; `pgrep -fa run.py` during training shows one PID for the main process and four more for the workers. Each worker is single-threaded internally, per the point above, but each is still a separate OS process wanting scheduler time, so the true core budget for a pinned run is the intra-op thread count from Step 8 plus the worker count, not the thread count alone.
 
 DataLoaders created with `multiprocessing_context = "fork"` inherit CPU affinity across `fork()` on Linux. A `numactl --physcpubind=0-23` wrapped around the main process invocation therefore confines the forked workers to the same range automatically; they do not need, and cannot easily be given, separate pinning. The practical effect is that a Step 8 configuration binding twenty-four physical cores actually has twenty-four intra-op threads and four worker processes contending for those same twenty-four cores. This is usually mild, since the workers mostly alternate between light NumPy preprocessing and blocking on the prefetch queue rather than saturating a core continuously, but where the training-time comparison is close, try the intra-op thread count a few steps below the physical core count (e.g., `OMP_NUM_THREADS=20` instead of `24` on a twenty-four-core node) to leave the workers explicit headroom, and compare.
 
@@ -215,7 +216,7 @@ This section is optional for anyone who has ruled out affinity, cgroup, and `MKL
 ```sh
 for n in 2 4 8 16 24 32 48; do
   echo "OMP_NUM_THREADS=$n"
-  /usr/bin/time -f '%e s' env OMP_NUM_THREADS=$n ./uv run python run.py <args>
+  /usr/bin/time -f '%e s' env OMP_NUM_THREADS=$n uv run python3 run.py <args>
 done
 ```
 
@@ -233,8 +234,21 @@ Leave `MKL_DYNAMIC` at its default `TRUE` for this sweep; Step 6 already showed 
 
 **A shared host can have per-node memory pressure that looks unrelated to threading.** The free-memory imbalance in Step 7's example output, one NUMA node with less than half the free memory of the other, is worth checking on any multi-tenant machine before assuming a performance difference is purely about thread counts; `--membind` in Step 8 is also a way to sidestep a busy node, not only a NUMA-locality optimization.
 
+**A distributed run changes nothing about CPU threading.** `dlk.opt.distributed` never sets a thread count; each rank keeps what the environment chain established and reports it as `ctx.num_threads` and in its initialization log line. The one launcher-injected value to watch for is the `OMP_NUM_THREADS=1` that torchrun exports when the variable is unset; verify with `torch.get_num_threads()` rather than with `env`, since it reflects what MKL and OpenMP actually settled on.
+
 **Changing your mind.** Undo `MKL_DYNAMIC=FALSE` by simply omitting it from the invocation; the default (`TRUE`) resumes on the next unset run. Undo `numactl` pinning the same way, by dropping the wrapper; nothing here writes persistent state.
+
+## Learn more
+
+- [PyTorch CPU threading notes] for the intra-op and inter-op pools and the settings that size them.
+- [torch.set_num_threads] for the API behind `torch.get_num_threads()` and the workers' hard-coded single thread.
+- [numactl manual] for `--physcpubind`, `--membind`, and the reporting flags used in Steps 7 and 8.
+- [Slurm sbatch documentation] for `--cpus-per-task` and how it sets `SLURM_CPUS_PER_TASK`.
 
 
 [uv]: https://github.com/astral-sh/uv
 [numactl]: https://github.com/numactl/numactl
+[PyTorch CPU threading notes]: https://docs.pytorch.org/docs/stable/notes/cpu_threading_torchscript_inference.html
+[torch.set_num_threads]: https://docs.pytorch.org/docs/stable/generated/torch.set_num_threads.html
+[numactl manual]: https://man7.org/linux/man-pages/man8/numactl.8.html
+[Slurm sbatch documentation]: https://slurm.schedmd.com/sbatch.html
