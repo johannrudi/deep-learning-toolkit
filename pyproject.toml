@@ -47,13 +47,14 @@ dev = [
 ]
 
 # Accelerator groups for PyTorch
-# (select a build variant with, e.g., `uv sync --group cpu`)
-# (without a group, `torch` resolves from PyPI: CUDA on Linux, CPU on macOS/Windows)
-# (each group repeats `torch` because uv requires the package under the gated group)
+# (select a build variant with, e.g., `uv sync --group cpu`; without a group,
+# `torch` resolves from PyPI: CUDA on Linux, CPU on macOS/Windows)
 cpu = ["torch>=2.11,<3"]
 cu126 = ["torch>=2.11,<3"]
 cu128 = ["torch>=2.11,<3"]
 cu130 = ["torch>=2.11,<3"]
+cu132 = ["torch>=2.11,<3"]
+xpu = ["torch>=2.11,<3", "triton-xpu"]
 
 # Published optional dependencies
 [project.optional-dependencies]
@@ -105,6 +106,8 @@ conflicts = [
         { group = "cu126" },
         { group = "cu128" },
         { group = "cu130" },
+        { group = "cu132" },
+        { group = "xpu" },
     ],
 ]
 
@@ -125,13 +128,21 @@ module-root = ""
 # Package Sources
 # --------------------------------------
 
-# route `torch` to an accelerator index when the matching group is enabled
 [tool.uv.sources]
+
+# route `torch` to an accelerator index when the matching group is enabled
 torch = [
     { index = "pytorch-cpu", group = "cpu" },
     { index = "pytorch-cu126", group = "cu126" },
     { index = "pytorch-cu128", group = "cu128" },
     { index = "pytorch-cu130", group = "cu130" },
+    { index = "pytorch-cu132", group = "cu132" },
+    { index = "pytorch-xpu", group = "xpu" },
+]
+
+# route `triton-xpu` to the same index as torch for the xpu group
+triton-xpu = [
+    { index = "pytorch-xpu", group = "xpu" },
 ]
 
 # PyTorch indexes, marked explicit so they serve only the pinned packages
@@ -153,4 +164,14 @@ explicit = true
 [[tool.uv.index]]
 name = "pytorch-cu130"
 url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu132"
+url = "https://download.pytorch.org/whl/cu132"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-xpu"
+url = "https://download.pytorch.org/whl/xpu"
 explicit = true
