@@ -89,7 +89,7 @@ train_epochs(n_epochs=100, net=net, dataloader=..., optimizer=..., loss_fn=...)
 - `conv1d.py`, `conv2d.py`: 1D/2D convolutional networks and UNet components (Downsample, Upsample)
 - `unet.py`: Complete UNet implementations (older UNet1D/UNet2D and newer UNetXd_2025 architecture)
 - `transformer1d.py`: 1D transformer networks with patch embeddings and multi-head attention
-- `efficientnet.py`: EfficientNet architecture
+- `efficientnet1d.py`: EfficientNet architecture
 
 #### Network initialization
 
