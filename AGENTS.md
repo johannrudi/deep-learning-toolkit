@@ -56,6 +56,21 @@
 
 - add docstrings for classes and functions
 - document arguments, returns, etc. using the Google Python Style Guide
+- **never** wrap lines in markdown `.md` files
+
+### `docs/`: markdown files
+
+Developer documents:
+
+- file names are `YEAR.NN__<topic>__X-<tag>.md` with `NN` an integer starting at `01` incremented per document, `X` a counter for tags starting at `1`
+- `docs/features` has documents about new features
+- `docs/migrations` has documents about migrations (e.g., build systems, docs generator, ...)
+- `docs/surveys` has literature surveys
+
+User documents:
+
+- `docs/guides/` has workflows for users
+- `docs/releases` has changelogs
 
 ## Comments in code
 
