@@ -23,7 +23,14 @@ from dlk.opt.utils import (
 # Types
 # --------------------------------------
 
-ProfileDevice: TypeAlias = Literal["cuda", "xpu"]
+ProfileDevice: TypeAlias = Literal["cpu", "cuda", "xpu"]
+
+# map device names to profiler activities
+_DEVICE_ACTIVITIES: dict[ProfileDevice, torch.profiler.ProfilerActivity] = {
+    "cpu": torch.profiler.ProfilerActivity.CPU,
+    "cuda": torch.profiler.ProfilerActivity.CUDA,
+    "xpu": torch.profiler.ProfilerActivity.XPU,
+}
 
 
 class KeyAveragesLike(Protocol):
@@ -130,12 +137,14 @@ def get_table(prof: ProfilerLike, sort_by: str, row_limit: int = 10) -> str:
 
 def trace_handler(
     prof: ProfilerLike,
+    logger: logging.Logger,
     device: ProfileDevice | None = None,
-    log_profile_dir: str = ".",
+    profile_memory: bool = False,
+    trace_dir: str | pathlib.Path = ".",
 ) -> None:
     """Write profiler tables and a Chrome trace file for one completed trace.
 
-    Replaces the built-in handler: `torch.profiler.tensorboard_trace_handler(log_profile_dir)`
+    Replaces the built-in handler: `torch.profiler.tensorboard_trace_handler(trace_dir)`
 
     Under distributed training, every rank writes its own rank-suffixed table
     and trace files (per-rank traces expose communication ops and stragglers),
@@ -143,18 +152,20 @@ def trace_handler(
 
     Args:
         prof: Active profiler handle for the completed trace window.
+        logger: Logger used to report written table and trace file paths.
         device: Optional accelerator name used for device-specific metrics.
-        log_profile_dir: Directory where table and trace files are written.
+        profile_memory: Whether memory usage was profiled and should be reported.
+        trace_dir: Directory where table and trace files are written.
 
     Returns:
         None.
     """
-    profile_dir = pathlib.Path(log_profile_dir)
+    profile_dir = pathlib.Path(trace_dir)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
     # suffix output files with the rank in distributed runs
     if distributed.is_distributed():
-        rank_suffix = f"_rank{distributed.get_rank()}"
+        rank_suffix = f"_rank{distributed.get_rank():04d}"
     else:
         rank_suffix = ""
 
@@ -165,44 +176,52 @@ def trace_handler(
     if device is not None:
         table += get_table(prof, f"{device}_time_total")
         table += get_table(prof, f"self_{device}_time_total")
-    table += get_table(prof, "self_cpu_memory_usage")
-    if device is not None:
-        table += get_table(prof, f"self_{device}_memory_usage")
+    if profile_memory:
+        table += get_table(prof, "self_cpu_memory_usage")
+        if device is not None:
+            table += get_table(prof, f"self_{device}_memory_usage")
     table += "</profile_result>\n"
 
     # write summary table to file on every rank; print on the main process only
-    table_path = profile_dir / f"table_prof_step_{prof.step_num}{rank_suffix}.txt"
+    table_path = profile_dir / f"table_step_{prof.step_num}{rank_suffix}.txt"
     with open(table_path, "w", encoding="utf-8") as file_handle:
         file_handle.write(table)
+    logger.info(f"Wrote profiler table to {table_path}")
     if distributed.is_main_process():
         print(table)
 
     # write Chrome trace JSON
-    trace_path = profile_dir / f"trace_prof_step_{prof.step_num}{rank_suffix}.json"
+    trace_path = profile_dir / f"trace_step_{prof.step_num}{rank_suffix}.json"
     prof.export_chrome_trace(str(trace_path))
+    logger.info(f"Wrote Chrome trace to {trace_path}")
 
 
 def _select_profiler_activities() -> (
     tuple[list[torch.profiler.ProfilerActivity], ProfileDevice | None]
 ):
-    """Select profiler activities and associated accelerator label.
+    """Select profiler activities for the available hardware.
 
     Uses the activities-based profiler API and avoids legacy flags.
 
     Returns:
         Tuple of selected profiler activities and optional accelerator label.
     """
-    # select profiler activities for available hardware
+    # always select the CPU
     activities: list[torch.profiler.ProfilerActivity] = [
         torch.profiler.ProfilerActivity.CPU
     ]
+
+    # select the current accelerator, if any, among the supported devices
     device: ProfileDevice | None = None
-    if torch.cuda.is_available():
-        activities.append(torch.profiler.ProfilerActivity.CUDA)
-        device = "cuda"
-    elif torch.xpu.is_available():
-        activities.append(torch.profiler.ProfilerActivity.XPU)
-        device = "xpu"
+    if torch.accelerator.is_available():
+        accelerator = torch.accelerator.current_accelerator()
+        if accelerator is not None:
+            for candidate, activity in _DEVICE_ACTIVITIES.items():
+                if accelerator.type == candidate:
+                    device = candidate
+                    activities.append(activity)
+                    break
+
     return activities, device
 
 
@@ -213,9 +232,17 @@ def profile_train_epochs(
     dataloader: torch.utils.data.DataLoader,
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
-    log_profile_dir: str = ".",
+    logger: logging.Logger | None = None,
+    wait: int = 1,
+    warmup: int = 1,
+    active: int = 3,
+    repeat: int = 2,
+    record_shapes: bool = False,
+    profile_memory: bool = False,
+    with_stack: bool = False,
+    trace_dir: str | pathlib.Path = ".",
 ) -> ProfilerLike:
-    """Profile training for multiple epochs using a fixed profiler schedule.
+    """Profile training for multiple epochs using a periodic profiler schedule.
 
     Total number of profiling steps:
         (1 wait + 1 warmup + 3 active) * 2 repeats = 10 steps.
@@ -233,45 +260,69 @@ def profile_train_epochs(
         dataloader: Data loader consumed by `train_epochs_fn`.
         optimizer: Optimizer forwarded to `train_epochs_fn`.
         loss_fn: Loss callable forwarded to `train_epochs_fn`.
-        log_profile_dir: Output directory for profiler reports and traces.
+        logger: Logger used for profiling diagnostics; defaults to a module logger.
+        wait: Number of steps kept inactive at the start of each profiling cycle.
+        warmup: Number of steps used to warm up the profiler in each cycle.
+        active: Number of steps actively recorded in each profiling cycle.
+        repeat: Number of times the wait/warmup/active cycle repeats.
+        record_shapes: Whether to capture operator input shapes.
+        profile_memory: Whether to track model tensor memory usage.
+        with_stack: Whether to include Python stack traces.
+        trace_dir: Output directory for profiler reports and traces.
 
     Returns:
         Profiler handle with captured profiling data.
     """
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.profile_train_epochs")
+
+    reserved_kwargs = {"logger", "epoch_finalize_fn"}
+    if reserved_kwargs & train_epochs_fn_kwargs.keys():
+        raise ValueError(
+            f"train_epochs_fn_kwargs must not set {reserved_kwargs}; "
+            "the profiler sets these internally"
+        )
+
     # select profiler activities for available hardware
     activities, device = _select_profiler_activities()
 
     # configure a periodic profiling schedule
     schedule = torch.profiler.schedule(
         skip_first=0,  # ignore initial steps
-        wait=1,  # keep first step inactive in each cycle
-        warmup=1,  # warm up profiler for one step in each cycle
-        active=3,  # record three active steps per cycle
-        repeat=2,  # repeat the cycle twice
+        wait=wait,
+        warmup=warmup,
+        active=active,
+        repeat=repeat,
     )
+    n_epochs = (wait + warmup + active) * repeat
 
     # run training with profiler stepping hooks
     with torch.profiler.profile(
         activities=activities,
         schedule=schedule,
-        on_trace_ready=lambda p: trace_handler(p, device, log_profile_dir),
-        record_shapes=True,  # capture operator input shapes
-        profile_memory=True,  # track model tensor memory usage
-        with_stack=True,  # include Python stack traces
+        on_trace_ready=lambda p: trace_handler(
+            p,
+            logger,
+            device=device,
+            profile_memory=profile_memory,
+            trace_dir=trace_dir,
+        ),
+        record_shapes=record_shapes,
+        profile_memory=profile_memory,
+        with_stack=with_stack,
     ) as prof:
 
         def epoch_finalize_fn(_epoch_idx: int) -> None:
             """Signal the end of each training step to the profiler."""
             prof.step()
 
-        n_epochs = 10  # keep above the total number of profiled steps
         train_epochs_fn(
             n_epochs,
             net,
             dataloader,
             optimizer,
             loss_fn,
-            logger=logging.getLogger("dlk.opt.profiler.profile_train_epochs"),
+            logger=logger,
             epoch_finalize_fn=epoch_finalize_fn,
             **train_epochs_fn_kwargs,
         )
@@ -303,12 +354,17 @@ def _infer_profiled_batch_count(batch_dlog: TrainLog, default: int) -> int:
 
 def profile_train_batches(
     train_batches_fn: TrainBatchesFn,
+    train_batches_fn_args: tuple[Any, ...],
     train_batches_fn_kwargs: Mapping[str, Any],
-    net: torch.nn.Module,
-    dataloader: torch.utils.data.DataLoader,
-    optimizer: torch.optim.Optimizer,
-    loss_fn: LossFn,
-    log_profile_dir: str = ".",
+    logger: logging.Logger | None = None,
+    wait: int = 1,
+    warmup: int = 1,
+    active: int = 3,
+    repeat: int = 2,
+    record_shapes: bool = False,
+    profile_memory: bool = False,
+    with_stack: bool = False,
+    trace_dir: str | pathlib.Path = ".",
 ) -> ProfilerLike:
     """Profile training for one epoch by stepping at batch boundaries.
 
@@ -325,38 +381,59 @@ def profile_train_batches(
 
     Args:
         train_batches_fn: Batch-level training callable with step-finalize hooks.
+        train_batches_fn_args: Positional arguments forwarded to `train_batches_fn`
+            after `epoch_idx` (typically `net, dataloader, optimizer, loss_fn`).
         train_batches_fn_kwargs: Extra keyword arguments forwarded to `train_batches_fn`.
-        net: Model optimized by `train_batches_fn`.
-        dataloader: Data loader consumed by `train_batches_fn`.
-        optimizer: Optimizer forwarded to `train_batches_fn`.
-        loss_fn: Loss callable forwarded to `train_batches_fn`.
-        log_profile_dir: Output directory for profiler reports and traces.
-        logger: Logger used for profiling diagnostics.
+        logger: Logger used for profiling diagnostics; defaults to a module logger.
+        wait: Number of steps kept inactive at the start of each profiling cycle.
+        warmup: Number of steps used to warm up the profiler in each cycle.
+        active: Number of steps actively recorded in each profiling cycle.
+        repeat: Number of times the wait/warmup/active cycle repeats.
+        record_shapes: Whether to capture operator input shapes.
+        profile_memory: Whether to track model tensor memory usage.
+        with_stack: Whether to include Python stack traces.
+        trace_dir: Output directory for profiler reports and traces.
 
     Returns:
         Profiler handle with captured profiling data.
     """
+    if logger is None:
+        logger = logging.getLogger("dlk.opt.profile_train_batches")
+
+    reserved_kwargs = {"logger", "batch_finalize_fn", "max_batches"}
+    if reserved_kwargs & train_batches_fn_kwargs.keys():
+        raise ValueError(
+            f"train_batches_fn_kwargs must not set {reserved_kwargs}; "
+            "the profiler sets these internally"
+        )
+
     # select profiler activities for available hardware
     activities, device = _select_profiler_activities()
 
     # configure a periodic profiling schedule
     schedule = torch.profiler.schedule(
         skip_first=0,  # ignore initial steps
-        wait=1,  # keep first step inactive in each cycle
-        warmup=1,  # warm up profiler for one step
-        active=3,  # record three active steps per cycle
-        repeat=2,  # repeat the cycle twice
+        wait=wait,
+        warmup=warmup,
+        active=active,
+        repeat=repeat,
     )
-    max_batches: int = 10  # keep above the total number of profiled steps
+    max_batches = (wait + warmup + active) * repeat
 
     # run training with profiler stepping hooks
     with torch.profiler.profile(
         activities=activities,
         schedule=schedule,
-        on_trace_ready=lambda p: trace_handler(p, device, log_profile_dir),
-        record_shapes=True,  # capture operator input shapes
-        profile_memory=True,  # track model tensor memory usage
-        with_stack=True,  # include Python stack traces
+        on_trace_ready=lambda p: trace_handler(
+            p,
+            logger,
+            device=device,
+            profile_memory=profile_memory,
+            trace_dir=trace_dir,
+        ),
+        record_shapes=record_shapes,
+        profile_memory=profile_memory,
+        with_stack=with_stack,
     ) as prof:
 
         def batch_finalize_fn(_batch_idx: int) -> None:
@@ -364,17 +441,13 @@ def profile_train_batches(
             prof.step()
 
         epoch_idx = 0
-        logger = logging.getLogger("dlk.opt.profile_train_batches")
         batch_dlog = train_batches_fn(
             epoch_idx,
-            net,
-            dataloader,
-            optimizer,
-            loss_fn,
+            *train_batches_fn_args,
+            **train_batches_fn_kwargs,
             logger=logger,
             batch_finalize_fn=batch_finalize_fn,
             max_batches=max_batches,
-            **train_batches_fn_kwargs,
         )
         n_batches = _infer_profiled_batch_count(batch_dlog, default=max_batches)
 

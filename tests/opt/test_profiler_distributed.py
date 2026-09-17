@@ -41,22 +41,17 @@ def _profile_worker(rank: int, world_size: int, port: int, tmp_dir: str) -> None
 
     profile_train_batches(
         train_batches,
+        (net, dataloader, optimizer, torch.nn.MSELoss()),
         {"device": ctx.device},
-        net,
-        dataloader,
-        optimizer,
-        torch.nn.MSELoss(),
-        log_profile_dir=tmp_dir,
+        trace_dir=tmp_dir,
     )
 
     # every rank writes its own rank-suffixed table and trace files
     distributed.barrier()
     if rank == 0:
-        for suffix in ["rank0", "rank1"]:
-            tables = list(pathlib.Path(tmp_dir).glob(f"table_prof_step_*_{suffix}.txt"))
-            traces = list(
-                pathlib.Path(tmp_dir).glob(f"trace_prof_step_*_{suffix}.json")
-            )
+        for suffix in ["rank0000", "rank0001"]:
+            tables = list(pathlib.Path(tmp_dir).glob(f"table_step_*_{suffix}.txt"))
+            traces = list(pathlib.Path(tmp_dir).glob(f"trace_step_*_{suffix}.json"))
             assert len(tables) > 0, f"missing profiler tables for {suffix}"
             assert len(traces) > 0, f"missing profiler traces for {suffix}"
 
@@ -81,16 +76,13 @@ def test_single_process_profiling_keeps_unsuffixed_filenames(
 
     profile_train_batches(
         train_batches,
+        (net, dataloader, optimizer, torch.nn.MSELoss()),
         {},
-        net,
-        dataloader,
-        optimizer,
-        torch.nn.MSELoss(),
-        log_profile_dir=str(tmp_path),
+        trace_dir=str(tmp_path),
     )
 
-    tables = list(tmp_path.glob("table_prof_step_*.txt"))
-    traces = list(tmp_path.glob("trace_prof_step_*.json"))
+    tables = list(tmp_path.glob("table_step_*.txt"))
+    traces = list(tmp_path.glob("trace_step_*.json"))
     assert len(tables) > 0
     assert len(traces) > 0
     assert all("rank" not in path.name for path in tables + traces)
