@@ -361,6 +361,33 @@ def train_dlog_epoch_finalize(
 # --------------------------------------
 
 
+def transfer_non_blocking(
+    dataloader: DataLoaderType,
+    device: torch.device | None = None,
+) -> bool:
+    """Decide whether host-to-device copies of batches may be asynchronous.
+
+    Asynchronous copies pay off only when the source batch lives in pinned
+    (page-locked) host memory and the destination is an accelerator that
+    supports them. Copies from pageable memory are staged through a pinned
+    buffer by the driver and stay synchronous regardless of the flag, so this
+    returns True only when the dataloader pins its batches and `device` is a
+    CUDA or XPU device.
+
+    Dataloaders without a `pin_memory` attribute are treated as not pinning.
+
+    Args:
+        dataloader: Dataloader serving the batches.
+        device: Device the batches are moved to; `None` means no transfer.
+
+    Returns:
+        True if `Tensor.to` may be called with `non_blocking=True`.
+    """
+    if device is None or device.type not in ("cuda", "xpu"):
+        return False
+    return bool(getattr(dataloader, "pin_memory", False))
+
+
 def autocast_context(
     device: torch.device | None = None,
     autocast_dtype: torch.dtype | None = None,

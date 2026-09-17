@@ -33,6 +33,7 @@ from dlk.opt.utils import (
     train_dlog_epoch_finalize,
     train_dlog_epoch_initialize,
     train_dlog_epoch_update,
+    transfer_non_blocking,
 )
 
 DLOG_BASENAMES = [
@@ -82,6 +83,9 @@ def train_epochs(
     main process only, `validation_fn` receives the unwrapped model, the
     distributed sampler's epoch is advanced automatically, and loss statistics
     are reduced exactly across all processes.
+
+    Host-to-device copies are asynchronous when the dataloader pins its batches
+    and `device` is an accelerator; see `train_batches`.
 
     Args:
         n_epochs: Number of epochs to train.
@@ -249,6 +253,10 @@ def train_batches(
 ) -> TrainLog:
     """Run the training loop over batches for a single epoch.
 
+    Host-to-device copies are asynchronous (`non_blocking=True`) when the
+    dataloader pins its batches (`pin_memory=True`) and `device` is a CUDA or
+    XPU device; otherwise they stay synchronous.
+
     Args:
         epoch_idx: Current epoch index used in logging.
         net: Model to optimize.
@@ -280,6 +288,9 @@ def train_batches(
     dlog_tags = DLOG_BASENAMES
     batch_dlog = train_dlog_batch_initialize(max_batches, dlog_tags, save_list=False)
 
+    # overlap host-to-device copies when the dataloader pins its batches
+    non_blocking = transfer_non_blocking(dataloader, device)
+
     # <training_loop_over_batches>
     for batch_idx, data in enumerate(dataloader):
         if max_batches <= batch_idx:
@@ -300,10 +311,12 @@ def train_batches(
             inputs, targets = data
             if device is not None:
                 if isinstance(inputs, tuple):
-                    inputs = tuple(x.to(device) for x in inputs)
+                    inputs = tuple(
+                        x.to(device, non_blocking=non_blocking) for x in inputs
+                    )
                 else:
-                    inputs = inputs.to(device)
-                targets = targets.to(device)
+                    inputs = inputs.to(device, non_blocking=non_blocking)
+                targets = targets.to(device, non_blocking=non_blocking)
 
         # transform input and target tensors
         with record_function(RecordFunctionName.DATA_TRANSFORM):
