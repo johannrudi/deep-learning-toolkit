@@ -20,6 +20,7 @@ from dlk.opt.utils import (
     LRSchedulerType,
     TrainLog,
     ValidationFn,
+    autocast_context,
     checkpoint_path,
     checkpoint_save,
     format_seconds,
@@ -109,6 +110,7 @@ def train_epochs(
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
     epoch_finalize_fn: EpochHookFn | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> TrainLog:
     """Run the GAN training loop over epochs.
 
@@ -149,6 +151,10 @@ def train_epochs(
         checkpoint_dir: Parent directory where checkpoint runs are stored.
         epoch_initialize_fn: Optional callback invoked at the start of each epoch.
         epoch_finalize_fn: Optional callback invoked at the end of each epoch.
+        autocast_dtype: Compute dtype for the autocast forward passes of both
+            networks. Use `torch.bfloat16` for mixed precision, `None` or
+            `torch.float32` for full precision. `d_reg_fn` always runs in full
+            precision.
 
     Returns:
         Aggregated epoch-level training diagnostics.
@@ -226,6 +232,7 @@ def train_epochs(
                 g_opt_freq=g_opt_freq,
                 device=device,
                 logger=logger,
+                autocast_dtype=autocast_dtype,
             )
 
             # update the learning rate schedulers
@@ -325,6 +332,8 @@ def _train_step_discriminator(
     loss_fn: GANLossFn,
     d_reg_fn: DiscriminatorRegularizerFn | None = None,
     dlog_item: dict[str, float] | None = None,
+    device: torch.device | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> float:
     """Run one discriminator optimization step.
 
@@ -338,6 +347,10 @@ def _train_step_discriminator(
         loss_fn: Adversarial loss callable for discriminator training.
         d_reg_fn: Optional discriminator regularizer.
         dlog_item: Optional dictionary updated with scalar diagnostics.
+        device: Optional device holding the batch tensors, used for autocast.
+        autocast_dtype: Compute dtype for the autocast forward pass. Use
+            `torch.bfloat16` for mixed precision, `None` or `torch.float32` for
+            full precision.
 
     Returns:
         Total discriminator loss value after regularization.
@@ -351,19 +364,24 @@ def _train_step_discriminator(
         d_optimizer.zero_grad()
 
     with record_function(RecordFunctionName.FORWARD):
-        # generate outputs with `g_net` without tracking gradients
-        # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
-        # its gradient reducer for a backward pass that never happens
-        with torch.no_grad():
-            x_gen = g_net(y_data, z)
+        with autocast_context(device, autocast_dtype):
+            # generate outputs with `g_net` without tracking gradients
+            # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
+            # its gradient reducer for a backward pass that never happens
+            with torch.no_grad():
+                x_gen = g_net(y_data, z)
 
-        # evalutate discriminator
-        d_outputs_gen = d_net(x_gen, y_data)
-        d_outputs_data = d_net(x_data, y_data)
+            # evalutate discriminator
+            d_outputs_gen = d_net(x_gen, y_data)
+            d_outputs_data = d_net(x_data, y_data)
 
-        # evaluate discriminator loss
-        # NOTE: output must have correct sign for minimization
-        d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
+            # evaluate discriminator loss
+            # NOTE: output must have correct sign for minimization
+            d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
+
+        # evaluate the regularizer in full precision
+        # NOTE: gradient penalties double-backward through `d_net`
+        # (`create_graph=True`), which autocast does not support reliably
         d_reg_dlog: dict[str, float] = {}
         if d_reg_fn is not None:
             random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
@@ -404,6 +422,8 @@ def _train_step_generator(
     g_optimizer: torch.optim.Optimizer,
     loss_fn: GANLossFn,
     dlog_item: dict[str, float] | None = None,
+    device: torch.device | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> float:
     """Run one generator optimization step.
 
@@ -415,6 +435,10 @@ def _train_step_generator(
         g_optimizer: Optimizer for generator parameters.
         loss_fn: Adversarial loss callable for generator training.
         dlog_item: Optional dictionary updated with scalar diagnostics.
+        device: Optional device holding the batch tensors, used for autocast.
+        autocast_dtype: Compute dtype for the autocast forward pass. Use
+            `torch.bfloat16` for mixed precision, `None` or `torch.float32` for
+            full precision.
 
     Returns:
         Generator loss value for this step.
@@ -428,16 +452,17 @@ def _train_step_generator(
         g_optimizer.zero_grad()
 
     with record_function(RecordFunctionName.FORWARD):
-        # generate outputs with `g_net`
-        x_gen = g_net(y_data, z)
+        with autocast_context(device, autocast_dtype):
+            # generate outputs with `g_net`
+            x_gen = g_net(y_data, z)
 
-        # evalutate discriminator
-        d_outputs_gen = d_net(x_gen, y_data)
+            # evalutate discriminator
+            d_outputs_gen = d_net(x_gen, y_data)
 
-        # evaluate discriminator loss
-        # NOTE: pass only generated outputs for generator steps
-        g_loss, _ = loss_fn(d_outputs_gen, None)
-        loss = g_loss
+            # evaluate discriminator loss
+            # NOTE: pass only generated outputs for generator steps
+            g_loss, _ = loss_fn(d_outputs_gen, None)
+            loss = g_loss
 
     # calculate derivatives (end AD)
     with record_function(RecordFunctionName.BACKWARD):
@@ -471,6 +496,7 @@ def train_batches(
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> TrainLog:
     """Run the GAN training loop over batches for one epoch.
 
@@ -492,9 +518,16 @@ def train_batches(
         batch_initialize_fn: Optional callback run before each batch.
         batch_finalize_fn: Optional callback run after each batch.
         max_batches: Optional cap on number of processed batches.
+        autocast_dtype: Compute dtype for the autocast forward passes of both
+            networks. Use `torch.bfloat16` for mixed precision, `None` or
+            `torch.float32` for full precision. `d_reg_fn` always runs in full
+            precision.
 
     Returns:
         Batch-level diagnostics aggregated across the epoch.
+
+    Raises:
+        ValueError: If `autocast_dtype` is unsupported for autocast.
     """
     if logger is None:
         logger = logging.getLogger("dlk.opt.train_gan.train_batches")
@@ -541,6 +574,8 @@ def train_batches(
                 loss_fn=loss_fn,
                 d_reg_fn=d_reg_fn,
                 dlog_item=dlog_pre_buf,
+                device=device,
+                autocast_dtype=autocast_dtype,
             )
             logger.debug(
                 f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, pre {i:2d}, "
@@ -559,6 +594,8 @@ def train_batches(
                 g_optimizer=g_optimizer,
                 loss_fn=loss_fn,
                 dlog_item=dlog_item,
+                device=device,
+                autocast_dtype=autocast_dtype,
             )
             logger.debug(
                 f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, g_loss {g_loss_v:.6e}"
@@ -577,6 +614,8 @@ def train_batches(
                 loss_fn=loss_fn,
                 d_reg_fn=d_reg_fn,
                 dlog_item=dlog_post_buf,
+                device=device,
+                autocast_dtype=autocast_dtype,
             )
             logger.debug(
                 f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, post {j:2d}, "

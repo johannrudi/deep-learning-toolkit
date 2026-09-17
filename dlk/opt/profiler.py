@@ -84,6 +84,7 @@ class TrainEpochsFn(Protocol):
         checkpoint_dir: str = ...,
         epoch_initialize_fn: EpochHookFn | None = ...,
         epoch_finalize_fn: EpochHookFn | None = ...,
+        autocast_dtype: torch.dtype | None = ...,
     ) -> TrainLog:
         """Run training over epochs and return aggregate training diagnostics."""
         ...
@@ -111,6 +112,7 @@ class TrainBatchesFn(Protocol):
         batch_initialize_fn: BatchHookFn | None = ...,
         batch_finalize_fn: BatchHookFn | None = ...,
         max_batches: int | None = ...,
+        autocast_dtype: torch.dtype | None = ...,
     ) -> TrainLog:
         """Run training over batches for one epoch and return training diagnostics."""
         ...

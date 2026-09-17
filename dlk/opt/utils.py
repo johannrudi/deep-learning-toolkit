@@ -361,6 +361,47 @@ def train_dlog_epoch_finalize(
 # --------------------------------------
 
 
+def autocast_context(
+    device: torch.device | None = None,
+    autocast_dtype: torch.dtype | None = None,
+) -> torch.autocast:
+    """Create an autocast context for mixed-precision forward passes.
+
+    Autocast is enabled for `torch.bfloat16` only; `None` and `torch.float32`
+    request full precision and yield a disabled context. `torch.float16` is
+    rejected because it needs loss scaling (`torch.amp.GradScaler`), which the
+    training loops do not apply.
+
+    Args:
+        device: Device holding the batch tensors; `None` selects the CPU.
+        autocast_dtype: Compute dtype inside the context. Use `torch.bfloat16`
+            for mixed precision, `None` or `torch.float32` for full precision.
+
+    Returns:
+        Configured `torch.autocast` context manager, disabled for full precision.
+
+    Raises:
+        ValueError: If `autocast_dtype` is neither `None`, `torch.float32`, nor
+            `torch.bfloat16`.
+    """
+    if autocast_dtype is None:
+        autocast_dtype = torch.float32
+    if autocast_dtype not in (torch.float32, torch.bfloat16):
+        raise ValueError(
+            "autocast_dtype must be None, torch.float32, or torch.bfloat16, got "
+            f"{autocast_dtype}; torch.float16 requires loss scaling with "
+            "torch.amp.GradScaler, which these training loops do not apply"
+        )
+    return torch.autocast(
+        device_type=device.type if device is not None else "cpu",
+        dtype=autocast_dtype,
+        enabled=torch.bfloat16 == autocast_dtype,
+    )
+
+
+# --------------------------------------
+
+
 def format_seconds(seconds: float, precision: int = 2) -> str:
     """Format a duration in seconds as milliseconds or seconds, whichever reads better.
 

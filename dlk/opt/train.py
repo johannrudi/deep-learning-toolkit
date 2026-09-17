@@ -21,6 +21,7 @@ from dlk.opt.utils import (
     TensorTransformFn,
     TrainLog,
     ValidationFn,
+    autocast_context,
     checkpoint_path,
     checkpoint_save,
     format_seconds,
@@ -68,6 +69,7 @@ def train_epochs(
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
     epoch_finalize_fn: EpochHookFn | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> TrainLog:
     """Run the training loop over epochs.
 
@@ -98,6 +100,9 @@ def train_epochs(
         checkpoint_dir: Root directory used for checkpoint files.
         epoch_initialize_fn: Optional callback invoked at the start of each epoch.
         epoch_finalize_fn: Optional callback invoked at the end of each epoch.
+        autocast_dtype: Compute dtype for the autocast forward pass. Use
+            `torch.bfloat16` for mixed precision, `None` or `torch.float32` for
+            full precision.
 
     Returns:
         Training log dictionary with per-epoch metrics and run timing.
@@ -163,6 +168,7 @@ def train_epochs(
                 inputs_transform_fn=inputs_transform_fn,
                 targets_transform_fn=targets_transform_fn,
                 logger=logger,
+                autocast_dtype=autocast_dtype,
             )
 
             # update the learning rate scheduler
@@ -239,6 +245,7 @@ def train_batches(
     batch_initialize_fn: BatchHookFn | None = None,
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> TrainLog:
     """Run the training loop over batches for a single epoch.
 
@@ -255,9 +262,15 @@ def train_batches(
         batch_initialize_fn: Optional callback invoked before each batch step.
         batch_finalize_fn: Optional callback invoked after each batch step.
         max_batches: Optional maximum number of batches processed.
+        autocast_dtype: Compute dtype for the autocast forward pass. Use
+            `torch.bfloat16` for mixed precision, `None` or `torch.float32` for
+            full precision.
 
     Returns:
         Batch-level training log dictionary with aggregate loss statistics.
+
+    Raises:
+        ValueError: If `autocast_dtype` is unsupported for autocast.
     """
     if logger is None:
         logger = logging.getLogger("dlk.opt.train.train_batches")
@@ -304,11 +317,12 @@ def train_batches(
             optimizer.zero_grad()
 
         with record_function(RecordFunctionName.FORWARD):
-            # forward pass; unpack inputs tuple when applicable
-            outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
+            with autocast_context(device, autocast_dtype):
+                # forward pass; unpack inputs tuple when applicable
+                outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
 
-            # calculate loss
-            loss = loss_fn(outputs, targets)
+                # calculate loss
+                loss = loss_fn(outputs, targets)
 
         # calculate derivatives (end AD)
         with record_function(RecordFunctionName.BACKWARD):

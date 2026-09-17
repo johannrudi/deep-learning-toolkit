@@ -167,6 +167,7 @@ def train_epochs(
     checkpoint_dir: str = "checkpoints",
     epoch_initialize_fn: EpochHookFn | None = None,
     epoch_finalize_fn: EpochHookFn | None = None,
+    autocast_dtype: torch.dtype | None = None,
 ) -> TrainLog:
     """Run the diffusion model training loop over epochs.
 
@@ -202,6 +203,9 @@ def train_epochs(
         checkpoint_dir: Root directory used for checkpoint files.
         epoch_initialize_fn: Optional callback invoked at the start of each epoch.
         epoch_finalize_fn: Optional callback invoked at the end of each epoch.
+        autocast_dtype: Compute dtype for the autocast forward pass. Use
+            `torch.bfloat16` for mixed precision, `None` or `torch.float32` for
+            full precision.
 
     Returns:
         Training log dictionary with per-epoch metrics and run timing.
@@ -237,4 +241,5 @@ def train_epochs(
         checkpoint_dir=checkpoint_dir,
         epoch_initialize_fn=epoch_initialize_fn,
         epoch_finalize_fn=epoch_finalize_fn,
+        autocast_dtype=autocast_dtype,
     )
