@@ -1,14 +1,16 @@
 """Reusable epoch- and batch-level training loops for GAN models."""
 
+import enum
 import logging
 import math
 import pathlib
-import timeit
+import time
 from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol, TypeAlias
 
 import torch
+from torch.profiler import record_function
 from tqdm import tqdm
 
 from dlk.opt import distributed
@@ -20,6 +22,7 @@ from dlk.opt.utils import (
     ValidationFn,
     checkpoint_path,
     checkpoint_save,
+    format_seconds,
     tqdm_disable,
     train_dlog_batch_all_reduce,
     train_dlog_batch_finalize,
@@ -40,7 +43,19 @@ DLOG_BASENAMES = [
     "d_post_loss_g",
     "d_post_reg",
     "d_post_grad_norm",
+    "time_step",
 ]
+
+
+class RecordFunctionName(enum.StrEnum):
+    """Labels for `torch.profiler.record_function` regions."""
+
+    DATA_H2D = "data_h2d"
+    OPTIMIZER_ZERO = "optimizer_zero"
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    OPTIMIZER_STEP = "optimizer_step"
+    LOG = "log"
 
 
 # --------------------------------------
@@ -146,9 +161,9 @@ def train_epochs(
     if logger is None:
         logger = logging.getLogger("dlk.opt.train_gan.train_epochs")
 
-    DLOG_TAGS = [f"{name}_mean" for name in DLOG_BASENAMES]
-    DLOG_TAGS += [f"{name}_std" for name in DLOG_BASENAMES]
-    epoch_dlog = train_dlog_epoch_initialize(n_epochs, DLOG_TAGS)
+    dlog_tags = [f"{name}_mean" for name in DLOG_BASENAMES]
+    dlog_tags += [f"{name}_std" for name in DLOG_BASENAMES]
+    epoch_dlog = train_dlog_epoch_initialize(n_epochs, dlog_tags)
 
     # set checkpoint directory on the main process only; create if it doesn't exist
     checkpoint_dir_: pathlib.Path | None = None
@@ -162,7 +177,7 @@ def train_epochs(
             checkpoint_dir_.mkdir(parents=True, exist_ok=True)
 
     # <training_loop_over_epochs>
-    time_train = timeit.default_timer()
+    time_train = time.perf_counter()
     with tqdm(range(n_epochs), desc="epochs", disable=tqdm_disable()) as pbar:
         for epoch_idx in pbar:
             # initialize epoch
@@ -238,12 +253,17 @@ def train_epochs(
                 )
 
             # log
-            train_dlog_epoch_update(epoch_dlog, epoch_idx, DLOG_TAGS, batch_dlog)
+            train_dlog_epoch_update(epoch_dlog, epoch_idx, dlog_tags, batch_dlog)
             logger.info(
                 f"epoch {epoch_idx:6d}, "
-                f"d_loss pre mean {batch_dlog['d_pre_loss_mean']:.6e} std {batch_dlog['d_pre_loss_std']:.3e}, "
-                f"g_loss mean {batch_dlog['g_loss_mean']:.6e} std {batch_dlog['g_loss_std']:.3e}, "
-                f"d_loss post mean {batch_dlog['d_post_loss_mean']:.6e} std {batch_dlog['d_post_loss_std']:.3e}, "
+                f"d_loss pre mean {batch_dlog['d_pre_loss_mean']:.6e} "
+                f"std {batch_dlog['d_pre_loss_std']:.3e}, "
+                f"g_loss mean {batch_dlog['g_loss_mean']:.6e} "
+                f"std {batch_dlog['g_loss_std']:.3e}, "
+                f"d_loss post mean {batch_dlog['d_post_loss_mean']:.6e} "
+                f"std {batch_dlog['d_post_loss_std']:.3e}, "
+                f"time/step mean {format_seconds(batch_dlog['time_step_mean'])} "
+                f"std {format_seconds(batch_dlog['time_step_std'])}"
             )
 
             # finalize epoch
@@ -268,7 +288,7 @@ def train_epochs(
             g_net=distributed.unwrap_net(g_net),
             d_net=distributed.unwrap_net(d_net),
         )
-    time_train = timeit.default_timer() - time_train
+    time_train = time.perf_counter() - time_train
     # </training_loop_over_epochs>
 
     # finalize log
@@ -326,37 +346,45 @@ def _train_step_discriminator(
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
 
-    # generate outputs with `g_net` without tracking gradients
-    # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
-    # its gradient reducer for a backward pass that never happens
-    with torch.no_grad():
-        x_gen = g_net(y_data, z)
+    # zero the gradients (begin AD)
+    with record_function(RecordFunctionName.OPTIMIZER_ZERO):
+        d_optimizer.zero_grad()
 
-    # evalutate discriminator (begin AD)
-    d_optimizer.zero_grad()
-    d_outputs_gen = d_net(x_gen, y_data)
-    d_outputs_data = d_net(x_data, y_data)
+    with record_function(RecordFunctionName.FORWARD):
+        # generate outputs with `g_net` without tracking gradients
+        # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
+        # its gradient reducer for a backward pass that never happens
+        with torch.no_grad():
+            x_gen = g_net(y_data, z)
 
-    # evaluate discriminator loss
-    # NOTE: output must have correct sign for minimization
-    d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
-    d_reg_dlog: dict[str, float] = {}
-    if d_reg_fn is not None:
-        random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
-        d_reg = d_reg_fn(
-            d_net,
-            x_gen[random_idx],
-            x_data,
-            y_data,
-            dlog=d_reg_dlog,
-        )
-    else:
-        d_reg = d_loss.new_tensor(0.0)
-    loss = d_loss + d_reg
+        # evalutate discriminator
+        d_outputs_gen = d_net(x_gen, y_data)
+        d_outputs_data = d_net(x_data, y_data)
 
-    # calculate derivatives (end AD) and update network parameters
-    loss.backward()
-    d_optimizer.step()
+        # evaluate discriminator loss
+        # NOTE: output must have correct sign for minimization
+        d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
+        d_reg_dlog: dict[str, float] = {}
+        if d_reg_fn is not None:
+            random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
+            d_reg = d_reg_fn(
+                d_net,
+                x_gen[random_idx],
+                x_data,
+                y_data,
+                dlog=d_reg_dlog,
+            )
+        else:
+            d_reg = d_loss.new_tensor(0.0)
+        loss = d_loss + d_reg
+
+    # calculate derivatives (end AD)
+    with record_function(RecordFunctionName.BACKWARD):
+        loss.backward()
+
+    # update network parameters
+    with record_function(RecordFunctionName.OPTIMIZER_STEP):
+        d_optimizer.step()
 
     # output values
     if dlog_item is not None:
@@ -395,21 +423,29 @@ def _train_step_generator(
     batch_size = y_data.size(0)
     z = z_sample_fn(batch_size)
 
-    # generate outputs with `g_net` (begin AD)
-    g_optimizer.zero_grad()
-    x_gen = g_net(y_data, z)
+    # zero the gradients (begin AD)
+    with record_function(RecordFunctionName.OPTIMIZER_ZERO):
+        g_optimizer.zero_grad()
 
-    # evalutate discriminator
-    d_outputs_gen = d_net(x_gen, y_data)
+    with record_function(RecordFunctionName.FORWARD):
+        # generate outputs with `g_net`
+        x_gen = g_net(y_data, z)
 
-    # evaluate discriminator loss
-    # NOTE: pass only generated outputs for generator steps
-    g_loss, _ = loss_fn(d_outputs_gen, None)
-    loss = g_loss
+        # evalutate discriminator
+        d_outputs_gen = d_net(x_gen, y_data)
 
-    # calculate derivatives (end AD) and update network parameters
-    loss.backward()
-    g_optimizer.step()
+        # evaluate discriminator loss
+        # NOTE: pass only generated outputs for generator steps
+        g_loss, _ = loss_fn(d_outputs_gen, None)
+        loss = g_loss
+
+    # calculate derivatives (end AD)
+    with record_function(RecordFunctionName.BACKWARD):
+        loss.backward()
+
+    # update network parameters
+    with record_function(RecordFunctionName.OPTIMIZER_STEP):
+        g_optimizer.step()
 
     # output values
     if dlog_item is not None:
@@ -465,8 +501,8 @@ def train_batches(
     if max_batches is None:
         max_batches = len(dataloader)
 
-    DLOG_TAGS = DLOG_BASENAMES
-    batch_dlog = train_dlog_batch_initialize(max_batches, DLOG_TAGS, save_list=False)
+    dlog_tags = DLOG_BASENAMES
+    batch_dlog = train_dlog_batch_initialize(max_batches, dlog_tags, save_list=False)
 
     # <training_loop_over_batches>
     for batch_idx, data in enumerate(dataloader):
@@ -480,11 +516,15 @@ def train_batches(
         g_net.train()
         d_net.train()
 
+        # start iteration timer
+        time_step = time.perf_counter()
+
         # get input and target tensors
-        x_data, y_data = data
-        if device is not None:
-            x_data = x_data.to(device)
-            y_data = y_data.to(device)
+        with record_function(RecordFunctionName.DATA_H2D):
+            x_data, y_data = data
+            if device is not None:
+                x_data = x_data.to(device)
+                y_data = y_data.to(device)
 
         dlog_item: dict[str, float] = {}
 
@@ -546,7 +586,10 @@ def train_batches(
             dlog_item[f"d_post_{k.removeprefix('d_')}"] = v
 
         # log
-        train_dlog_batch_update(batch_dlog, batch_idx, dlog_item)
+        with record_function(RecordFunctionName.LOG):
+            time_step = time.perf_counter() - time_step
+            dlog_item["time_step"] = time_step
+            train_dlog_batch_update(batch_dlog, batch_idx, dlog_item)
 
         # finalize batch
         if batch_finalize_fn:
@@ -554,8 +597,8 @@ def train_batches(
     # </training_loop_over_batches>
 
     # reduce running aggregates across all processes (no-op otherwise)
-    train_dlog_batch_all_reduce(batch_dlog, DLOG_TAGS, device=device)
+    train_dlog_batch_all_reduce(batch_dlog, dlog_tags, device=device)
 
     # finalize and return log
-    train_dlog_batch_finalize(batch_dlog, DLOG_TAGS)
+    train_dlog_batch_finalize(batch_dlog, dlog_tags)
     return batch_dlog

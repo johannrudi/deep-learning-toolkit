@@ -361,6 +361,23 @@ def train_dlog_epoch_finalize(
 # --------------------------------------
 
 
+def format_seconds(seconds: float, precision: int = 2) -> str:
+    """Format a duration in seconds as milliseconds or seconds, whichever reads better.
+
+    Uses milliseconds below one second, seconds otherwise.
+
+    Args:
+        seconds: Duration in seconds.
+        precision: Number of digits after the decimal point.
+
+    Returns:
+        Formatted duration with a unit suffix (`ms` or `s`).
+    """
+    if abs(seconds) < 1.0:
+        return f"{seconds * 1e3:.{precision}f} ms"
+    return f"{seconds:.{precision}f} s"
+
+
 def tqdm_disable() -> bool:
     """Return True when tqdm output should be suppressed.
 

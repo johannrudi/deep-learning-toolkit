@@ -140,6 +140,7 @@ def trace_handler(
     logger: logging.Logger,
     device: ProfileDevice | None = None,
     profile_memory: bool = False,
+    table_row_limit: int = 10,
     trace_dir: str | pathlib.Path = ".",
 ) -> None:
     """Write profiler tables and a Chrome trace file for one completed trace.
@@ -171,15 +172,17 @@ def trace_handler(
 
     # generate profiler summary tables
     table = f"<profile_result step={prof.step_num}>\n"
-    table += get_table(prof, "cpu_time_total")
-    table += get_table(prof, "self_cpu_time_total")
+    table += get_table(prof, "cpu_time_total", row_limit=table_row_limit)
+    table += get_table(prof, "self_cpu_time_total", row_limit=table_row_limit)
     if device is not None:
-        table += get_table(prof, f"{device}_time_total")
-        table += get_table(prof, f"self_{device}_time_total")
+        table += get_table(prof, f"{device}_time_total", row_limit=table_row_limit)
+        table += get_table(prof, f"self_{device}_time_total", row_limit=table_row_limit)
     if profile_memory:
-        table += get_table(prof, "self_cpu_memory_usage")
+        table += get_table(prof, "self_cpu_memory_usage", row_limit=table_row_limit)
         if device is not None:
-            table += get_table(prof, f"self_{device}_memory_usage")
+            table += get_table(
+                prof, f"self_{device}_memory_usage", row_limit=table_row_limit
+            )
     table += "</profile_result>\n"
 
     # write summary table to file on every rank; print on the main process only
@@ -305,6 +308,7 @@ def profile_train_epochs(
             logger,
             device=device,
             profile_memory=profile_memory,
+            table_row_limit=20,
             trace_dir=trace_dir,
         ),
         record_shapes=record_shapes,
@@ -429,6 +433,7 @@ def profile_train_batches(
             logger,
             device=device,
             profile_memory=profile_memory,
+            table_row_limit=20,
             trace_dir=trace_dir,
         ),
         record_shapes=record_shapes,

@@ -1,11 +1,13 @@
 """Provide reusable epoch- and batch-level training loops for supervised models."""
 
+import enum
 import logging
 import pathlib
-import timeit
+import time
 from datetime import datetime
 
 import torch
+from torch.profiler import record_function
 from tqdm import tqdm
 
 from dlk.opt import distributed
@@ -21,6 +23,7 @@ from dlk.opt.utils import (
     ValidationFn,
     checkpoint_path,
     checkpoint_save,
+    format_seconds,
     tqdm_disable,
     train_dlog_batch_all_reduce,
     train_dlog_batch_finalize,
@@ -30,6 +33,23 @@ from dlk.opt.utils import (
     train_dlog_epoch_initialize,
     train_dlog_epoch_update,
 )
+
+DLOG_BASENAMES = [
+    "loss",
+    "time_step",
+]
+
+
+class RecordFunctionName(enum.StrEnum):
+    """Labels for `torch.profiler.record_function` regions."""
+
+    DATA_H2D = "data_h2d"
+    DATA_TRANSFORM = "data_transform"
+    OPTIMIZER_ZERO = "optimizer_zero"
+    FORWARD = "forward"
+    BACKWARD = "backward"
+    OPTIMIZER_STEP = "optimizer_step"
+    LOG = "log"
 
 
 def train_epochs(
@@ -90,7 +110,9 @@ def train_epochs(
     if logger is None:
         logger = logging.getLogger("dlk.opt.train.train_epochs")
 
-    epoch_dlog = train_dlog_epoch_initialize(n_epochs, ["loss_mean", "loss_std"])
+    dlog_tags = [f"{name}_mean" for name in DLOG_BASENAMES]
+    dlog_tags += [f"{name}_std" for name in DLOG_BASENAMES]
+    epoch_dlog = train_dlog_epoch_initialize(n_epochs, dlog_tags)
 
     # set checkpoint directory on the main process only; create if it doesn't exist
     checkpoint_dir_: pathlib.Path | None = None
@@ -104,7 +126,7 @@ def train_epochs(
             checkpoint_dir_.mkdir(parents=True, exist_ok=True)
 
     # <training_loop_over_epochs>
-    time_train = timeit.default_timer()
+    time_train = time.perf_counter()
     with tqdm(range(n_epochs), desc="epochs", disable=tqdm_disable()) as pbar:
         for epoch_idx in pbar:
             # initialize epoch
@@ -154,12 +176,13 @@ def train_epochs(
                 lr_scheduler.step()
 
             # log
-            train_dlog_epoch_update(
-                epoch_dlog, epoch_idx, ["loss_mean", "loss_std"], batch_dlog
-            )
+            train_dlog_epoch_update(epoch_dlog, epoch_idx, dlog_tags, batch_dlog)
             logger.info(
                 f"epoch {epoch_idx:4d}, "
-                f"loss mean {batch_dlog['loss_mean']:.6e} std {batch_dlog['loss_std']:.3e}"
+                f"loss mean {batch_dlog['loss_mean']:.6e} "
+                f"std {batch_dlog['loss_std']:.3e}, "
+                f"time/step mean {format_seconds(batch_dlog['time_step_mean'])} "
+                f"std {format_seconds(batch_dlog['time_step_std'])}"
             )
 
             # finalize epoch
@@ -175,7 +198,7 @@ def train_epochs(
     # call validation function---after training (main process only)
     if validation_fn is not None and distributed.is_main_process():
         validation_fn(n_epochs, net=distributed.unwrap_net(net))
-    time_train = timeit.default_timer() - time_train
+    time_train = time.perf_counter() - time_train
     # </training_loop_over_epochs>
 
     # finalize log
@@ -240,7 +263,9 @@ def train_batches(
         logger = logging.getLogger("dlk.opt.train.train_batches")
     if max_batches is None:
         max_batches = len(dataloader)
-    batch_dlog = train_dlog_batch_initialize(max_batches, ["loss"], save_list=False)
+
+    dlog_tags = DLOG_BASENAMES
+    batch_dlog = train_dlog_batch_initialize(max_batches, dlog_tags, save_list=False)
 
     # <training_loop_over_batches>
     for batch_idx, data in enumerate(dataloader):
@@ -254,38 +279,55 @@ def train_batches(
         # set network to training mode
         net.train()
 
+        # start iteration timer
+        time_step = time.perf_counter()
+
         # get input and target tensors
-        inputs, targets = data
-        if device is not None:
-            if isinstance(inputs, tuple):
-                inputs = tuple(x.to(device) for x in inputs)
-            else:
-                inputs = inputs.to(device)
-            targets = targets.to(device)
-        if inputs_transform_fn is not None:
-            inputs = inputs_transform_fn(inputs)
-        if targets_transform_fn is not None:
-            targets = targets_transform_fn(targets)
+        with record_function(RecordFunctionName.DATA_H2D):
+            inputs, targets = data
+            if device is not None:
+                if isinstance(inputs, tuple):
+                    inputs = tuple(x.to(device) for x in inputs)
+                else:
+                    inputs = inputs.to(device)
+                targets = targets.to(device)
+
+        # transform input and target tensors
+        with record_function(RecordFunctionName.DATA_TRANSFORM):
+            if inputs_transform_fn is not None:
+                inputs = inputs_transform_fn(inputs)
+            if targets_transform_fn is not None:
+                targets = targets_transform_fn(targets)
 
         # zero the gradients (begin AD)
-        optimizer.zero_grad()
+        with record_function(RecordFunctionName.OPTIMIZER_ZERO):
+            optimizer.zero_grad()
 
-        # forward pass; unpack inputs tuple when applicable
-        outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
+        with record_function(RecordFunctionName.FORWARD):
+            # forward pass; unpack inputs tuple when applicable
+            outputs = net(*inputs) if isinstance(inputs, tuple) else net(inputs)
 
-        # calculate loss
-        loss = loss_fn(outputs, targets)
+            # calculate loss
+            loss = loss_fn(outputs, targets)
 
         # calculate derivatives (end AD)
-        loss.backward()
+        with record_function(RecordFunctionName.BACKWARD):
+            loss.backward()
 
         # update network parameters
-        optimizer.step()
+        with record_function(RecordFunctionName.OPTIMIZER_STEP):
+            optimizer.step()
 
         # log
-        loss_v = loss.item()
-        train_dlog_batch_update(batch_dlog, batch_idx, {"loss": loss_v})
-        logger.debug(f"epoch {epoch_idx:4d}, batch {batch_idx:4d}, loss {loss_v:.6e}")
+        with record_function(RecordFunctionName.LOG):
+            loss_v = loss.item()
+            time_step = time.perf_counter() - time_step
+            train_dlog_batch_update(
+                batch_dlog, batch_idx, {"loss": loss_v, "time_step": time_step}
+            )
+            logger.debug(
+                f"epoch {epoch_idx:4d}, batch {batch_idx:4d}, loss {loss_v:.6e}"
+            )
 
         # finalize batch
         if batch_finalize_fn:
@@ -293,8 +335,8 @@ def train_batches(
     # </training_loop_over_batches>
 
     # reduce running aggregates across all processes (no-op otherwise)
-    train_dlog_batch_all_reduce(batch_dlog, ["loss"], device=device)
+    train_dlog_batch_all_reduce(batch_dlog, dlog_tags, device=device)
 
     # finalize and return log
-    train_dlog_batch_finalize(batch_dlog, ["loss"])
+    train_dlog_batch_finalize(batch_dlog, dlog_tags)
     return batch_dlog
