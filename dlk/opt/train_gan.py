@@ -53,10 +53,15 @@ class RecordFunctionName(enum.StrEnum):
     """Labels for `torch.profiler.record_function` regions."""
 
     DATA_H2D = "data_h2d"
-    OPTIMIZER_ZERO = "optimizer_zero"
-    FORWARD = "forward"
-    BACKWARD = "backward"
-    OPTIMIZER_STEP = "optimizer_step"
+    D_OPTIMIZER_ZERO = "d_optimizer_zero"
+    D_FORWARD = "d_forward"
+    D_REGULARIZE = "d_regularize"
+    D_BACKWARD = "d_backward"
+    D_OPTIMIZER_STEP = "d_optimizer_step"
+    G_OPTIMIZER_ZERO = "g_optimizer_zero"
+    G_FORWARD = "g_forward"
+    G_BACKWARD = "g_backward"
+    G_OPTIMIZER_STEP = "g_optimizer_step"
     LOG = "log"
 
 
@@ -267,12 +272,12 @@ def train_epochs(
             train_dlog_epoch_update(epoch_dlog, epoch_idx, dlog_tags, batch_dlog)
             logger.info(
                 f"epoch {epoch_idx:6d}, "
-                f"d_loss pre mean {batch_dlog['d_pre_loss_mean']:.6e} "
-                f"std {batch_dlog['d_pre_loss_std']:.3e}, "
-                f"g_loss mean {batch_dlog['g_loss_mean']:.6e} "
-                f"std {batch_dlog['g_loss_std']:.3e}, "
-                f"d_loss post mean {batch_dlog['d_post_loss_mean']:.6e} "
-                f"std {batch_dlog['d_post_loss_std']:.3e}, "
+                f"d_loss pre mean {batch_dlog['d_pre_loss_mean']:.3e} "
+                f"std {batch_dlog['d_pre_loss_std']:.2e}, "
+                f"g_loss mean {batch_dlog['g_loss_mean']:.3e} "
+                f"std {batch_dlog['g_loss_std']:.2e}, "
+                f"d_loss post mean {batch_dlog['d_post_loss_mean']:.3e} "
+                f"std {batch_dlog['d_post_loss_std']:.2e}, "
                 f"time/step mean {format_seconds(batch_dlog['time_step_mean'])} "
                 f"std {format_seconds(batch_dlog['time_step_std'])}"
             )
@@ -315,11 +320,14 @@ def train_epochs(
     logger.info(
         f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
     )
+    time_per_epoch = time_train / n_epochs
+    time_per_step = time_train / n_steps if n_steps > 0 else float("nan")
+    samples_per_second = n_samples / time_train if time_train > 0 else float("nan")
+    logger.info(f"training time {time_train:g} s")
     logger.info(
-        f"training time {time_train:g} sec, time/epoch {time_train / n_epochs:g} sec"
-    )
-    logger.info(
-        f"time/step {time_train / n_steps:g} sec, samples/sec {n_samples / time_train:g} sec"
+        f"time/epoch {format_seconds(time_per_epoch)}, "
+        f"time/step {format_seconds(time_per_step)}, "
+        f"samples/sec {samples_per_second:g}"
     )
 
     # return log
@@ -364,14 +372,14 @@ def _train_step_discriminator(
     z = z_sample_fn(batch_size)
 
     # zero the gradients (begin AD)
-    with record_function(RecordFunctionName.OPTIMIZER_ZERO):
+    with record_function(RecordFunctionName.D_OPTIMIZER_ZERO):
         d_optimizer.zero_grad()
 
-    with record_function(RecordFunctionName.FORWARD):
+    with record_function(RecordFunctionName.D_FORWARD):
         with autocast_context(device, autocast_dtype):
             # generate outputs with `g_net` without tracking gradients
             # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
-            # its gradient reducer for a backward pass that never happens
+            #       its gradient reducer for a backward pass that never happens
             with torch.no_grad():
                 x_gen = g_net(y_data, z)
 
@@ -383,9 +391,10 @@ def _train_step_discriminator(
             # NOTE: output must have correct sign for minimization
             d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
 
-        # evaluate the regularizer in full precision
-        # NOTE: gradient penalties double-backward through `d_net`
-        # (`create_graph=True`), which autocast does not support reliably
+    # evaluate the regularizer in full precision
+    with record_function(RecordFunctionName.D_REGULARIZE):
+        # NOTE: gradient penalties double-backward through `d_net` (`create_graph=True`),
+        #       which autocast does not support reliably
         d_reg_dlog: dict[str, float] = {}
         if d_reg_fn is not None:
             random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
@@ -398,24 +407,31 @@ def _train_step_discriminator(
             )
         else:
             d_reg = d_loss.new_tensor(0.0)
+
+        # add discriminator losses
         loss = d_loss + d_reg
 
     # calculate derivatives (end AD)
-    with record_function(RecordFunctionName.BACKWARD):
+    with record_function(RecordFunctionName.D_BACKWARD):
         loss.backward()
 
     # update network parameters
-    with record_function(RecordFunctionName.OPTIMIZER_STEP):
+    with record_function(RecordFunctionName.D_OPTIMIZER_STEP):
         d_optimizer.step()
 
     # output values
-    if dlog_item is not None:
-        dlog_item["d_loss"] = d_loss.item()
-        dlog_item["d_loss_g"] = d_loss_g.item() if d_loss_g is not None else math.nan
-        dlog_item["d_reg"] = d_reg.item()
-        for key, val in d_reg_dlog.items():
-            dlog_item["d_" + key] = val
-    return loss.item()
+    with record_function(RecordFunctionName.LOG):
+        if dlog_item is not None:
+            dlog_item["d_loss"] = d_loss.item()
+            dlog_item["d_loss_g"] = (
+                d_loss_g.item() if d_loss_g is not None else math.nan
+            )
+            dlog_item["d_reg"] = d_reg.item()
+            for key, val in d_reg_dlog.items():
+                dlog_item["d_" + key] = val
+        loss_val = loss.item()
+
+    return loss_val
 
 
 def _train_step_generator(
@@ -452,10 +468,10 @@ def _train_step_generator(
     z = z_sample_fn(batch_size)
 
     # zero the gradients (begin AD)
-    with record_function(RecordFunctionName.OPTIMIZER_ZERO):
+    with record_function(RecordFunctionName.G_OPTIMIZER_ZERO):
         g_optimizer.zero_grad()
 
-    with record_function(RecordFunctionName.FORWARD):
+    with record_function(RecordFunctionName.G_FORWARD):
         with autocast_context(device, autocast_dtype):
             # generate outputs with `g_net`
             x_gen = g_net(y_data, z)
@@ -469,17 +485,20 @@ def _train_step_generator(
             loss = g_loss
 
     # calculate derivatives (end AD)
-    with record_function(RecordFunctionName.BACKWARD):
+    with record_function(RecordFunctionName.G_BACKWARD):
         loss.backward()
 
     # update network parameters
-    with record_function(RecordFunctionName.OPTIMIZER_STEP):
+    with record_function(RecordFunctionName.G_OPTIMIZER_STEP):
         g_optimizer.step()
 
     # output values
-    if dlog_item is not None:
-        dlog_item["g_loss"] = g_loss.item()
-    return loss.item()
+    with record_function(RecordFunctionName.LOG):
+        if dlog_item is not None:
+            dlog_item["g_loss"] = g_loss.item()
+        loss_val = loss.item()
+
+    return loss_val
 
 
 def train_batches(

@@ -190,7 +190,7 @@ def train_epochs(
             logger.info(
                 f"epoch {epoch_idx:4d}, "
                 f"loss mean {batch_dlog['loss_mean']:.6e} "
-                f"std {batch_dlog['loss_std']:.3e}, "
+                f"std {batch_dlog['loss_std']:.2e}, "
                 f"time/step mean {format_seconds(batch_dlog['time_step_mean'])} "
                 f"std {format_seconds(batch_dlog['time_step_std'])}"
             )
@@ -227,9 +227,11 @@ def train_epochs(
     time_per_epoch = time_train / n_epochs
     time_per_step = time_train / n_steps if n_steps > 0 else float("nan")
     samples_per_second = n_samples / time_train if time_train > 0 else float("nan")
-    logger.info(f"training time {time_train:g} sec, time/epoch {time_per_epoch:g} sec")
+    logger.info(f"training time {time_train:g} s")
     logger.info(
-        f"time/step {time_per_step:g} sec, samples/sec {samples_per_second:g} sec"
+        f"time/epoch {format_seconds(time_per_epoch)}, "
+        f"time/step {format_seconds(time_per_step)}, "
+        f"samples/sec {samples_per_second:g}"
     )
 
     # return log
