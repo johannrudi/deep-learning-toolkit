@@ -1,10 +1,10 @@
+import math
 from typing import cast
 
 import pytest
 import torch
 
 from dlk.nets.efficientnet1d import (
-    EfficientNet1D,
     EfficientNetV1B0,
     EfficientNetV1B0Minimal,
     EfficientNetV1B1,
@@ -29,7 +29,7 @@ from dlk.nets.efficientnet1d import (
     MBConv1D,
     MBConvConfig,
     ScalableEfficientNet1D,
-    SqueezeExcitation1D,
+    SqueezeExcitation1DLinear,
     round_filters,
     round_repeats,
 )
@@ -48,18 +48,44 @@ def test_round_repeats_rounds_up_fractional_depth() -> None:
 
 
 def test_squeeze_excitation1d_bottleneck_matches_explicit_channels() -> None:
-    """Pin ``SqueezeExcitation1D`` Conv1d widths to the explicit constructor args."""
-    se = SqueezeExcitation1D(channels=24, squeeze_channels=6)
+    """Pin ``SqueezeExcitation1DLinear`` projection widths to the explicit constructor args."""
+    se = SqueezeExcitation1DLinear(channels=24, squeeze_channels=6)
 
-    reduce_conv = se.se[1]
-    expand_conv = se.se[3]
+    assert isinstance(se.reduce, torch.nn.Linear)
+    assert isinstance(se.expand, torch.nn.Linear)
+    assert se.reduce.in_features == 24
+    assert se.reduce.out_features == 6
+    assert se.expand.in_features == 6
+    assert se.expand.out_features == 24
 
-    assert isinstance(reduce_conv, torch.nn.Conv1d)
-    assert isinstance(expand_conv, torch.nn.Conv1d)
-    assert reduce_conv.in_channels == 24
-    assert reduce_conv.out_channels == 6
-    assert expand_conv.in_channels == 6
-    assert expand_conv.out_channels == 24
+
+def test_squeeze_excitation1d_gates_each_channel_uniformly_along_sequence() -> None:
+    """Scale every position of a channel by one shared gate value."""
+    torch.manual_seed(0)
+    se = SqueezeExcitation1DLinear(channels=8, squeeze_channels=2)
+    x = torch.randn(4, 8, 16).abs() + 0.5
+
+    y = se(x)
+
+    assert y.shape == x.shape
+    gate = y / x
+    assert torch.allclose(gate, gate[:, :, :1].expand_as(gate), atol=1e-5)
+
+
+def test_squeeze_excitation1d_projections_use_fan_out_initialization() -> None:
+    """Keep SE projections at 1x1-convolution fan-out scale, not the head's 0.01."""
+    model = EfficientNetV1B0(input_channels=1, input_length=None, num_classes=2)
+
+    se_blocks = [m for m in model.modules() if isinstance(m, SqueezeExcitation1DLinear)]
+    assert se_blocks
+
+    for se in se_blocks:
+        for layer in (se.reduce, se.expand):
+            # skip narrow layers, whose sample standard deviation is too noisy
+            if layer.weight.numel() < 200:
+                continue
+            expected_std = math.sqrt(2.0 / layer.out_features)
+            assert layer.weight.std().item() == pytest.approx(expected_std, rel=0.25)
 
 
 def test_mbconv1d_se_bottleneck_uses_pre_expansion_channels() -> None:
@@ -76,9 +102,8 @@ def test_mbconv1d_se_bottleneck_uses_pre_expansion_channels() -> None:
     block = MBConv1D(config)
 
     assert block.se is not None
-    reduce_conv = block.se.se[1]
-    assert isinstance(reduce_conv, torch.nn.Conv1d)
-    assert reduce_conv.out_channels == 4
+    assert isinstance(block.se.reduce, torch.nn.Linear)
+    assert block.se.reduce.out_features == 4
 
 
 def test_mbconv1d_forward_output_shape_with_expansion_and_stride() -> None:
@@ -171,35 +196,6 @@ def test_fusedmbconv1d_raises_for_se_ratio() -> None:
 
     with pytest.raises(AssertionError, match="squeeze-and-excitation"):
         FusedMBConv1D(config)
-
-
-def test_efficientnet1d_forward_output_shape_for_univariate_input() -> None:
-    """Run ``EfficientNet1D`` on 2D input and validate logits shape."""
-    net = EfficientNet1D(input_length=256, num_classes=3)
-    x = torch.randn(4, 256)
-
-    y = net(x)
-
-    assert y.shape == (4, 3)
-
-
-def test_efficientnet1d_forward_output_shape_for_multichannel_input() -> None:
-    """Run ``EfficientNet1D`` on 3D input and validate logits shape."""
-    net = EfficientNet1D(input_channels=2, input_length=256, num_classes=5)
-    x = torch.randn(4, 2, 256)
-
-    y = net(x)
-
-    assert y.shape == (4, 5)
-
-
-def test_efficientnet1d_raises_for_invalid_sequence_length() -> None:
-    """Raise an assertion error when the input sequence length is invalid."""
-    net = EfficientNet1D(input_length=256)
-    x = torch.randn(4, 255)
-
-    with pytest.raises(AssertionError, match="expected sequence length"):
-        net(x)
 
 
 def test_efficientnet_v1_b0_forward_output_shape() -> None:
