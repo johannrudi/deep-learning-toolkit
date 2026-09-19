@@ -415,6 +415,8 @@ class ScalableEfficientNet1D(nn.Module):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_stem: bool = True,
+        enable_head: bool = True,
     ) -> None:
         """Initialize ScalableEfficientNet1D.
 
@@ -432,6 +434,12 @@ class ScalableEfficientNet1D(nn.Module):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_stem: Whether to build the stem. When `False`, the stem is
+                replaced by `nn.Identity()` and the network expects input with
+                `resolve_input_channels()` channels instead of `input_channels`.
+            enable_head: Whether to build the classification head. When
+                `False`, the head is replaced by `nn.Identity()` and `forward`
+                returns the raw block output instead of class logits.
         """
         super().__init__()
         assert (
@@ -455,6 +463,16 @@ class ScalableEfficientNet1D(nn.Module):
 
         self.input_channels = input_channels
         self.input_length = input_length
+        self.num_classes = num_classes
+        self.enable_stem = enable_stem
+        self.enable_head = enable_head
+
+        # store pre-scaling config for introspection (see `dlk/nets/cli_efficientnet.py`)
+        self.width_coefficient = width_coefficient
+        self.depth_coefficient = depth_coefficient
+        self.base_stem_channels = stem_channels
+        self.base_head_channels = head_channels
+        self.base_stage_specs = stage_specs
 
         # rescale stage channels and repeats under compound scaling
         scaled_specs: list[StageSpec] = []
@@ -474,14 +492,18 @@ class ScalableEfficientNet1D(nn.Module):
         total_blocks = sum(spec.config.num_layers for spec in self.stage_specs)
 
         # Stem
-        stem_out = round_filters(
-            stem_channels, width_coefficient, depth_divisor, min_depth
-        )
-        self.stem = nn.Sequential(
-            nn.Conv1d(input_channels, stem_out, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm1d(stem_out),
-            nn.SiLU(),
-        )
+        self.stem: nn.Module
+        if enable_stem:
+            stem_out = round_filters(
+                stem_channels, width_coefficient, depth_divisor, min_depth
+            )
+            self.stem = nn.Sequential(
+                nn.Conv1d(input_channels, stem_out, 3, stride=2, padding=1, bias=False),
+                nn.BatchNorm1d(stem_out),
+                nn.SiLU(),
+            )
+        else:
+            self.stem = nn.Identity()
 
         # Stage blocks (MBConv or Fused-MBConv per StageSpec)
         self.blocks = nn.ModuleList()
@@ -502,19 +524,23 @@ class ScalableEfficientNet1D(nn.Module):
                 self.blocks.append(stage_spec.block_cls(block_config, dropout_block))
 
         # Head
-        out_channels = self.stage_specs[-1].config.output_channels
-        head_out = round_filters(
-            head_channels, width_coefficient, depth_divisor, min_depth
-        )
-        self.head = nn.Sequential(
-            nn.Conv1d(out_channels, head_out, 1, bias=False),
-            nn.BatchNorm1d(head_out),
-            nn.SiLU(),
-            nn.AdaptiveAvgPool1d(1),
-            nn.Flatten(),
-            nn.Dropout(dropout_head),
-            nn.Linear(head_out, num_classes),
-        )
+        self.head: nn.Module
+        if enable_head:
+            out_channels = self.stage_specs[-1].config.output_channels
+            head_out = round_filters(
+                head_channels, width_coefficient, depth_divisor, min_depth
+            )
+            self.head = nn.Sequential(
+                nn.Conv1d(out_channels, head_out, 1, bias=False),
+                nn.BatchNorm1d(head_out),
+                nn.SiLU(),
+                nn.AdaptiveAvgPool1d(1),
+                nn.Flatten(),
+                nn.Dropout(dropout_head),
+                nn.Linear(head_out, num_classes),
+            )
+        else:
+            self.head = nn.Identity()
 
         # Initialize weights
         self._initialize_weights()
@@ -544,6 +570,28 @@ class ScalableEfficientNet1D(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.zeros_(m.bias)
 
+    def resolve_input_channels(self) -> int:
+        """Return the channel count `forward` expects for its input tensor.
+
+        Returns:
+            int: `input_channels` when the stem is enabled, or the
+            (width-scaled) input channel count of the first block otherwise.
+        """
+        if self.enable_stem:
+            return self.input_channels
+        return self.stage_specs[0].config.input_channels
+
+    def resolve_output_size(self) -> int:
+        """Return the size of the last dimension `forward` produces.
+
+        Returns:
+            int: `num_classes` when the head is enabled, or the
+            (width-scaled) output channel count of the last block otherwise.
+        """
+        if self.enable_head:
+            return self.num_classes
+        return self.stage_specs[-1].config.output_channels
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute class logits for a batch of 1D time-series samples.
 
@@ -552,7 +600,9 @@ class ScalableEfficientNet1D(nn.Module):
                 (batch_size, channels, sequence_length).
 
         Returns:
-            torch.Tensor: Class logits with shape (batch_size, num_classes).
+            torch.Tensor: Class logits with shape (batch_size, num_classes)
+            when the head is enabled, or the raw block output with shape
+            (batch_size, resolve_output_size(), sequence_length') otherwise.
         """
         # add a channel axis for univariate inputs
         if x.dim() == 2:
@@ -566,9 +616,10 @@ class ScalableEfficientNet1D(nn.Module):
             )
 
         # validate channel and sequence dimensions
+        expected_input_channels = self.resolve_input_channels()
         assert (
-            x.shape[1] == self.input_channels
-        ), f"ScalableEfficientNet1D expected {self.input_channels} input channels, got {x.shape[1]}"
+            x.shape[1] == expected_input_channels
+        ), f"ScalableEfficientNet1D expected {expected_input_channels} input channels, got {x.shape[1]}"
         if self.input_length is not None:
             assert (
                 x.shape[2] == self.input_length
@@ -1174,7 +1225,7 @@ class EfficientNetV2B0Minimal(ScalableEfficientNet1D):
             stage_specs=get_efficientnet_v2_b_config(),
             stem_channels=32,
             head_channels=1280,
-            width_coefficient=0.15,
+            width_coefficient=0.2,
             depth_coefficient=0.5,
             input_channels=input_channels,
             input_length=input_length,
@@ -1835,155 +1886,3 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
         )
-
-
-# --------------------------------------
-# Inspect configs
-# --------------------------------------
-
-
-def _format_mbconv_config(config: MBConvConfig, block_name: str | None = None) -> str:
-    """Format one stage config as a compact one-line summary.
-
-    Args:
-        config: Stage channel and layout fields.
-        block_name: Optional block class name to prepend.
-
-    Returns:
-        str: Compact stage description.
-    """
-    if block_name is None:
-        block_name = "---"
-    se = f"se{config.se_ratio:g}" if config.se_ratio is not None else "se---"
-    body = (
-        f"k{config.kernel_size}  s{config.stride}  e{config.expand_ratio}  "
-        f"Cin {config.input_channels:3}  Cout {config.output_channels:3}  "
-        f"r{config.num_layers} {se}"
-    )
-    return f"{block_name:<14} {body}"
-
-
-def _format_param_count(num_params: int) -> str:
-    """Format a parameter count with a compact magnitude suffix.
-
-    Args:
-        num_params: Total number of trainable parameters.
-
-    Returns:
-        str: Human-readable parameter count.
-    """
-    if num_params >= 1_000_000:
-        return f"{num_params / 1_000_000:7.2f}M  ({num_params:>11,})"
-    if num_params >= 1_000:
-        return f"{num_params / 1_000:7.1f}K  ({num_params:>11,})"
-    return f"{num_params:7d}   ({num_params:>11,})"
-
-
-def _count_model_parameters(model: nn.Module) -> int:
-    """Count trainable parameters in a model.
-
-    Args:
-        model: Instantiated module.
-
-    Returns:
-        int: Sum of ``numel()`` over parameters with ``requires_grad``.
-    """
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-def print_efficientnet_configs() -> None:
-    """Discover and print every ``get_efficientnet_*`` stage configuration.
-
-    Finds zero-argument config builders in this module whose names start with
-    ``get_efficientnet_``, calls each, and prints stages in compact form.
-    """
-    import inspect
-    import sys
-
-    module = sys.modules[__name__]
-    builders = sorted(
-        (name, obj)
-        for name, obj in inspect.getmembers(module, inspect.isfunction)
-        if name.startswith("get_efficientnet_") and obj.__module__ == module.__name__
-    )
-
-    print("Stage configurations")
-    print("=" * 72)
-    print()
-
-    for name, builder in builders:
-        stages = builder()
-        if not stages:
-            print(f"{name}()\n  (empty)\n")
-            continue
-
-        # total block count depends on return type
-        if isinstance(stages[0], StageSpec):
-            total_blocks = sum(spec.config.num_layers for spec in stages)
-            kind = "StageSpec"
-        else:
-            total_blocks = sum(cfg.num_layers for cfg in stages)
-            kind = "MBConvConfig"
-
-        print(f"{name}()  [{kind}, {len(stages)} stages, {total_blocks} blocks]")
-        print("-" * 72)
-        for i, stage in enumerate(stages, start=1):
-            if isinstance(stage, StageSpec):
-                line = _format_mbconv_config(stage.config, stage.block_cls.__name__)
-            else:
-                line = _format_mbconv_config(stage)
-            print(f"  {i:02d}  {line}")
-        print()
-
-
-def print_efficientnet_parameter_counts(
-    input_channels: int = 1,
-    num_classes: int = 2,
-) -> None:
-    """Discover concrete EfficientNet models and print trainable parameter counts.
-
-    Instantiates every ``EfficientNet*`` class in this module except
-    ``ScalableEfficientNet1D``, using ``input_length=None``.
-
-    Args:
-        input_channels: Channel count passed to each model constructor.
-        num_classes: Class count passed to each model constructor.
-    """
-    import inspect
-    import sys
-
-    module = sys.modules[__name__]
-    model_classes = sorted(
-        (name, obj)
-        for name, obj in inspect.getmembers(module, inspect.isclass)
-        if obj.__module__ == module.__name__
-        and issubclass(obj, nn.Module)
-        and name.startswith("EfficientNet")
-        and name != "ScalableEfficientNet1D"
-    )
-
-    print("Model parameter counts")
-    print("=" * 72)
-    print(
-        f"settings: input_channels={input_channels}, "
-        f"num_classes={num_classes}, input_length=None"
-    )
-    print("-" * 72)
-    for name, model_cls in model_classes:
-        model = model_cls(
-            input_channels=input_channels,
-            input_length=None,
-            num_classes=num_classes,
-        )
-        num_params = _count_model_parameters(model)
-        blocks = getattr(model, "blocks", None)
-        num_blocks = len(blocks) if isinstance(blocks, nn.ModuleList) else 0
-        print(
-            f"  {name:<20}  blocks={num_blocks:3d}  params={_format_param_count(num_params)}"
-        )
-    print()
-
-
-if __name__ == "__main__":
-    print_efficientnet_configs()
-    print_efficientnet_parameter_counts()

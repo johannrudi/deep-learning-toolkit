@@ -27,11 +27,14 @@ requires-python = ">=3.11"
 
 # Normal dependencies
 dependencies = [
+    "flow-matching>=1.0.10,<2",
     "matplotlib>=3,<4",
     "prettytable>=3,<4",
     "pyyaml>=6,<7",
     "torch>=2.11,<3",
+    "torch-kde>=0.1.5",
     "tqdm>=4,<5",
+    "typer>=0.27",
 ]
 
 # Development dependencies
@@ -40,10 +43,8 @@ dependencies = [
 dev = [
     "basedpyright>=1.39,<2",
     "black>=25,<26",
-    "flow-matching>=1.0.10,<2",
     "isort>=5,<6",
     "pytest>=8,<9",
-    "torch-kde>=0.1.5",
 ]
 
 # Accelerator groups for PyTorch
@@ -71,8 +72,8 @@ Repository = "https://github.com/johannrudi/deep-learning-toolkit"
 Issues = "https://github.com/johannrudi/deep-learning-toolkit/issues"
 Changelog = "https://github.com/johannrudi/deep-learning-toolkit/blob/main/CHANGELOG.md"
 
-#[project.scripts]
-#dlk = "dlk.__main__:main"
+[project.scripts]
+dlk = "dlk.__main__:main"
 
 # --------------------------------------
 # Tools
