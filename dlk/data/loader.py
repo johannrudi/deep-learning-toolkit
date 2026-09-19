@@ -137,6 +137,6 @@ class DataLoaderConfig:
         kwargs = {key_aliases.get(key, key): value for key, value in config.items()}
         return cls(**kwargs)
 
-    def to_kwargs(self) -> dict[str, object]:
+    def to_kwargs(self) -> dict[str, Any]:
         """Return this config as constructor kwargs for `DataLoader`."""
         return {field_.name: getattr(self, field_.name) for field_ in fields(self)}

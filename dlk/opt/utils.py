@@ -67,6 +67,8 @@ class ValidationFn(Protocol):
 
 
 # --------------------------------------
+# Checkpoints
+# --------------------------------------
 
 
 def checkpoint_path(
@@ -158,6 +160,11 @@ def checkpoint_load(
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     return checkpoint["epoch"]
+
+
+# --------------------------------------
+# Dict Logs
+# --------------------------------------
 
 
 @torch.no_grad()
@@ -359,6 +366,8 @@ def train_dlog_epoch_finalize(
 
 
 # --------------------------------------
+# Performance Helpers
+# --------------------------------------
 
 
 def transfer_non_blocking(
@@ -426,6 +435,8 @@ def autocast_context(
     )
 
 
+# --------------------------------------
+# Print Helpers
 # --------------------------------------
 
 

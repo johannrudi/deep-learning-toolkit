@@ -1,8 +1,203 @@
 """Build learning-rate schedulers with warmup, hold, and cosine decay."""
 
+from dataclasses import InitVar, dataclass, field, fields
+from typing import Any
+
 import torch
 
 from dlk.opt.utils import LRSchedulerType
+
+
+@dataclass
+class LinearConstCosineConfig:
+    """Typed argument set for `create_linear_const_cosine_scheduler`.
+
+    `linear_epochs`, `constant_epochs`, `init_learning_rate`, and
+    `final_learning_rate` each default to an automatic heuristic derived from
+    `n_epochs` or `learning_rate` when their configured value is `None`. The
+    optimizer is not configured here; it is passed at the call site.
+
+    Attributes:
+        n_epochs: Total number of training epochs.
+        learning_rate: Target learning rate after warmup.
+        param_linear_epochs: Constructor-only input; `None` to derive
+            `linear_epochs` from `n_epochs` (not stored on the instance).
+        param_constant_epochs: Constructor-only input; `None` to derive
+            `constant_epochs` from `n_epochs` (not stored on the instance).
+        param_init_learning_rate: Constructor-only input; `None` to derive
+            `init_learning_rate` from `learning_rate` (not stored on the
+            instance).
+        param_final_learning_rate: Constructor-only input; `None` to derive
+            `final_learning_rate` from `learning_rate` (not stored on the
+            instance).
+        linear_epochs: Number of warmup epochs for the linear ramp.
+        constant_epochs: Number of epochs to keep a constant learning rate.
+        init_learning_rate: Starting learning rate at epoch zero.
+        final_learning_rate: Minimum learning rate reached by cosine decay.
+    """
+
+    n_epochs: int
+    learning_rate: float
+    param_linear_epochs: InitVar[int | None] = None
+    param_constant_epochs: InitVar[int | None] = None
+    param_init_learning_rate: InitVar[float | None] = None
+    param_final_learning_rate: InitVar[float | None] = None
+    linear_epochs: int = field(init=False)
+    constant_epochs: int = field(init=False)
+    init_learning_rate: float = field(init=False)
+    final_learning_rate: float = field(init=False)
+
+    def __post_init__(
+        self,
+        param_linear_epochs: int | None,
+        param_constant_epochs: int | None,
+        param_init_learning_rate: float | None,
+        param_final_learning_rate: float | None,
+    ) -> None:
+        if self.n_epochs <= 0:
+            raise ValueError(f"expected n_epochs > 0, got {self.n_epochs}.")
+        if self.learning_rate <= 0.0:
+            raise ValueError(f"expected learning_rate > 0, got {self.learning_rate}.")
+
+        self.linear_epochs = (
+            param_linear_epochs
+            if param_linear_epochs is not None
+            else self.auto_stage_epochs(self.n_epochs)
+        )
+        self.constant_epochs = (
+            param_constant_epochs
+            if param_constant_epochs is not None
+            else self.auto_stage_epochs(self.n_epochs)
+        )
+        self.init_learning_rate = (
+            param_init_learning_rate
+            if param_init_learning_rate is not None
+            else self.auto_init_learning_rate(self.learning_rate)
+        )
+        self.final_learning_rate = (
+            param_final_learning_rate
+            if param_final_learning_rate is not None
+            else self.auto_final_learning_rate(self.learning_rate)
+        )
+
+        if self.linear_epochs < 0:
+            raise ValueError(f"expected linear_epochs >= 0, got {self.linear_epochs}.")
+        if self.constant_epochs < 0:
+            raise ValueError(
+                f"expected constant_epochs >= 0, got {self.constant_epochs}."
+            )
+        if self.init_learning_rate <= 0.0:
+            raise ValueError(
+                f"expected init_learning_rate > 0, got {self.init_learning_rate}."
+            )
+        if self.final_learning_rate < 0.0:
+            raise ValueError(
+                f"expected final_learning_rate >= 0, got {self.final_learning_rate}."
+            )
+        if self.cosine_epochs <= 0:
+            raise ValueError(
+                "expected n_epochs > linear_epochs + constant_epochs so cosine decay "
+                "has at least one epoch."
+            )
+
+    @staticmethod
+    def auto_stage_epochs(n_epochs: int, epochs_divisor: int = 10) -> int:
+        """Heuristic length of the linear and constant stages."""
+        return n_epochs // epochs_divisor
+
+    @staticmethod
+    def auto_init_learning_rate(
+        learning_rate: float, learning_rate_divisor: float = 10.0
+    ) -> float:
+        """Heuristic starting learning rate of the linear ramp."""
+        return learning_rate / learning_rate_divisor
+
+    @staticmethod
+    def auto_final_learning_rate(
+        learning_rate: float, learning_rate_divisor: float = 100.0
+    ) -> float:
+        """Heuristic final learning rate of the cosine decay."""
+        return learning_rate / learning_rate_divisor
+
+    @property
+    def milestone_epochs(self) -> list[int]:
+        """Epochs at which the schedule moves to its next stage."""
+        return [self.linear_epochs, self.linear_epochs + self.constant_epochs]
+
+    @property
+    def cosine_epochs(self) -> int:
+        """Number of epochs left for the cosine decay stage."""
+        return self.n_epochs - self.milestone_epochs[-1]
+
+    @classmethod
+    def from_dict(cls, config: dict[str, Any]) -> "LinearConstCosineConfig":
+        """Build a `LinearConstCosineConfig` from a dict of constructor arguments.
+
+        Args:
+            config: Mapping of constructor argument names to values.
+                `linear_epochs`, `constant_epochs`, `init_learning_rate`, and
+                `final_learning_rate` map to their `param_*` constructor inputs;
+                every other key must match a field name directly.
+
+        Returns:
+            A configured `LinearConstCosineConfig` instance.
+
+        Raises:
+            TypeError: If `config` contains a key that is not a constructor
+                argument, or omits a required one.
+        """
+        key_aliases = {
+            "linear_epochs": "param_linear_epochs",
+            "constant_epochs": "param_constant_epochs",
+            "init_learning_rate": "param_init_learning_rate",
+            "final_learning_rate": "param_final_learning_rate",
+        }
+        kwargs = {key_aliases.get(key, key): value for key, value in config.items()}
+        return cls(**kwargs)
+
+    def to_kwargs(self) -> dict[str, Any]:
+        """Return this config as kwargs for `create_linear_const_cosine_scheduler`."""
+        return {field_.name: getattr(self, field_.name) for field_ in fields(self)}
+
+
+def create_linear_const_cosine_scheduler_from_config(
+    optimizer: torch.optim.Optimizer,
+    config: LinearConstCosineConfig,
+) -> LRSchedulerType:
+    """Create a staged learning-rate schedule from a config.
+
+    The scheduler has three stages:
+    1. linear ramp from `init_learning_rate` to `learning_rate`
+    2. constant `learning_rate`
+    3. cosine decay from `learning_rate` to `final_learning_rate`
+
+    Args:
+        optimizer: Optimizer to update with scheduled learning rates.
+        config: Resolved stage lengths and learning rates.
+
+    Returns:
+        A sequential scheduler composed of linear, constant, and cosine stages.
+    """
+    schedulers = [
+        torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=config.init_learning_rate / config.learning_rate,
+            end_factor=1.0,
+            total_iters=config.linear_epochs,
+        ),
+        torch.optim.lr_scheduler.ConstantLR(
+            optimizer, factor=1.0, total_iters=config.constant_epochs
+        ),
+        torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, config.cosine_epochs - 1),
+            eta_min=config.final_learning_rate,
+        ),
+    ]
+
+    return torch.optim.lr_scheduler.SequentialLR(
+        optimizer, schedulers=schedulers, milestones=config.milestone_epochs
+    )
 
 
 def create_linear_const_cosine_scheduler(
@@ -36,71 +231,20 @@ def create_linear_const_cosine_scheduler(
     Raises:
         ValueError: If any scheduler configuration parameter is invalid.
     """
-    if n_epochs <= 0:
-        raise ValueError(f"expected n_epochs > 0, got {n_epochs}.")
-    if learning_rate <= 0.0:
-        raise ValueError(f"expected learning_rate > 0, got {learning_rate}.")
-
-    # set stage defaults
-    if linear_epochs is None:
-        linear_epochs = n_epochs // 10
-    if constant_epochs is None:
-        constant_epochs = n_epochs // 10
-    if init_learning_rate is None:
-        init_learning_rate = learning_rate / 10.0
-    if final_learning_rate is None:
-        final_learning_rate = learning_rate / 100.0
-
-    if linear_epochs < 0:
-        raise ValueError(f"expected linear_epochs >= 0, got {linear_epochs}.")
-    if constant_epochs < 0:
-        raise ValueError(f"expected constant_epochs >= 0, got {constant_epochs}.")
-    if init_learning_rate <= 0.0:
-        raise ValueError(f"expected init_learning_rate > 0, got {init_learning_rate}.")
-    if final_learning_rate < 0.0:
-        raise ValueError(
-            f"expected final_learning_rate >= 0, got {final_learning_rate}."
-        )
-
-    # calculate stage boundaries
-    milestone_epochs = [
-        linear_epochs,
-        linear_epochs + constant_epochs,
-    ]
-    cosine_epochs = n_epochs - milestone_epochs[-1]
-    if cosine_epochs <= 0:
-        raise ValueError(
-            "expected n_epochs > linear_epochs + constant_epochs so cosine decay "
-            "has at least one epoch."
-        )
-
-    # create stage schedulers
-    schedulers = [
-        torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=init_learning_rate / learning_rate,
-            end_factor=1.0,
-            total_iters=linear_epochs,
-        ),
-        torch.optim.lr_scheduler.ConstantLR(
-            optimizer, factor=1.0, total_iters=constant_epochs
-        ),
-        torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=max(1, cosine_epochs - 1),
-            eta_min=final_learning_rate,
-        ),
-    ]
-
-    # create and return the combined scheduler
-    return torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=schedulers, milestones=milestone_epochs
+    config = LinearConstCosineConfig(
+        n_epochs=n_epochs,
+        learning_rate=learning_rate,
+        param_linear_epochs=linear_epochs,
+        param_constant_epochs=constant_epochs,
+        param_init_learning_rate=init_learning_rate,
+        param_final_learning_rate=final_learning_rate,
     )
+    return create_linear_const_cosine_scheduler_from_config(optimizer, config)
 
 
-def create_learning_rate_scheduler_from_config(
+def create_learning_rate_scheduler_from_params(
     optimizer: torch.optim.Optimizer,
-    opt_params: dict,
+    opt_params: dict[str, Any],
     n_epochs: int,
 ) -> LRSchedulerType | None:
     """Create a learning rate scheduler, or return None if not configured.
@@ -135,15 +279,15 @@ def create_learning_rate_scheduler_from_config(
             return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=n_epochs)
 
     if scheduler_type == "linear_const_cosine":
-        return create_linear_const_cosine_scheduler(
-            optimizer,
-            n_epochs,
-            opt_params["learning_rate"],
-            linear_epochs=scheduler_params.get("linear_epochs"),
-            constant_epochs=scheduler_params.get("constant_epochs"),
-            init_learning_rate=scheduler_params.get("init_learning_rate"),
-            final_learning_rate=scheduler_params.get("final_learning_rate"),
+        config = LinearConstCosineConfig(
+            n_epochs=n_epochs,
+            learning_rate=opt_params["learning_rate"],
+            param_linear_epochs=scheduler_params.get("linear_epochs"),
+            param_constant_epochs=scheduler_params.get("constant_epochs"),
+            param_init_learning_rate=scheduler_params.get("init_learning_rate"),
+            param_final_learning_rate=scheduler_params.get("final_learning_rate"),
         )
+        return create_linear_const_cosine_scheduler_from_config(optimizer, config)
 
     if scheduler_type == "step":
         step_size = scheduler_params.get("step_size", n_epochs // 3)
