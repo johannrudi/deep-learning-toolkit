@@ -238,6 +238,7 @@ def profile_train_epochs(
     optimizer: torch.optim.Optimizer,
     loss_fn: LossFn,
     logger: logging.Logger | None = None,
+    skip_first: int = 0,
     wait: int = 1,
     warmup: int = 1,
     active: int = 3,
@@ -250,7 +251,7 @@ def profile_train_epochs(
     """Profile training for multiple epochs using a periodic profiler schedule.
 
     Total number of profiling steps:
-        (1 wait + 1 warmup + 3 active) * 2 repeats = 10 steps.
+        2 skip_first + (1 wait + 1 warmup + 3 active) * 2 repeats = 12 steps.
 
     Under distributed training, call on every rank with a DDP-wrapped model;
     each rank writes its own rank-suffixed trace showing communication ops.
@@ -266,6 +267,7 @@ def profile_train_epochs(
         optimizer: Optimizer forwarded to `train_epochs_fn`.
         loss_fn: Loss callable forwarded to `train_epochs_fn`.
         logger: Logger used for profiling diagnostics; defaults to a module logger.
+        skip_first: Number of steps to skip before the start of profiling cycles.
         wait: Number of steps kept inactive at the start of each profiling cycle.
         warmup: Number of steps used to warm up the profiler in each cycle.
         active: Number of steps actively recorded in each profiling cycle.
@@ -279,7 +281,7 @@ def profile_train_epochs(
         Profiler handle with captured profiling data.
     """
     if logger is None:
-        logger = logging.getLogger("dlk.opt.profile_train_epochs")
+        logger = logging.getLogger("dlk.opt.profile.profile_train_epochs")
 
     reserved_kwargs = {"logger", "epoch_finalize_fn"}
     if reserved_kwargs & train_epochs_fn_kwargs.keys():
@@ -293,13 +295,13 @@ def profile_train_epochs(
 
     # configure a periodic profiling schedule
     schedule = torch.profiler.schedule(
-        skip_first=0,  # ignore initial steps
+        skip_first=skip_first,
         wait=wait,
         warmup=warmup,
         active=active,
         repeat=repeat,
     )
-    n_epochs = (wait + warmup + active) * repeat
+    n_epochs = skip_first + (wait + warmup + active) * repeat
 
     # run training with profiler stepping hooks
     with torch.profiler.profile(
@@ -363,6 +365,7 @@ def profile_train_batches(
     train_batches_fn_args: tuple[Any, ...],
     train_batches_fn_kwargs: Mapping[str, Any],
     logger: logging.Logger | None = None,
+    skip_first: int = 0,
     wait: int = 1,
     warmup: int = 1,
     active: int = 3,
@@ -375,7 +378,7 @@ def profile_train_batches(
     """Profile training for one epoch by stepping at batch boundaries.
 
     Total number of profiling steps:
-        (1 wait + 1 warmup + 3 active) * 2 repeats = 10 steps.
+        4 skip_first + (1 wait + 1 warmup + 3 active) * 2 repeats = 14 steps.
 
     Under distributed training, call on every rank with a DDP-wrapped model;
     each rank writes its own rank-suffixed trace showing communication ops.
@@ -391,6 +394,7 @@ def profile_train_batches(
             after `epoch_idx` (typically `net, dataloader, optimizer, loss_fn`).
         train_batches_fn_kwargs: Extra keyword arguments forwarded to `train_batches_fn`.
         logger: Logger used for profiling diagnostics; defaults to a module logger.
+        skip_first: Number of steps to skip before the start of profiling cycles.
         wait: Number of steps kept inactive at the start of each profiling cycle.
         warmup: Number of steps used to warm up the profiler in each cycle.
         active: Number of steps actively recorded in each profiling cycle.
@@ -404,7 +408,7 @@ def profile_train_batches(
         Profiler handle with captured profiling data.
     """
     if logger is None:
-        logger = logging.getLogger("dlk.opt.profile_train_batches")
+        logger = logging.getLogger("dlk.opt.profile.profile_train_batches")
 
     reserved_kwargs = {"logger", "batch_finalize_fn", "max_batches"}
     if reserved_kwargs & train_batches_fn_kwargs.keys():
@@ -418,13 +422,13 @@ def profile_train_batches(
 
     # configure a periodic profiling schedule
     schedule = torch.profiler.schedule(
-        skip_first=0,  # ignore initial steps
+        skip_first=skip_first,
         wait=wait,
         warmup=warmup,
         active=active,
         repeat=repeat,
     )
-    max_batches = (wait + warmup + active) * repeat
+    max_batches = skip_first + (wait + warmup + active) * repeat
 
     # run training with profiler stepping hooks
     with torch.profiler.profile(
