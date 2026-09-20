@@ -44,11 +44,11 @@ class DataLoaderConfig:
     shuffle: bool
     drop_last: bool
     batch_size: int
-    param_num_workers: InitVar[Optional[int]]
-    param_prefetch_factor: InitVar[Optional[int]]
-    param_pin_memory: InitVar[Optional[bool]]
-    param_persistent_workers: InitVar[Optional[bool]]
-    param_multiprocessing_context: InitVar[Optional[str]]
+    param_num_workers: InitVar[Optional[int]] = None
+    param_prefetch_factor: InitVar[Optional[int]] = None
+    param_pin_memory: InitVar[Optional[bool]] = None
+    param_persistent_workers: InitVar[Optional[bool]] = None
+    param_multiprocessing_context: InitVar[Optional[str]] = None
     num_workers: int = field(init=False)
     prefetch_factor: Optional[int] = field(init=False, default=None)
     pin_memory: bool = field(init=False, default=False)
