@@ -8,6 +8,7 @@ from typing import Any, Literal, Protocol, TypeAlias
 import torch
 
 from dlk.opt import distributed
+from dlk.opt.monitor import TrainLog
 from dlk.opt.utils import (
     BatchHookFn,
     EpochHookFn,
@@ -15,7 +16,6 @@ from dlk.opt.utils import (
     LossFn,
     LRSchedulerType,
     TensorTransformFn,
-    TrainLog,
     ValidationFn,
 )
 

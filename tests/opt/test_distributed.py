@@ -7,13 +7,7 @@ import pytest
 import torch
 from ddp_test_utils import init_worker, run_distributed, set_launcher_environment
 
-from dlk.opt import distributed
-from dlk.opt.utils import (
-    train_dlog_batch_all_reduce,
-    train_dlog_batch_finalize,
-    train_dlog_batch_initialize,
-    train_dlog_batch_update,
-)
+from dlk.opt import distributed, monitor
 
 # --------------------------------------
 # Single-process degradation
@@ -365,12 +359,12 @@ def _dlog_all_reduce_worker(rank: int, world_size: int, port: int) -> None:
         1: [4.0, 5.0, math.nan],
     }
     values = values_per_rank[rank]
-    dlog = train_dlog_batch_initialize(len(values), ["loss"])
+    dlog = monitor.batch_initialize(len(values), ["loss"])
     for batch_idx, value in enumerate(values):
-        train_dlog_batch_update(dlog, batch_idx, {"loss": value})
+        monitor.batch_update(dlog, batch_idx, {"loss": value})
 
-    train_dlog_batch_all_reduce(dlog, ["loss"])
-    train_dlog_batch_finalize(dlog, ["loss"])
+    monitor.batch_all_reduce(dlog, ["loss"])
+    monitor.batch_finalize(dlog, ["loss"])
 
     global_values = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0], dtype=torch.float64)
     expected_mean = global_values.mean().item()

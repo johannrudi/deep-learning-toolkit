@@ -8,6 +8,7 @@ from flow_matching.path import AffineProbPath, ProbPath
 from flow_matching.path.scheduler import CondOTScheduler
 
 from dlk.opt import train
+from dlk.opt.monitor import TrainLog
 from dlk.opt.utils import (
     DataLoaderType,
     EpochHookFn,
@@ -15,7 +16,6 @@ from dlk.opt.utils import (
     LossFn,
     LRSchedulerType,
     TensorTransformFn,
-    TrainLog,
     ValidationFn,
 )
 

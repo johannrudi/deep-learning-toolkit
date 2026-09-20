@@ -1,9 +1,9 @@
-"""Utility helpers for typing, checkpoint I/O, and per-batch/per-epoch training logs."""
+"""Utility helpers for typing, checkpoint I/O, and training-loop performance helpers."""
 
 import math
 import pathlib
 import sys
-from collections.abc import Callable, Iterator, Mapping, MutableMapping, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Protocol, TypeAlias
 
 import torch
@@ -22,7 +22,6 @@ InputsTransformFn: TypeAlias = Callable[
     [torch.Tensor | tuple[torch.Tensor, ...]],
     torch.Tensor | tuple[torch.Tensor, ...],
 ]
-TrainLog: TypeAlias = dict[str, Any]
 
 
 class LRSchedulerType(Protocol):
@@ -160,209 +159,6 @@ def checkpoint_load(
     if optimizer is not None:
         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     return checkpoint["epoch"]
-
-
-# --------------------------------------
-# Dict Logs
-# --------------------------------------
-
-
-@torch.no_grad()
-def train_dlog_batch_initialize(
-    n_batches: int,
-    tags: Sequence[str],
-    save_list: bool = False,
-) -> dict[str, Any]:
-    """Initialize batch-level training log storage and running statistics.
-
-    Args:
-        n_batches: Number of batches in the current epoch.
-        tags: Metric names to track.
-        save_list: Whether to store per-batch values for each metric.
-
-    Returns:
-        Mutable dictionary storing per-tag values and aggregate statistics.
-    """
-    dlog: dict[str, Any] = {"n_batches": n_batches}
-    for tag in tags:
-        if save_list:
-            dlog[tag] = torch.empty((n_batches,), dtype=torch.float64)
-        else:
-            dlog[tag] = None
-        dlog[f"{tag}_mean_n"] = 0
-        dlog[f"{tag}_mean"] = 0.0
-        dlog[f"{tag}_sq_mean"] = 0.0
-        dlog[f"{tag}_std"] = None
-    return dlog
-
-
-@torch.no_grad()
-def train_dlog_batch_update(
-    dlog: MutableMapping[str, Any],
-    batch_idx: int,
-    values: Mapping[str, float | int | torch.Tensor],
-) -> None:
-    """Update batch-level logs with metric values from a single batch.
-
-    Args:
-        dlog: Training log dictionary from `train_dlog_batch_initialize`.
-        batch_idx: Index of the current batch.
-        values: Mapping from metric names to scalar values.
-
-    Returns:
-        None.
-    """
-    for tag, val in values.items():
-        if isinstance(val, torch.Tensor):
-            val = float(val.detach().item())
-        else:
-            val = float(val)
-        if dlog[tag] is not None:
-            dlog[tag][batch_idx] = val
-        if not math.isnan(val):
-            dlog[f"{tag}_mean_n"] += 1
-            dlog[f"{tag}_mean"] += val
-            dlog[f"{tag}_sq_mean"] += val * val
-
-
-@torch.no_grad()
-def train_dlog_batch_all_reduce(
-    dlog: MutableMapping[str, Any],
-    tags: Sequence[str],
-    device: torch.device | None = None,
-) -> None:
-    r"""Sum batch-level running aggregates across all ranks, in place.
-
-    Reduces `{tag}_mean_n`, `{tag}_mean`, and `{tag}_sq_mean` with a single
-    all-reduce, so that a subsequent `train_dlog_batch_finalize` yields the
-    exact global mean and standard deviation over all ranks:
-
-        mean = (\sum_r \sum_i x_{r,i}) / (\sum_r n_r)
-
-    Call before `train_dlog_batch_finalize` (which divides by the counts).
-    No-op when not distributed.
-
-    Args:
-        dlog: Training log dictionary from `train_dlog_batch_initialize`.
-        tags: Metric names to reduce.
-        device: Device holding the reduction buffer; required to be this
-            process's GPU for the NCCL backend, CPU (`None`) for gloo.
-
-    Returns:
-        None.
-    """
-    if not distributed.is_distributed():
-        return
-    aggregate_names = ["_mean_n", "_mean", "_sq_mean"]
-    values = torch.tensor(
-        [dlog[f"{tag}{name}"] for tag in tags for name in aggregate_names],
-        dtype=torch.float64,
-        device=device,
-    )
-    distributed.all_reduce_sum_(values)
-    values_list = values.cpu().tolist()
-    for tag_idx, tag in enumerate(tags):
-        offset = tag_idx * len(aggregate_names)
-        dlog[f"{tag}_mean_n"] = int(values_list[offset])
-        dlog[f"{tag}_mean"] = values_list[offset + 1]
-        dlog[f"{tag}_sq_mean"] = values_list[offset + 2]
-
-
-@torch.no_grad()
-def train_dlog_batch_finalize(
-    dlog: MutableMapping[str, Any],
-    tags: Sequence[str],
-) -> None:
-    """Finalize batch-level running statistics for the requested metric tags.
-
-    Args:
-        dlog: Training log dictionary containing running aggregates.
-        tags: Metric names to finalize.
-
-    Returns:
-        None.
-    """
-    for tag in tags:
-        assert dlog[f"{tag}_std"] is None
-        assert not math.isnan(dlog[f"{tag}_mean"])
-        assert not math.isnan(dlog[f"{tag}_sq_mean"])
-        if 0 < dlog[f"{tag}_mean_n"]:
-            dlog[f"{tag}_mean"] *= 1.0 / dlog[f"{tag}_mean_n"]
-            dlog[f"{tag}_sq_mean"] *= 1.0 / dlog[f"{tag}_mean_n"]
-            variance = dlog[f"{tag}_sq_mean"] - dlog[f"{tag}_mean"] ** 2
-            dlog[f"{tag}_std"] = torch.sqrt(
-                torch.tensor(variance, dtype=torch.float64)
-            ).item()
-        else:
-            dlog[f"{tag}_mean"] = 0.0
-            dlog[f"{tag}_sq_mean"] = 0.0
-            dlog[f"{tag}_std"] = 0.0
-
-
-@torch.no_grad()
-def train_dlog_epoch_initialize(
-    n_epochs: int,
-    tags: Sequence[str],
-    save_list: bool = True,
-) -> dict[str, Any]:
-    """Initialize epoch-level training log storage.
-
-    Args:
-        n_epochs: Total number of epochs to store.
-        tags: Metric names to track.
-        save_list: Whether to store per-epoch values for each metric.
-
-    Returns:
-        Mutable dictionary storing per-epoch metrics and batch logs.
-    """
-    dlog: dict[str, Any] = {}
-    for tag in tags:
-        if save_list:
-            dlog[tag] = torch.empty((n_epochs,), dtype=torch.float64)
-        else:
-            dlog[tag] = None
-    dlog["batch_dlog"] = []
-    return dlog
-
-
-@torch.no_grad()
-def train_dlog_epoch_update(
-    dlog: MutableMapping[str, Any],
-    epoch_idx: int,
-    tags: Sequence[str],
-    batch_dlog: Mapping[str, Any],
-) -> None:
-    """Update epoch-level logs using finalized metrics from one epoch.
-
-    Args:
-        dlog: Epoch-level training log dictionary.
-        epoch_idx: Index of the epoch to update.
-        tags: Metric names to copy from `batch_dlog`.
-        batch_dlog: Finalized batch-level metrics for one epoch.
-
-    Returns:
-        None.
-    """
-    for tag in tags:
-        if dlog[tag] is not None:
-            dlog[tag][epoch_idx] = batch_dlog[tag]
-    dlog["batch_dlog"].append(batch_dlog)
-
-
-def train_dlog_epoch_finalize(
-    dlog: MutableMapping[str, Any],
-    time_train: float,
-) -> None:
-    """Attach total training wall-clock time to the epoch-level log.
-
-    Args:
-        dlog: Epoch-level training log dictionary.
-        time_train: Total training time in seconds.
-
-    Returns:
-        None.
-    """
-    dlog["time_train"] = time_train
 
 
 # --------------------------------------

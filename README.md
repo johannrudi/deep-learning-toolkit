@@ -103,15 +103,18 @@ All network modules follow a consistent pattern:
 
 - `train.py`: Training loops (`train_epochs`, `train_batches`) with checkpointing and validation hooks
 - `train_gan.py`: GAN-specific training loops
+- `monitor.py`: Per-batch/per-epoch training log (`TrainLog`) construction, Welford mean/std, and cross-rank summary statistics
 - `scheduler.py`: Learning rate schedulers (multi-stage: linear warmup, constant, cosine annealing)
 
 #### Logging of the training progress
 
-Training functions return detailed logging dictionaries (`dlog`) containing:
+Training functions return a detailed logging dictionary (`TrainLog`, built by `dlk/opt/monitor.py`) containing:
 
-- Per-epoch loss statistics (`loss_mean`, `loss_std`)
-- Batch-level logs nested in `batch_dlog`
+- Per-epoch loss statistics (`loss_mean`, `loss_std`), and per-epoch `time_step_mean`/`time_step_std`, one value per epoch
+- Raw per-epoch `time_step` tensors (one per epoch, from each epoch's batch-level log) collected in the `time_step` list, for pooling across epochs in `summary`
+- Per-epoch wall-clock time in `time_epoch`, one value per epoch, covering the whole epoch body (checkpoint save, validation, batch training, LR-scheduler step, logging)
 - Total training time in `time_train`
+- A `summary` dictionary of cross-epoch, cross-rank combined statistics, built by `monitor.epoch_finalize` once at the end of training: `time_epoch_first` (a `{n, mean, std, median, min, max}` dictionary for the first epoch, across ranks), and, when `n_epochs > 1`, `time_epoch_rest`, `time_step`, and `samples_per_sec` (each the same kind of dictionary, pooling epochs `1..N-1`, since the first epoch carries one-time overhead such as dataloader worker spin-up, cudnn autotune, or `torch.compile` warm-up). These are distinct from the per-epoch `time_step_mean`/`time_step_std` arrays above, which keep their original per-epoch meaning. Under DDP, `median` is the mean of each rank's local median, an approximation noted in the training log; `mean`/`std`/`min`/`max` combine exactly across ranks.
 - Checkpointing saves model and optimizer states at specified intervals
 
 ### Additional components of the package

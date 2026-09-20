@@ -10,7 +10,8 @@ import torch
 from torch.profiler import record_function
 from tqdm import tqdm
 
-from dlk.opt import distributed
+from dlk.opt import distributed, monitor
+from dlk.opt.monitor import TrainLog
 from dlk.opt.utils import (
     BatchHookFn,
     DataLoaderType,
@@ -19,24 +20,16 @@ from dlk.opt.utils import (
     LossFn,
     LRSchedulerType,
     TensorTransformFn,
-    TrainLog,
     ValidationFn,
     autocast_context,
     checkpoint_path,
     checkpoint_save,
     format_seconds,
     tqdm_disable,
-    train_dlog_batch_all_reduce,
-    train_dlog_batch_finalize,
-    train_dlog_batch_initialize,
-    train_dlog_batch_update,
-    train_dlog_epoch_finalize,
-    train_dlog_epoch_initialize,
-    train_dlog_epoch_update,
     transfer_non_blocking,
 )
 
-DLOG_BASENAMES = [
+MONITOR_BASENAMES = [
     "loss",
     "time_step",
 ]
@@ -119,9 +112,15 @@ def train_epochs(
     if logger is None:
         logger = logging.getLogger("dlk.opt.train.train_epochs")
 
-    dlog_tags = [f"{name}_mean" for name in DLOG_BASENAMES]
-    dlog_tags += [f"{name}_std" for name in DLOG_BASENAMES]
-    epoch_dlog = train_dlog_epoch_initialize(n_epochs, dlog_tags)
+    monitor_tags = [f"{name}_mean" for name in MONITOR_BASENAMES]
+    monitor_tags += [f"{name}_std" for name in MONITOR_BASENAMES]
+    monitor_tags.append("time_epoch")
+    epoch_dlog = monitor.epoch_initialize(
+        n_epochs,
+        monitor_tags,
+        extended_stats_tags=monitor_tags,
+        raw_tags=["time_step"],
+    )
 
     # set checkpoint directory on the main process only; create if it doesn't exist
     checkpoint_dir_: pathlib.Path | None = None
@@ -138,6 +137,8 @@ def train_epochs(
     time_train = time.perf_counter()
     with tqdm(range(n_epochs), desc="epochs", disable=tqdm_disable()) as pbar:
         for epoch_idx in pbar:
+            time_epoch = time.perf_counter()
+
             # initialize epoch
             if epoch_initialize_fn:
                 epoch_initialize_fn(epoch_idx)
@@ -186,13 +187,18 @@ def train_epochs(
                 lr_scheduler.step()
 
             # log
-            train_dlog_epoch_update(epoch_dlog, epoch_idx, dlog_tags, batch_dlog)
             logger.info(
                 f"epoch {epoch_idx:4d}, "
                 f"loss mean {batch_dlog['loss_mean']:.6e} "
                 f"std {batch_dlog['loss_std']:.2e}, "
                 f"time/step mean {format_seconds(batch_dlog['time_step_mean'])} "
                 f"std {format_seconds(batch_dlog['time_step_std'])}"
+            )
+
+            # stop the epoch timer, then update the epoch-level log
+            batch_dlog["time_epoch"] = time.perf_counter() - time_epoch
+            monitor.epoch_update(
+                epoch_dlog, epoch_idx, monitor_tags, batch_dlog, raw_tags=["time_step"]
             )
 
             # finalize epoch
@@ -211,28 +217,72 @@ def train_epochs(
     time_train = time.perf_counter() - time_train
     # </training_loop_over_epochs>
 
+    # global batch size across all processes; used for n_samples and samples/sec
+    global_batch_size = (
+        dataloader.batch_size * distributed.get_world_size()
+        if dataloader.batch_size is not None
+        else None
+    )
+
     # finalize log
-    train_dlog_epoch_finalize(epoch_dlog, time_train)
+    monitor.epoch_finalize(
+        epoch_dlog,
+        time_train,
+        n_epochs,
+        global_batch_size=global_batch_size,
+        device=device,
+    )
+    summary = epoch_dlog["summary"]
 
     # print statistics; sample counts are global across all processes
     n_steps = n_epochs * len(dataloader)
-    n_samples = (
-        n_steps * dataloader.batch_size * distributed.get_world_size()
-        if dataloader.batch_size is not None
-        else 0
-    )
+    n_samples = n_steps * global_batch_size if global_batch_size is not None else 0
     logger.info(
         f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
     )
-    time_per_epoch = time_train / n_epochs
-    time_per_step = time_train / n_steps if n_steps > 0 else float("nan")
-    samples_per_second = n_samples / time_train if time_train > 0 else float("nan")
-    logger.info(f"training time {time_train:g} s")
-    logger.info(
-        f"time/epoch {format_seconds(time_per_epoch)}, "
-        f"time/step {format_seconds(time_per_step)}, "
-        f"samples/sec {samples_per_second:g}"
-    )
+
+    if n_epochs > 1:
+        logger.info(f"total wall-time {format_seconds(time_train)}")
+
+        first_epoch = f"epoch 0"
+        rest_epochs = f"epochs 1..{n_epochs - 1}"
+        note = " (mean of per-rank medians)" if distributed.is_distributed() else ""
+
+        first = summary["time_epoch_first"]
+        logger.info(
+            f"time ({first_epoch}): "
+            f"mean {format_seconds(first['mean'])}, std {format_seconds(first['std'])}"
+        )
+
+        rest = summary["time_epoch_rest"]
+        logger.info(
+            f"time/epoch ({rest_epochs}): "
+            f"mean {format_seconds(rest['mean'])}, std {format_seconds(rest['std'])}, "
+            f"median {format_seconds(rest['median'])}{note}, "
+            f"min {format_seconds(rest['min'])}, max {format_seconds(rest['max'])}"
+        )
+
+        if "time_step" in summary:
+            step = summary["time_step"]
+            logger.info(
+                f"time/step ({rest_epochs}): "
+                f"mean {format_seconds(step['mean'])}, std {format_seconds(step['std'])}, "
+                f"median {format_seconds(step['median'])}{note}, "
+                f"min {format_seconds(step['min'])}, max {format_seconds(step['max'])}"
+            )
+
+        if "samples_per_sec" in summary:
+            sps = summary["samples_per_sec"]
+            logger.info(
+                f"samples/sec ({rest_epochs}): "
+                f"mean {sps['mean']:g}, std {sps['std']:g}, "
+                f"median {sps['median']:g}{note}, "
+                f"min {sps['min']:g}, max {sps['max']:g}"
+            )
+    else:
+        logger.info(
+            f"total wall-time {format_seconds(time_train)} (only 1 epoch trained)"
+        )
 
     # return log
     return epoch_dlog
@@ -287,8 +337,10 @@ def train_batches(
     if max_batches is None:
         max_batches = len(dataloader)
 
-    dlog_tags = DLOG_BASENAMES
-    batch_dlog = train_dlog_batch_initialize(max_batches, dlog_tags, save_list=False)
+    monitor_tags = MONITOR_BASENAMES
+    batch_dlog = monitor.batch_initialize(
+        max_batches, monitor_tags, extended_stats_tags=["time_step"]
+    )
 
     # overlap host-to-device copies when the dataloader pins its batches
     non_blocking = transfer_non_blocking(dataloader, device)
@@ -351,7 +403,7 @@ def train_batches(
         with record_function(RecordFunctionName.LOG):
             loss_v = loss.item()
             time_step = time.perf_counter() - time_step
-            train_dlog_batch_update(
+            monitor.batch_update(
                 batch_dlog, batch_idx, {"loss": loss_v, "time_step": time_step}
             )
             logger.debug(
@@ -364,8 +416,8 @@ def train_batches(
     # </training_loop_over_batches>
 
     # reduce running aggregates across all processes (no-op otherwise)
-    train_dlog_batch_all_reduce(batch_dlog, dlog_tags, device=device)
+    monitor.batch_all_reduce(batch_dlog, monitor_tags, device=device)
 
     # finalize and return log
-    train_dlog_batch_finalize(batch_dlog, dlog_tags)
+    monitor.batch_finalize(batch_dlog, monitor_tags)
     return batch_dlog

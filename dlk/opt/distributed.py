@@ -139,6 +139,40 @@ def all_reduce_sum_(values: torch.Tensor) -> None:
     torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.SUM)
 
 
+def all_reduce_min_(values: torch.Tensor) -> None:
+    """Take the elementwise minimum of a tensor across all ranks, in place.
+
+    No-op when not distributed. With the NCCL backend the tensor must reside
+    on this process's GPU; with gloo it must reside on the CPU.
+
+    Args:
+        values: Tensor to reduce; overwritten with the global minimum.
+
+    Returns:
+        None.
+    """
+    if not is_distributed():
+        return
+    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.MIN)
+
+
+def all_reduce_max_(values: torch.Tensor) -> None:
+    """Take the elementwise maximum of a tensor across all ranks, in place.
+
+    No-op when not distributed. With the NCCL backend the tensor must reside
+    on this process's GPU; with gloo it must reside on the CPU.
+
+    Args:
+        values: Tensor to reduce; overwritten with the global maximum.
+
+    Returns:
+        None.
+    """
+    if not is_distributed():
+        return
+    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.MAX)
+
+
 def _expand_slurm_tasks_per_node(value: str) -> list[int]:
     r"""Expand Slurm's compressed per-node task counts into one entry per node.
 
