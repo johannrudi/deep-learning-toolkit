@@ -55,6 +55,7 @@ class MLPNet(nn.Module):
 
         # create input layer
         self.input_size = input_size
+        self.output_size = output_size
         layer = nn.Linear(input_size, hidden_layers_sizes[0], **input_layer_kwargs)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(
@@ -91,8 +92,8 @@ class MLPNet(nn.Module):
         """Apply the network to an input tensor.
 
         Args:
-            x: Input tensor with shape ``(batch, input_size)`` or higher-rank shape
-                that can be flattened over non-batch dimensions.
+            x: Input tensor with shape ``(batch, input_size)`` or any higher-ndim
+                shape that can be flattened over non-batch dimensions.
 
         Returns:
             Output tensor with shape ``(batch, output_size)``.
@@ -109,6 +110,23 @@ class MLPNet(nn.Module):
         h = self.hidden_blocks(h)
         y = self.output_layer(h)
         return y
+
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(input_size,)``, which `forward` also accepts as any
+            higher-ndim shape it can flatten to that width.
+        """
+        return (self.input_size,)
+
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(output_size,)``.
+        """
+        return (self.output_size,)
 
     def init_parameters(self) -> None:
         """Initialize trainable parameters of MLPNet with layer-aware gains.
@@ -621,6 +639,7 @@ class MLPResNet(nn.Module):
         else:
             self.input_size = input_size
             out_size_ = residual_blocks_sizes[0][0]
+        self.output_size = output_size
         layer = nn.Linear(self.input_size, out_size_, **input_layer_kwargs)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(
@@ -759,6 +778,23 @@ class MLPResNet(nn.Module):
         h = h.reshape(batch_size, -1)
         y = self.output_layer(h)
         return y
+
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(input_size,)``, which is the summed width of the
+            positional inputs `forward` flattens and concatenates.
+        """
+        return (self.input_size,)
+
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(output_size,)``.
+        """
+        return (self.output_size,)
 
     def init_parameters(self) -> None:
         """Initialize trainable parameters of MLPResNet for input and output projections.

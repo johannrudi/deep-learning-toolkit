@@ -506,6 +506,24 @@ class TransformerNet(nn.Module):
         output = self.head(cls_token_final)
         return output
 
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(input_seq_size,)``; the network has no channel
+            argument, and `forward` accepts the single-channel 3D form as an
+            alias of this one.
+        """
+        return (self.input_seq_size,)
+
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(output_size,)``, read from the head.
+        """
+        return (self.head.out_features,)
+
 
 class ChannelWiseTransformerNet(nn.Module):
     """Apply a transformer with channel-wise embedding and attention.
@@ -606,3 +624,19 @@ class ChannelWiseTransformerNet(nn.Module):
         cls_token_final = x[:, 0]
         output = self.head(cls_token_final)
         return output
+
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        Returns:
+            The 2D shape ``(input_channels, input_seq_size)``.
+        """
+        return (self.input_channels, self.input_seq_size)
+
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        Returns:
+            The 1D shape ``(output_size,)``, read from the head.
+        """
+        return (self.head.out_features,)

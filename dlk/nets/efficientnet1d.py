@@ -436,7 +436,7 @@ class ScalableEfficientNet1D(nn.Module):
             dropout_head: Dropout probability before the final classifier.
             enable_stem: Whether to build the stem. When `False`, the stem is
                 replaced by `nn.Identity()` and the network expects input with
-                `resolve_input_channels()` channels instead of `input_channels`.
+                `resolve_input_shape()[0]` channels instead of `input_channels`.
             enable_head: Whether to build the classification head. When
                 `False`, the head is replaced by `nn.Identity()` and `forward`
                 returns the raw block output instead of class logits.
@@ -570,27 +570,34 @@ class ScalableEfficientNet1D(nn.Module):
                 nn.init.normal_(m.weight, 0, 0.01)
                 nn.init.zeros_(m.bias)
 
-    def resolve_input_channels(self) -> int:
-        """Return the channel count `forward` expects for its input tensor.
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        The channel entry is `input_channels` when the stem is enabled, and the
+        (width-scaled) input channel count of the first block otherwise. The
+        length entry is `None` when `input_length` disables the length check.
 
         Returns:
-            int: `input_channels` when the stem is enabled, or the
-            (width-scaled) input channel count of the first block otherwise.
+            The 2D shape `(channels, input_length)`.
         """
         if self.enable_stem:
-            return self.input_channels
-        return self.stage_specs[0].config.input_channels
+            return (self.input_channels, self.input_length)
+        return (self.stage_specs[0].config.input_channels, self.input_length)
 
-    def resolve_output_size(self) -> int:
-        """Return the size of the last dimension `forward` produces.
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        Without the head, `forward` returns the unpooled block output, which is
+        a feature map and is reported as one. Its length is `None` because no
+        code computes it without replicating the stem and stage strides.
 
         Returns:
-            int: `num_classes` when the head is enabled, or the
-            (width-scaled) output channel count of the last block otherwise.
+            The 1D shape `(num_classes,)` when the head is enabled, or the 2D
+            shape `(block output channels, None)` otherwise.
         """
         if self.enable_head:
-            return self.num_classes
-        return self.stage_specs[-1].config.output_channels
+            return (self.num_classes,)
+        return (self.stage_specs[-1].config.output_channels, None)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Compute class logits for a batch of 1D time-series samples.
@@ -602,7 +609,8 @@ class ScalableEfficientNet1D(nn.Module):
         Returns:
             torch.Tensor: Class logits with shape (batch_size, num_classes)
             when the head is enabled, or the raw block output with shape
-            (batch_size, resolve_output_size(), sequence_length') otherwise.
+            (batch_size, *resolve_output_shape()) otherwise, whose trailing
+            entry is the sequence length this network does not compute.
         """
         # add a channel axis for univariate inputs
         if x.dim() == 2:
@@ -616,7 +624,7 @@ class ScalableEfficientNet1D(nn.Module):
             )
 
         # validate channel and sequence dimensions
-        expected_input_channels = self.resolve_input_channels()
+        expected_input_channels = self.resolve_input_shape()[0]
         assert (
             x.shape[1] == expected_input_channels
         ), f"ScalableEfficientNet1D expected {expected_input_channels} input channels, got {x.shape[1]}"

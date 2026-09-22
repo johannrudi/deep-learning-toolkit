@@ -30,6 +30,7 @@ from dlk.nets.efficientnet1d import (
     MBConvConfig,
     ScalableEfficientNet1D,
     SqueezeExcitation1DLinear,
+    StageSpec,
     round_filters,
     round_repeats,
 )
@@ -283,3 +284,102 @@ def test_efficientnet_variant_forward_shape_and_block_count(
 
     assert y.shape == (2, 3)
     assert len(net.blocks) == expected_blocks
+
+
+def _small_scalable_net(
+    input_channels: int = 3,
+    input_length: int | None = 64,
+    num_classes: int = 5,
+    enable_stem: bool = True,
+    enable_head: bool = True,
+) -> ScalableEfficientNet1D:
+    """Build a two-stage network whose channel counts survive width scaling.
+
+    Every channel count is a multiple of the depth divisor at the default width
+    coefficient, so the stage specs report the values written here.
+
+    Args:
+        input_channels: Number of channels in each input sample.
+        input_length: Expected sequence length, or `None` to disable checks.
+        num_classes: Number of output classes.
+        enable_stem: Whether to build the stem.
+        enable_head: Whether to build the classification head.
+
+    Returns:
+        The configured network.
+    """
+    stage_specs = [
+        StageSpec(
+            MBConv1D,
+            MBConvConfig(
+                kernel_size=3,
+                stride=1,
+                expand_ratio=1,
+                input_channels=8,
+                output_channels=16,
+                num_layers=1,
+                se_ratio=0.25,
+            ),
+        ),
+        StageSpec(
+            MBConv1D,
+            MBConvConfig(
+                kernel_size=3,
+                stride=2,
+                expand_ratio=4,
+                input_channels=16,
+                output_channels=32,
+                num_layers=1,
+                se_ratio=0.25,
+            ),
+        ),
+    ]
+    return ScalableEfficientNet1D(
+        stage_specs=stage_specs,
+        stem_channels=8,
+        head_channels=64,
+        input_channels=input_channels,
+        input_length=input_length,
+        num_classes=num_classes,
+        enable_stem=enable_stem,
+        enable_head=enable_head,
+    )
+
+
+def test_headless_efficientnet_reports_block_channels_and_returns_a_feature_map() -> (
+    None
+):
+    """Report the last stage's channels and return an unpooled feature map."""
+    net = _small_scalable_net(enable_head=False)
+    last_stage_channels = net.stage_specs[-1].config.output_channels
+    x = torch.randn(2, 3, 64)
+
+    y = net(x)
+
+    assert net.resolve_output_shape() == (last_stage_channels, None)
+    # the length entry is None because no code computes it
+    assert y.ndim == 3
+    assert y.shape[:2] == (2, last_stage_channels)
+
+
+def test_stemless_efficientnet_expects_first_block_channels() -> None:
+    """Expect the first block's channel count when the stem is disabled."""
+    net = _small_scalable_net(enable_stem=False)
+    first_block_channels = net.stage_specs[0].config.input_channels
+    assert first_block_channels != net.input_channels
+
+    y = net(torch.randn(2, first_block_channels, 64))
+
+    assert net.resolve_input_shape() == (first_block_channels, 64)
+    assert y.shape == (2, 5)
+
+
+def test_resolve_input_shape_reports_the_configured_length() -> None:
+    """Report the configured sequence length, and `None` when it is unconstrained."""
+    constrained = _small_scalable_net(input_length=64)
+    unconstrained = _small_scalable_net(input_length=None)
+
+    assert constrained.resolve_input_shape() == (3, 64)
+    assert unconstrained.resolve_input_shape() == (3, None)
+    # a None length entry means forward accepts any length
+    assert unconstrained(torch.randn(2, 3, 48)).shape == (2, 5)

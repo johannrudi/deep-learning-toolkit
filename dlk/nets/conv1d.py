@@ -91,6 +91,7 @@ class ConvNet(nn.Module):
             )
             self.hidden_conv_layers.append(layer)
             in_channels = out_channels
+        self.conv_output_channels = in_channels
         # create hidden dense layers
         assert hidden_dense_input_size is not None or 0 == len(
             hidden_dense_layers_sizes
@@ -144,6 +145,34 @@ class ConvNet(nn.Module):
         else:
             y = h
         return y
+
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        Returns:
+            The 2D shape ``(input_channels, None)``; the network constrains no
+            sequence length.
+        """
+        return (self.input_channels, None)
+
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        `forward` flattens the convolution stack unconditionally, so the output
+        is 1D in every configuration. Its width comes from the output layer,
+        from the last hidden dense layer when there is no output layer, and is
+        unknown when there is neither, the flattened width then following a
+        sequence length the network does not constrain.
+
+        Returns:
+            The 1D output shape.
+        """
+        if self.output_layer is not None:
+            return (self.output_layer.out_features,)
+        if 0 < len(self.hidden_dense_layers):
+            last_dense_layer = cast(nn.Linear, self.hidden_dense_layers[-1])
+            return (last_dense_layer.out_features,)
+        return (None,)
 
     def init_parameters(self) -> None:
         """Initialize trainable parameters with layer-aware gains."""
@@ -255,6 +284,7 @@ class ConvResNet(nn.Module):
             )
             in_channels = out_channels
         self.conv_resnet: nn.Sequential = nn.Sequential(*layers)
+        self.conv_output_channels = in_channels
 
         # create dense layers using MLPResNet if parameters provided
         if self.mlp_resnet_params:
@@ -342,6 +372,29 @@ class ConvResNet(nn.Module):
         ###/DEV
 
         return y
+
+    def resolve_input_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one input sample, excluding the batch dimension.
+
+        Returns:
+            The 2D shape ``(input_channels, None)``; the network constrains no
+            sequence length.
+        """
+        return (self.input_channels, None)
+
+    def resolve_output_shape(self) -> tuple[int | None, ...]:
+        """Return the shape of one output sample, excluding the batch dimension.
+
+        Without the residual MLP head the network returns the convolution stack
+        unflattened, which is a feature map and is reported as one.
+
+        Returns:
+            The output shape of the residual MLP head, or the 2D shape
+            ``(conv_output_channels, None)`` without that head.
+        """
+        if self.mlp_resnet is None:
+            return (self.conv_output_channels, None)
+        return self.mlp_resnet.resolve_output_shape()
 
     def init_parameters(self) -> None:
         """Initialize trainable parameters of all active submodules."""

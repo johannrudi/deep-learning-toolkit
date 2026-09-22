@@ -25,6 +25,7 @@ PY_VERSION_READ  := NO_COLOR=1 $(PY_VERSION) --short
 # set directories
 PACKAGE_DIR  := dlk
 TESTS_DIR    := tests
+EXAMPLES_DIR := examples
 RELEASES_DIR := docs/releases
 
 # set files
@@ -40,6 +41,9 @@ format-check:
 	@echo
 	$(PY_IMPORT_FORMAT) --check $(TESTS_DIR)
 	$(PY_FORMAT) --check $(TESTS_DIR)
+	@echo
+	$(PY_IMPORT_FORMAT) --check $(EXAMPLES_DIR)
+	$(PY_FORMAT) --check $(EXAMPLES_DIR)
 
 format:
 	$(PY_IMPORT_FORMAT) $(PACKAGE_DIR)
@@ -47,14 +51,19 @@ format:
 	@echo
 	$(PY_IMPORT_FORMAT) $(TESTS_DIR)
 	$(PY_FORMAT) $(TESTS_DIR)
+	@echo
+	$(PY_IMPORT_FORMAT) $(EXAMPLES_DIR)
+	$(PY_FORMAT) $(EXAMPLES_DIR)
 
 compile:
 	$(PY_COMPILE) $(PACKAGE_DIR)
 	$(PY_COMPILE) $(TESTS_DIR)
+	$(PY_COMPILE) $(EXAMPLES_DIR)
 
 lint:
 	$(PY_LINT) $(PACKAGE_DIR)
 	$(PY_LINT) $(TESTS_DIR)
+	$(PY_LINT) $(EXAMPLES_DIR)
 
 .PHONY: test testq testv testvv
 
