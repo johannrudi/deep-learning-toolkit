@@ -1,7 +1,7 @@
 """Freeze the forward output of every composable network in ``dlk/nets``.
 
 The networks here are the ones that gain shape accessors when composition lands
-(see ``docs/features/2026.05__compose_nets__1-plan.md``). The accessors are pure
+(see ``docs/features/2026.006__compose_nets__1-plan.md``). The accessors are pure
 readers of values the constructors already receive, and these baselines are the
 evidence that adding them moves no forward output.
 

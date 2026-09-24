@@ -6,7 +6,7 @@ Date: 2026-08-05
 tags:
   - release
   - tooling
-link: "[[2026.01__build_and_tools_to_uv__1-spec]]"
+link: "[[2026.001__build_and_tools_to_uv__1-spec]]"
 ---
 
 # Releasing a New Version to PyPI and Zenodo

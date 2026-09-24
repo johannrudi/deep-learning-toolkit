@@ -5,7 +5,7 @@ description: Plan a new feature for this codebase and write the plan as a dated 
 
 # Feature planning workflow
 
-Produce a concise, executable plan document in `docs/features/`, following the process that worked for the DDP feature (`2026.02__ddp__1-plan.md`, whose Section 14 addendum records what this skill's improvements come from).
+Produce a concise, executable plan document in `docs/features/`, following the process that worked for the DDP feature (`2026.002__ddp__1-plan.md`, whose Section 14 addendum records what this skill's improvements come from).
 
 ## Target model tier
 

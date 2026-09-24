@@ -10,7 +10,7 @@ Edge widths are derived by asking each node what it takes and what it returns,
 never by running a probe batch.
 
 Specs:
-- docs/features/2026.05__compose_nets__1-plan.md
+- docs/features/2026.006__compose_nets__1-plan.md
 """
 
 import inspect
