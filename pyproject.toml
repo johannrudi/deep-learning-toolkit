@@ -42,7 +42,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "basedpyright>=1.39,<2",
-    "black>=25,<26",
+    "black[jupyter]>=25,<26",
     "isort>=5,<6",
     "pytest>=8,<9",
 ]
