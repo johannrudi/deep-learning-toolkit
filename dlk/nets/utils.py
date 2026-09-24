@@ -7,6 +7,8 @@ from typing import Any, Literal, Protocol, cast
 import torch
 import torch.nn as nn
 from prettytable import PrettyTable
+from torch.nn.utils import parametrize
+from torch.nn.utils.parametrizations import _SpectralNorm
 
 # --------------------------------------
 # Types
@@ -124,6 +126,28 @@ def _resolve_layer(module: Any, *, name: str = "module") -> WeightedLayer:
     return cast(WeightedLayer, module)
 
 
+def _get_spectral_norm(layer: nn.Module) -> tuple[_SpectralNorm, torch.Tensor] | None:
+    """Return the spectral norm of `layer.weight` and the weight it normalizes.
+
+    Args:
+        layer: Layer that may be wrapped with `parametrizations.spectral_norm`.
+
+    Returns:
+        The spectral-norm parametrization and the trainable weight, or ``None``
+        if `layer.weight` is not spectrally normalized.
+    """
+    if not parametrize.is_parametrized(layer, "weight"):
+        return None
+    parametrizations = cast(nn.ModuleDict, layer.parametrizations)
+    weight_parametrizations = cast(
+        parametrize.ParametrizationList, parametrizations["weight"]
+    )
+    for parametrization in weight_parametrizations:
+        if isinstance(parametrization, _SpectralNorm):
+            return parametrization, cast(torch.Tensor, weight_parametrizations.original)
+    return None
+
+
 def set_init_parameters(
     layer: Any,
     gain: float = 1.0,
@@ -131,16 +155,49 @@ def set_init_parameters(
 ) -> None:
     """Initialize trainable parameters of a layer.
 
+    Layers wrapped with `parametrizations.spectral_norm` get an orthogonal weight in
+    place of Xavier's. The normalization divides out any weight scale, so
+    `gain` has no effect on them, and an orthogonal weight keeps every singular
+    value at 1, so the layer starts norm-preserving (Anil et al., 2019). For
+    convolutions, the normalization bounds the reshaped kernel matrix, not the
+    convolution operator, whose norm can be larger (Sedghi et al., 2019; Gouk
+    et al., 2021; Farnia et al., 2019).
+
+    References:
+        Miyato et al., "Spectral Normalization for Generative Adversarial
+        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
+
+        Anil et al., "Sorting Out Lipschitz Function Approximation", ICML 2019.
+        https://arxiv.org/abs/1811.05381
+
+        Sedghi et al., "The Singular Values of Convolutional Layers", ICLR 2019.
+        https://arxiv.org/abs/1805.10408
+
+        Gouk et al., "Regularisation of Neural Networks by Enforcing Lipschitz
+        Continuity", Machine Learning 2021. https://arxiv.org/abs/1804.04368
+
+        Farnia et al., "Generalizable Adversarial Training via Spectral
+        Normalization", ICLR 2019. https://arxiv.org/abs/1811.07457
+
     Args:
         layer: Layer to initialize.
-        gain: Gain scaling for Xavier initialization.
+        gain: Gain scaling for Xavier initialization and the bias range.
         bias_scale: Uniform scale factor used for bias initialization.
 
     Returns:
         None.
     """
+    spectral_norm_and_weight = _get_spectral_norm(layer)
     layer = _resolve_layer(layer)
-    nn.init.xavier_uniform_(layer.weight, gain=gain)
+    if spectral_norm_and_weight is None:
+        nn.init.xavier_uniform_(layer.weight, gain=gain)
+    else:
+        # initialize the trainable weight; `layer.weight` is derived from it
+        spectral_norm, weight_orig = spectral_norm_and_weight
+        nn.init.orthogonal_(weight_orig)
+        # re-sync power-iteration vectors, as registering the parametrization does
+        weight_mat = spectral_norm._reshape_weight_to_matrix(weight_orig.detach())
+        spectral_norm._power_method(weight_mat, 15)
     if layer.bias is not None:
         lim = bias_scale * gain / math.sqrt(layer.bias.size(0))
         nn.init.uniform_(layer.bias, a=-lim, b=+lim)

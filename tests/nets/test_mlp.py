@@ -1,5 +1,7 @@
 import torch
 import torch.nn as nn
+from torch.nn.modules.linear import NonDynamicallyQuantizableLinear
+from torch.nn.utils import parametrize
 
 from dlk.nets.mlp import AttentionBlock, MLPNet, MLPNet_MultIn, MLPResNet, ResidualBlock
 
@@ -151,3 +153,33 @@ def test_mlpresnet_forward_with_attention_blocks() -> None:
     y = net(x)
 
     assert y.shape == (1, 10)
+
+
+def test_mlpresnet_spectral_norm_wraps_every_linear() -> None:
+    """Wrap input, embedding, block, and output linears with spectral norm."""
+    net = MLPResNet(
+        4,
+        10,
+        embedding_size=6,
+        input_layer_activation=nn.Tanh(),
+        residual_blocks_sizes=[(16, 32, 128, 16), (16, 16, 64, 8)],
+        attention_blocks_n_heads=[3, 0],
+        use_spectral_norm=True,
+    )
+
+    # skip the attention output projection inside `nn.MultiheadAttention`
+    linears = [
+        m
+        for m in net.modules()
+        if isinstance(m, nn.Linear)
+        and not isinstance(m, NonDynamicallyQuantizableLinear)
+    ]
+
+    assert len(linears) == 4 + 2 + 3 + 3 + 1  # outer, attention, blocks, skip
+    assert all(parametrize.is_parametrized(m, "weight") for m in linears)
+    parametrizations = net.output_layer.parametrizations
+    assert isinstance(parametrizations, nn.ModuleDict)
+    weight_orig = parametrizations["weight"].original
+    assert isinstance(weight_orig, torch.Tensor)
+    singular_values = torch.linalg.svdvals(weight_orig.detach())
+    torch.testing.assert_close(singular_values, torch.ones_like(singular_values))

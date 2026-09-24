@@ -1,6 +1,7 @@
 """Provide Wasserstein GAN loss and gradient-penalty utilities for critic training."""
 
 from collections.abc import Callable
+from contextlib import nullcontext
 
 import torch
 import torch.nn.functional as F
@@ -49,6 +50,7 @@ def gradient_norm_sq(
     x_data: torch.Tensor,
     y_data: torch.Tensor | None = None,
     device: torch.device | None = None,
+    eager: bool = False,
 ) -> torch.Tensor:
     """Compute the squared gradient norm used by Wasserstein penalties.
 
@@ -58,6 +60,9 @@ def gradient_norm_sq(
         x_data: Real data samples.
         y_data: Optional conditional inputs passed to the critic.
         device: Device used to sample interpolation coefficients.
+        eager: Whether to run the critic in eager mode, ignoring `torch.compile`.
+            Set to ``True`` for a compiled critic, because the penalty needs a
+            double backward, which compiled graphs do not support.
 
     Returns:
         Per-sample squared L2 norm of critic gradients.
@@ -67,22 +72,22 @@ def gradient_norm_sq(
     epsilon = epsilon.expand(-1, *other_dims)
     x_hat = epsilon * x_data + (1.0 - epsilon) * x_gen
     x_hat.requires_grad = True
-    if y_data is not None:
-        y_data.requires_grad = True
-        d_outputs_hat = d_net(x_hat, y_data)
-        grad_inputs = (x_hat, y_data)
-    else:
-        d_outputs_hat = d_net(x_hat)
-        grad_inputs = x_hat
+    stance = torch.compiler.set_stance("force_eager") if eager else nullcontext()
+    with stance:
+        if y_data is not None:
+            y_data.requires_grad = True
+            d_outputs_hat = d_net(x_hat, y_data)
+            grad_inputs = (x_hat, y_data)
+        else:
+            d_outputs_hat = d_net(x_hat)
+            grad_inputs = x_hat
     # compute gradient
     grad_outputs = torch.ones_like(d_outputs_hat, device=device)
     grad = torch.autograd.grad(
         outputs=d_outputs_hat,
         inputs=grad_inputs,
         grad_outputs=grad_outputs,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True,
+        create_graph=True,  # needed for the gradient wrt. parameters during training
     )
     # compute the squared l2-norm of the gradient
     grad_x = grad[0].view(batch_size, -1)
@@ -104,6 +109,7 @@ def gradient_penalty_lip(
     lip: float = 1.0,
     eps: float = 0.0,
     device: torch.device | None = None,
+    eager: bool = False,
     dlog: dict[str, float] | None = None,
 ) -> torch.Tensor:
     """Compute the regularization term for the critic network.
@@ -118,12 +124,15 @@ def gradient_penalty_lip(
         lip: Target Lipschitz constant.
         eps: Numerical margin added before thresholding.
         device: Device used to sample interpolation coefficients.
+        eager: Whether to run the critic in eager mode; see `gradient_norm_sq`.
         dlog: Optional dictionary for logging summary statistics.
 
     Returns:
         Scalar gradient penalty term.
     """
-    grad_norm_sq = gradient_norm_sq(d_net, x_gen, x_data, y_data=y_data, device=device)
+    grad_norm_sq = gradient_norm_sq(
+        d_net, x_gen, x_data, y_data=y_data, device=device, eager=eager
+    )
     grad_norm = torch.sqrt(grad_norm_sq.detach())  # only for logging purposes
     grad_penalty = F.relu(grad_norm_sq + eps - lip * lip).mean()
     # log to dictionary
@@ -139,6 +148,7 @@ def gradient_penalty_opt(
     x_data: torch.Tensor,
     y_data: torch.Tensor | None,
     device: torch.device | None = None,
+    eager: bool = False,
     dlog: dict[str, float] | None = None,
 ) -> torch.Tensor:
     """Compute the regularization term for the critic network.
@@ -152,12 +162,15 @@ def gradient_penalty_opt(
         x_data: Real data samples.
         y_data: Optional conditional inputs passed to the critic.
         device: Device used to sample interpolation coefficients.
+        eager: Whether to run the critic in eager mode; see `gradient_norm_sq`.
         dlog: Optional dictionary for logging summary statistics.
 
     Returns:
         Scalar gradient penalty term.
     """
-    grad_norm_sq = gradient_norm_sq(d_net, x_gen, x_data, y_data=y_data, device=device)
+    grad_norm_sq = gradient_norm_sq(
+        d_net, x_gen, x_data, y_data=y_data, device=device, eager=eager
+    )
     grad_norm = torch.sqrt(grad_norm_sq)
     grad_penalty = ((grad_norm - 1.0) ** 2).mean()
     # log to dictionary

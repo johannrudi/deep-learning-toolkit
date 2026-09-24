@@ -6,6 +6,7 @@ from typing import Any, cast
 
 import torch
 import torch.nn as nn
+from torch.nn.utils.parametrizations import spectral_norm
 
 from dlk.nets.utils import get_gain, set_init_parameters
 
@@ -323,6 +324,16 @@ class SelfAttentionLayer(nn.MultiheadAttention):
 class AttentionBlock(nn.Module):
     """Build a residual self-attention block with a feed-forward projection.
 
+    Spectral normalization wraps only the feed-forward and skip linears; the
+    self-attention itself is not Lipschitz-bounded (Kim et al., 2021).
+
+    References:
+        Miyato et al., "Spectral Normalization for Generative Adversarial
+        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
+
+        Kim et al., "The Lipschitz Constant of Self-Attention", ICML 2021.
+        https://arxiv.org/abs/2006.04710
+
     Args:
         embedding_size: Input embedding dimension.
         attention_layer_n_heads: Number of heads in self-attention.
@@ -374,14 +385,14 @@ class AttentionBlock(nn.Module):
         block["layer_1"] = nn.Linear(al_size, out_size, **block_kwargs)
         if use_spectral_norm:
             for i in range(2):
-                block[f"layer_{i}"] = nn.utils.spectral_norm(block[f"layer_{i}"])
+                block[f"layer_{i}"] = spectral_norm(block[f"layer_{i}"])
         self.attention_block = nn.Sequential(block)
 
         # create skip connection
         if in_size != out_size:
             self.skip_connection = nn.Linear(in_size, out_size, **block_kwargs)
             if use_spectral_norm:
-                self.skip_connection = nn.utils.spectral_norm(self.skip_connection)
+                self.skip_connection = spectral_norm(self.skip_connection)
         else:
             self.skip_connection = None
 
@@ -448,6 +459,10 @@ class AttentionBlock(nn.Module):
 class ResidualBlock(nn.Module):
     r"""Build a residual dense block with normalization, activation, and optional dropout.
 
+    References:
+        Miyato et al., "Spectral Normalization for Generative Adversarial
+        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
+
     Args:
         input_size: Length of flattened input vectors.
         output_size: Length of output vectors; defaults to ``input_size``.
@@ -487,6 +502,8 @@ class ResidualBlock(nn.Module):
         block = OrderedDict()
         block["layer_0"] = nn.Linear(in_size, nl_size, **layer_kwargs)
         block["normalization"] = nn.LayerNorm(nl_size)
+        # TODO:
+        # assert not use_spectral_norm, "layer norm must be deactivated"
         block["layer_1"] = nn.Linear(nl_size, al_size, **layer_kwargs)
         block["activation"] = activation
         if use_dropout:
@@ -494,14 +511,14 @@ class ResidualBlock(nn.Module):
         block["layer_2"] = nn.Linear(al_size, out_size, **layer_kwargs)
         if use_spectral_norm:
             for i in range(3):
-                block[f"layer_{i}"] = nn.utils.spectral_norm(block[f"layer_{i}"])
+                block[f"layer_{i}"] = spectral_norm(block[f"layer_{i}"])
         self.residual_block = nn.Sequential(block)
 
         # create skip connection
         if in_size != out_size:
             self.skip_connection = nn.Linear(in_size, out_size, **layer_kwargs)
             if use_spectral_norm:
-                self.skip_connection = nn.utils.spectral_norm(self.skip_connection)
+                self.skip_connection = spectral_norm(self.skip_connection)
         else:
             self.skip_connection = None
 
@@ -568,6 +585,17 @@ class ResidualBlock(nn.Module):
 class MLPResNet(nn.Module):
     r"""Build an MLP-based residual network with optional attention blocks.
 
+    With spectral normalization, every linear layer is 1-Lipschitz (Miyato et
+    al., 2018), but self-attention is not (Kim et al., 2021), so attention
+    blocks void a global Lipschitz bound.
+
+    References:
+        Miyato et al., "Spectral Normalization for Generative Adversarial
+        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
+
+        Kim et al., "The Lipschitz Constant of Self-Attention", ICML 2021.
+        https://arxiv.org/abs/2006.04710
+
     Args:
         input_size: Input feature size, or ``(input_size, input_layer_out_size)``.
         output_size: Length of output vectors.
@@ -582,7 +610,9 @@ class MLPResNet(nn.Module):
         residual_blocks_activation: Activation in residual block feed-forward layers.
         residual_blocks_kwargs: Optional keyword arguments for residual block linears.
         use_dropout: Dropout probability, or ``False`` to disable.
-        use_spectral_norm: Whether to wrap linear layers with spectral normalization.
+        use_spectral_norm: Whether to wrap every linear layer, including input,
+            embedding, and output layers, with spectral normalization; attention
+            projections inside ``nn.MultiheadAttention`` stay unwrapped.
         output_layer_activation: Optional activation after the output layer.
         output_layer_kwargs: Optional keyword arguments passed to output ``nn.Linear``.
     """
@@ -641,6 +671,8 @@ class MLPResNet(nn.Module):
             out_size_ = residual_blocks_sizes[0][0]
         self.output_size = output_size
         layer = nn.Linear(self.input_size, out_size_, **input_layer_kwargs)
+        if use_spectral_norm:
+            layer = spectral_norm(layer)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(
                 OrderedDict([("layer", layer), ("activation", input_layer_activation)])
@@ -651,6 +683,8 @@ class MLPResNet(nn.Module):
             self.input_embedding_layer = nn.Linear(
                 1, embedding_size, **input_layer_kwargs
             )
+            if use_spectral_norm:
+                self.input_embedding_layer = spectral_norm(self.input_embedding_layer)
         else:
             self.input_embedding_layer = None
 
@@ -693,10 +727,14 @@ class MLPResNet(nn.Module):
             self.output_embedding_layer = nn.Linear(
                 embedding_size, 1, **output_layer_kwargs
             )
+            if use_spectral_norm:
+                self.output_embedding_layer = spectral_norm(self.output_embedding_layer)
         else:
             self.output_embedding_layer = None
         in_size_ = block_out_size
         layer = nn.Linear(in_size_, output_size, **output_layer_kwargs)
+        if use_spectral_norm:
+            layer = spectral_norm(layer)
         if output_layer_activation is not None:
             self.output_layer = nn.Sequential(
                 OrderedDict([("layer", layer), ("activation", output_layer_activation)])
