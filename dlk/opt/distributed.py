@@ -21,7 +21,6 @@ initialized, so single-process runs need no code changes.
 """
 
 import contextlib
-import dataclasses
 import datetime
 import inspect
 import logging
@@ -29,6 +28,7 @@ import os
 import random
 import re
 from collections.abc import Generator
+from dataclasses import dataclass
 
 import torch
 import torch.distributed
@@ -46,7 +46,7 @@ _DDP_SUPPORTS_FORWARD_SYNC_BUFFERS = (
 _COMMUNICATOR_DEVICE_TYPES = ("cuda", "xpu")
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclass(frozen=True)
 class DistributedContext:
     """Describe the role of this process in a (possibly single-process) run.
 
