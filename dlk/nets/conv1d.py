@@ -231,7 +231,7 @@ class ConvResNet(nn.Module):
         # set default convolution parameters
         self.conv_resnet_params.setdefault("channels_mult", [8, 16, 32])
         self.conv_resnet_params.setdefault("kernels", [5, 5, 5])
-        self.conv_resnet_params.setdefault("use_dropout", False)
+        self.conv_resnet_params.setdefault("dropout", 0.0)
         self.conv_resnet_params.setdefault("enable_spectral_norm", False)
         self.conv_resnet_params.setdefault("block_kwargs", {})
         assert len(self.conv_resnet_params["channels_mult"]) == len(
@@ -257,7 +257,7 @@ class ConvResNet(nn.Module):
             scale_factor = None
 
         # set dropout probability
-        dropout = float(self.conv_resnet_params["use_dropout"])
+        dropout = float(self.conv_resnet_params["dropout"])
 
         # create input layer
         in_channels = self.input_channels
