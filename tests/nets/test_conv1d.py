@@ -46,7 +46,6 @@ def test_convresnet_forward_without_mlp_head() -> None:
         conv_resnet_params={
             "channels_mult": channels_mult,
             "kernels": [3, 3],
-            "activation": nn.ReLU(),
         },
     )
     x = torch.randn(batch_size, input_channels, input_length)
@@ -78,7 +77,6 @@ def test_convresnet_forward_with_mlp_head() -> None:
         conv_resnet_params={
             "channels_mult": channels_mult,
             "kernels": [3, 3],
-            "activation": nn.ReLU(),
         },
         mlp_resnet_params={
             "input_size": conv_out_size[1] * conv_out_size[2],
@@ -111,7 +109,6 @@ def test_convresnet_forward_with_hidden_inputs() -> None:
         conv_resnet_params={
             "channels_mult": channels_mult,
             "kernels": [3, 3],
-            "activation": nn.ReLU(),
         },
         mlp_resnet_params={
             "input_size": conv_out_size[1] * conv_out_size[2],
@@ -219,6 +216,90 @@ def test_multilevel_block_skip_matches_main_branch_length(
     )
     y = net(x)
     assert y.shape == (2, 16, expected_length)
+
+
+@pytest.mark.parametrize("input_length", [15, 16, 17])
+@pytest.mark.parametrize(
+    "kernel_size, conv_kwargs, scale_factor",
+    [
+        (3, None, None),
+        (4, None, None),
+        (3, None, 0.5),
+        (4, None, 0.5),
+        (5, {"dilation": 2}, 0.5),
+        (3, None, 1 / 3),
+        (3, {"padding": 0}, 0.5),
+        (3, {"padding": "valid"}, None),
+        (3, {"padding": (2,), "stride": 2}, None),
+        (3, None, 1.5),
+        (3, None, 2.0),
+    ],
+)
+def test_multilevel_block_resolve_output_length_matches_forward(
+    input_length: int,
+    kernel_size: int,
+    conv_kwargs: dict | None,
+    scale_factor: float | None,
+) -> None:
+    """Validate that ``resolve_output_length`` predicts the output length."""
+    net = UniversalMultiLevelBlock(
+        input_channels=4,
+        kernel_size=kernel_size,
+        scale_factor=scale_factor,
+        skip_connection=True,
+        conv_kwargs=conv_kwargs,
+    )
+    y = net(torch.randn(2, 4, input_length))
+    assert net.resolve_output_length(input_length) == y.size(2)
+
+
+def test_convresnet_input_length_sets_mlp_input_size() -> None:
+    """Validate that ``input_length`` derives the input size of the MLP head."""
+    input_length = 30
+    channels_mult = [4, 8]
+    mlp_resnet_params = {
+        "output_size": 10,
+        "residual_blocks_sizes": [(16, 16, 64, 16)],
+    }
+    net = ConvResNet(
+        input_channels=1,
+        conv_resnet_params={"channels_mult": channels_mult, "kernels": [3, 3]},
+        mlp_resnet_params=mlp_resnet_params,
+        input_length=input_length,
+    )
+    assert "input_size" not in mlp_resnet_params
+
+    y = net(torch.randn(4, 1, input_length))
+
+    assert y.shape == (4, 10)
+    assert net.conv_output_length == 8  # 30 -> 15 -> 8
+    assert net.resolve_input_shape() == (1, input_length)
+    assert net.mlp_resnet is not None
+    assert net.mlp_resnet.input_size == 8 * 8
+
+
+def test_convresnet_input_length_checks() -> None:
+    """Validate the checks of ``input_length`` against sizes and inputs."""
+    conv_resnet_params = {"channels_mult": [4, 8], "kernels": [3, 3]}
+    net = ConvResNet(1, conv_resnet_params=conv_resnet_params, input_length=64)
+    assert net.resolve_output_shape() == (8, 16)
+    with pytest.raises(AssertionError, match="input_length"):
+        net(torch.randn(2, 1, 63))
+    with pytest.raises(ValueError, match="flattened conv output"):
+        ConvResNet(
+            1,
+            conv_resnet_params=conv_resnet_params,
+            mlp_resnet_params={"input_size": 8 * 15, "output_size": 3},
+            input_length=64,
+        )
+    with pytest.raises(ValueError, match="input_length"):
+        ConvResNet(
+            1,
+            conv_resnet_params=conv_resnet_params,
+            mlp_resnet_params={"output_size": 3},
+        )
+    with pytest.raises(ValueError, match="must be positive"):
+        ConvResNet(1, conv_resnet_params=conv_resnet_params, input_length=0)
 
 
 def test_multilevel_block_scale_factor_and_stride() -> None:

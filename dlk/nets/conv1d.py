@@ -19,11 +19,6 @@ from dlk.nets.utils import (
     set_zero_parameters,
 )
 
-# TODO: old code, decide what to do
-# def _get_conv1d_size(in_length, kernel, stride=1, padding=0, dilation=1):
-#     return int((in_length + 2 * padding - dilation * (kernel - 1) - 1) / stride + 1)
-
-
 # --------------------------------------
 # Convolutional Nets
 # --------------------------------------
@@ -195,8 +190,14 @@ class ConvResNet(nn.Module):
     """
     Build a residual 1D convolutional network with an optional residual MLP head.
 
+    With ``input_length``, the network derives the sequence length after the
+    convolutional layers, and from it the ``input_size`` of the MLP head, which
+    ``mlp_resnet_params`` then may omit.
+
     Args:
         input_channels: Number of input channels.
+        input_length: Expected sequence length, or ``None`` to disable checks;
+          required by an MLP head without ``input_size``.
         conv_resnet_params: Configuration for convolutional residual layers.
         mlp_resnet_params: Parameters passed to :class:`dlk.nets.mlp.MLPResNet`.
         conv: Convolution layer factory used for 1D blocks.
@@ -207,13 +208,18 @@ class ConvResNet(nn.Module):
     def __init__(
         self,
         input_channels: int,
+        input_length: int | None = None,
         conv_resnet_params: dict[str, Any] | None = None,
         mlp_resnet_params: dict[str, Any] | None = None,
         conv: ModuleFactory = nn.Conv1d,
     ) -> None:
         super().__init__()
+        if input_length is not None and input_length <= 0:
+            raise ValueError(f"input length must be positive, got {input_length=}")
+
         # set from arguments
         self.input_channels = input_channels
+        self.input_length = input_length
         self.conv_resnet_params = dict(conv_resnet_params or {})
         self.mlp_resnet_params = dict(mlp_resnet_params or {})
 
@@ -226,8 +232,19 @@ class ConvResNet(nn.Module):
             self.conv_resnet_params["kernels"]
         )
 
+        # copy to avoid modifying input args
+        block_kwargs = dict(self.conv_resnet_params["block_kwargs"])
+        if "conv" in block_kwargs:
+            raise ValueError("pass `conv` to ConvResNet, not in block_kwargs")
+            # NOTE: this is likely temporary until a config dataclass is created
+        block_kwargs["conv"] = conv
+        block_kwargs.setdefault(
+            "normalization", partial(Normalization, num_groups=input_channels)
+        )
+        self.conv_resnet_params["block_kwargs"] = block_kwargs
+
         # set scale factor
-        conv_kwargs = self.conv_resnet_params["block_kwargs"].get("conv_kwargs") or {}
+        conv_kwargs = block_kwargs.get("conv_kwargs") or {}
         if "stride" not in conv_kwargs:
             scale_factor = 0.5  # downsample by factor 1/2
         else:
@@ -239,16 +256,10 @@ class ConvResNet(nn.Module):
         # create input layer
         in_channels = self.input_channels
         out_channels = self.conv_resnet_params["channels_mult"][0] * self.input_channels
-        kernel_size = self.conv_resnet_params["kernels"][0]
         self.input_layer: nn.Module = conv(
             in_channels, out_channels, 1, groups=in_channels
         )
         in_channels = out_channels
-
-        # set default normalization of blocks
-        self.conv_resnet_params["block_kwargs"].setdefault(
-            "normalization", partial(Normalization, num_groups=self.input_channels)
-        )
 
         # create convolutional residual blocks
         layers = list()
@@ -271,12 +282,37 @@ class ConvResNet(nn.Module):
         self.conv_resnet = nn.Sequential(*layers)
         self.conv_output_channels = in_channels
 
+        # resolve sequence length after convolutional layers
+        self.conv_output_length: int | None = None
+        if input_length is not None:
+            length = input_length
+            for layer in self.conv_resnet:
+                length = cast(LevelBlock, layer).resolve_output_length(length)
+            if length <= 0:
+                raise ValueError(
+                    f"convolutional layers reduce {input_length=} to {length=}"
+                )
+            self.conv_output_length = length
+
         # create dense layers using MLPResNet if parameters provided
         if self.mlp_resnet_params:
-            # check if input_size is provided in self.mlp_resnet_params
-            if "input_size" not in self.mlp_resnet_params:
+            # set or check input size of MLP head (flattened conv output size)
+            if self.conv_output_length is not None:
+                conv_output_size = self.conv_output_channels * self.conv_output_length
+                input_size = self.mlp_resnet_params.setdefault(
+                    "input_size", conv_output_size
+                )
+                if isinstance(input_size, Sequence):
+                    input_size = input_size[0]
+                if input_size != conv_output_size:
+                    raise ValueError(
+                        f"mlp_resnet_params has {input_size=}, but the flattened "
+                        f"conv output has size {conv_output_size} for {input_length=}"
+                    )
+            elif "input_size" not in self.mlp_resnet_params:
                 raise ValueError(
-                    "mlp_resnet_params must have 'input_size' (flattened conv output size)"
+                    "mlp_resnet_params must have 'input_size' (flattened conv output "
+                    "size), or ConvResNet must have 'input_length'"
                 )
             self.mlp_resnet = MLPResNet(**self.mlp_resnet_params)
             ###DEV
@@ -325,7 +361,12 @@ class ConvResNet(nn.Module):
         Returns:
             Output tensor from convolutional stack or residual MLP head.
         """
-        assert x.size(1) == self.input_channels, f"{x.size(1)=}, {self.input_channels=}"
+        assert (
+            x.size(1) == self.input_channels
+        ), f"expected input channels {self.input_channels}, got {x.size(1)}"
+        assert (
+            self.input_length is None or x.size(2) == self.input_length
+        ), f"expected input length {self.input_length}, got {x.size(2)}"
 
         # apply input layer
         h = self.input_layer(x)
@@ -362,10 +403,10 @@ class ConvResNet(nn.Module):
         """Return the shape of one input sample, excluding the batch dimension.
 
         Returns:
-            The 2D shape ``(input_channels, None)``; the network constrains no
-            sequence length.
+            The 2D shape ``(input_channels, input_length)``; the length entry is
+            ``None`` when ``input_length`` disables the length check.
         """
-        return (self.input_channels, None)
+        return (self.input_channels, self.input_length)
 
     def resolve_output_shape(self) -> tuple[int | None, ...]:
         """Return the shape of one output sample, excluding the batch dimension.
@@ -375,10 +416,11 @@ class ConvResNet(nn.Module):
 
         Returns:
             The output shape of the residual MLP head, or the 2D shape
-            ``(conv_output_channels, None)`` without that head.
+            ``(conv_output_channels, conv_output_length)`` without that head;
+            the length entry is ``None`` without ``input_length``.
         """
         if self.mlp_resnet is None:
-            return (self.conv_output_channels, None)
+            return (self.conv_output_channels, self.conv_output_length)
         return self.mlp_resnet.resolve_output_shape()
 
     def init_parameters(self) -> None:
@@ -709,6 +751,7 @@ class UniversalMultiLevelBlock(nn.Module):
         drop_path: float = 0.0,
         interp_mode: str = "nearest-exact",
         skip_interp_mode: str = "area",
+        enable_spectral_norm: bool = False,  # TODO
         conv: ModuleFactory = nn.Conv1d,
         conv_kwargs: dict[str, Any] | None = None,
     ) -> None:
@@ -721,6 +764,7 @@ class UniversalMultiLevelBlock(nn.Module):
         # set attributes from arguments
         self.input_channels = input_channels
         self.output_channels = output_channels or input_channels
+        self.kernel_size = kernel_size
         self.skip_scale = skip_scale
         self.drop_path = drop_path
         self.interp_mode = interp_mode
@@ -807,7 +851,7 @@ class UniversalMultiLevelBlock(nn.Module):
         self.skip_connection: nn.Module | None
         if not skip_connection:
             self.skip_connection = None
-        elif input_channels == self.output_channels:
+        elif self.input_channels == self.output_channels:
             self.skip_connection = nn.Identity()
         else:
             self.skip_connection = conv(input_channels, self.output_channels, 1)
@@ -858,6 +902,42 @@ class UniversalMultiLevelBlock(nn.Module):
             y = self.skip_scale * (self.skip_connection(h) + y)
         return y
 
+    def resolve_output_length(self, input_length: int) -> int:
+        """Return the sequence length of the output for an input sequence length.
+
+        Follows `forward` without running it: upsampling by interpolation, then
+        the length arithmetic of ``nn.Conv1d`` for ``conv_k``. The skip branch
+        is resized to the main branch and does not affect the length.
+
+        Args:
+            input_length: Sequence length of the input tensors.
+
+        Returns:
+            Sequence length of the output tensor.
+        """
+
+        def first(value: Any) -> Any:
+            # unpack a one-element tuple, as `nn.Conv1d` accepts `(n,)` for `n`
+            return value[0] if isinstance(value, (tuple, list)) else value
+
+        # scale up as `interpolate` does
+        length = input_length
+        if 1.0 < self.scale_factor:
+            length = math.floor(length * self.scale_factor)
+
+        # apply convolution
+        padding = self.conv_kwargs["padding"]
+        if "same" == padding:
+            return length
+        if "valid" == padding:
+            padding = 0
+        padding = first(padding)
+        dilation = first(self.conv_kwargs.get("dilation", 1))
+        stride = self.conv_kwargs["stride"]
+        return (
+            length + 2 * padding - dilation * (self.kernel_size - 1) - 1
+        ) // stride + 1
+
     def init_parameters(self) -> None:
         """Initialize trainable parameters for all active convolutional layers.
 
@@ -869,7 +949,7 @@ class UniversalMultiLevelBlock(nn.Module):
         """
         # initialize main branch
         children = list(self.block.named_children())
-        convs = []
+        init_modules = []
         for index, (name, module) in enumerate(children):
             if not name.startswith("conv_"):
                 continue
@@ -879,13 +959,13 @@ class UniversalMultiLevelBlock(nn.Module):
             else:
                 gain = get_gain(None, default="conv1d")
             set_init_parameters(module, gain)
-            convs.append(module)
+            init_modules.append(module)
 
         # initialize skip branch
         if self.skip_connection is None:
             return
-        if not parametrize.is_parametrized(convs[-1]):
-            set_zero_parameters(convs[-1])
+        if not parametrize.is_parametrized(init_modules[-1]):
+            set_zero_parameters(init_modules[-1])
         if not isinstance(self.skip_connection, nn.Identity):
             set_init_parameters(self.skip_connection)
 
