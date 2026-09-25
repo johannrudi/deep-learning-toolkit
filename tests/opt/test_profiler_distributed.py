@@ -79,6 +79,7 @@ def test_single_process_profiling_keeps_unsuffixed_filenames(
         (net, dataloader, optimizer, torch.nn.MSELoss()),
         {},
         trace_dir=str(tmp_path),
+        repeat=1,
     )
 
     tables = list(tmp_path.glob("table_step_*.txt"))

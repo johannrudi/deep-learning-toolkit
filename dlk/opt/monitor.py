@@ -2,6 +2,7 @@
 end-of-run summary statistics.
 """
 
+import logging
 import math
 from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any, TypeAlias
@@ -9,6 +10,7 @@ from typing import Any, TypeAlias
 import torch
 
 from dlk.opt import distributed
+from dlk.opt.utils import format_seconds
 
 TrainLog: TypeAlias = dict[str, Any]
 
@@ -346,6 +348,58 @@ def epoch_finalize(
                     summary["samples_per_sec"] = summary_stats(sps_pool, device=device)
 
     dlog["summary"] = summary
+
+
+def epoch_log_summary(
+    dlog: MutableMapping[str, Any],
+    n_epochs: int,
+    logger: logging.Logger,
+) -> None:
+    logger.info(f"total wall-time {format_seconds(dlog['time_train'])}")
+
+    if n_epochs <= 1:
+        return
+
+    summary = dlog["summary"]
+    first_epoch = f"epoch 0"
+    rest_epochs = f"epochs 1..{n_epochs - 1}"
+    note = " (mean of per-rank medians)" if distributed.is_distributed() else ""
+
+    # log for the first epoch
+    first = summary["time_epoch_first"]
+    logger.info(
+        f"time ({first_epoch}): "
+        f"mean {format_seconds(first['mean'])}, std {format_seconds(first['std'])}"
+    )
+
+    # log for all epochs after the first
+    rest = summary["time_epoch_rest"]
+    logger.info(
+        f"time/epoch ({rest_epochs}): "
+        f"mean {format_seconds(rest['mean'])}, std {format_seconds(rest['std'])}, "
+        f"median {format_seconds(rest['median'])}{note}, "
+        f"min {format_seconds(rest['min'])}, max {format_seconds(rest['max'])}"
+    )
+
+    # log time per step
+    if "time_step" in summary:
+        step = summary["time_step"]
+        logger.info(
+            f"time/step ({rest_epochs}): "
+            f"mean {format_seconds(step['mean'])}, std {format_seconds(step['std'])}, "
+            f"median {format_seconds(step['median'])}{note}, "
+            f"min {format_seconds(step['min'])}, max {format_seconds(step['max'])}"
+        )
+
+    # log samples per second
+    if "samples_per_sec" in summary:
+        sps = summary["samples_per_sec"]
+        logger.info(
+            f"samples/sec ({rest_epochs}): "
+            f"mean {sps['mean']:g}, std {sps['std']:g}, "
+            f"median {sps['median']:g}{note}, "
+            f"min {sps['min']:g}, max {sps['max']:g}"
+        )
 
 
 # --------------------------------------

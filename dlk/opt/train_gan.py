@@ -328,7 +328,6 @@ def train_epochs(
         global_batch_size=global_batch_size,
         device=device,
     )
-    summary = epoch_dlog["summary"]
 
     # print statistics; sample counts are global across all processes
     n_steps = n_epochs * len(dataloader)
@@ -336,49 +335,7 @@ def train_epochs(
     logger.info(
         f"number of epochs {n_epochs}, optimizer steps {n_steps}, samples processed {n_samples}"
     )
-
-    if n_epochs > 1:
-        logger.info(f"total wall-time {format_seconds(time_train)}")
-
-        first_epoch = f"epoch 0"
-        rest_epochs = f"epochs 1..{n_epochs - 1}"
-        note = " (mean of per-rank medians)" if distributed.is_distributed() else ""
-
-        first = summary["time_epoch_first"]
-        logger.info(
-            f"time ({first_epoch}): "
-            f"mean {format_seconds(first['mean'])}, std {format_seconds(first['std'])}"
-        )
-
-        rest = summary["time_epoch_rest"]
-        logger.info(
-            f"time/epoch ({rest_epochs}): "
-            f"mean {format_seconds(rest['mean'])}, std {format_seconds(rest['std'])}, "
-            f"median {format_seconds(rest['median'])}{note}, "
-            f"min {format_seconds(rest['min'])}, max {format_seconds(rest['max'])}"
-        )
-
-        if "time_step" in summary:
-            step = summary["time_step"]
-            logger.info(
-                f"time/step ({rest_epochs}): "
-                f"mean {format_seconds(step['mean'])}, std {format_seconds(step['std'])}, "
-                f"median {format_seconds(step['median'])}{note}, "
-                f"min {format_seconds(step['min'])}, max {format_seconds(step['max'])}"
-            )
-
-        if "samples_per_sec" in summary:
-            sps = summary["samples_per_sec"]
-            logger.info(
-                f"samples/sec ({rest_epochs}): "
-                f"mean {sps['mean']:g}, std {sps['std']:g}, "
-                f"median {sps['median']:g}{note}, "
-                f"min {sps['min']:g}, max {sps['max']:g}"
-            )
-    else:
-        logger.info(
-            f"total wall-time {format_seconds(time_train)} (only 1 epoch trained)"
-        )
+    monitor.epoch_log_summary(epoch_dlog, n_epochs, logger)
 
     # return log
     return epoch_dlog
@@ -443,18 +400,9 @@ def _train_step_discriminator(
 
     # evaluate the regularizer in full precision
     with record_function(RecordFunctionName.D_REGULARIZE):
-        # NOTE: gradient penalties double-backward through `d_net` (`create_graph=True`),
-        #       which autocast does not support reliably
         d_reg_dlog: dict[str, float] = {}
         if d_reg_fn is not None:
-            random_idx = int(torch.randint(0, x_gen.size(0), size=()).item())
-            d_reg = d_reg_fn(
-                d_net,
-                x_gen[random_idx],
-                x_data,
-                y_data,
-                dlog=d_reg_dlog,
-            )
+            d_reg = d_reg_fn(d_net, x_gen, x_data, y_data, dlog=d_reg_dlog)
         else:
             d_reg = d_loss.new_tensor(0.0)
 
