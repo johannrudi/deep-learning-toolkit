@@ -126,7 +126,7 @@ def _resolve_layer(module: Any, *, name: str = "module") -> WeightedLayer:
     return cast(WeightedLayer, module)
 
 
-def _get_spectral_norm(layer: nn.Module) -> tuple[_SpectralNorm, torch.Tensor] | None:
+def get_spectral_norm(layer: nn.Module) -> tuple[_SpectralNorm, torch.Tensor] | None:
     """Return the spectral norm of `layer.weight` and the weight it normalizes.
 
     Args:
@@ -187,7 +187,7 @@ def set_init_parameters(
     Returns:
         None.
     """
-    spectral_norm_and_weight = _get_spectral_norm(layer)
+    spectral_norm_and_weight = get_spectral_norm(layer)
     layer = _resolve_layer(layer)
     if spectral_norm_and_weight is None:
         nn.init.xavier_uniform_(layer.weight, gain=gain)

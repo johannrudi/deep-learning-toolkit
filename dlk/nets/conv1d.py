@@ -9,12 +9,14 @@ from typing import Any, cast
 import torch
 import torch.nn as nn
 from torch.nn.utils import parametrize
+from torch.nn.utils.parametrizations import spectral_norm
 
 from dlk.nets.mlp import MLPResNet
 from dlk.nets.utils import (
     ModuleFactory,
     NormalizationFactory,
     get_gain,
+    get_spectral_norm,
     set_init_parameters,
     set_zero_parameters,
 )
@@ -198,11 +200,14 @@ class ConvResNet(nn.Module):
         input_channels: Number of input channels.
         input_length: Expected sequence length, or ``None`` to disable checks;
           required by an MLP head without ``input_size``.
-        conv_resnet_params: Configuration for convolutional residual layers.
+        conv_resnet_params: Configuration for convolutional residual layers; its
+          ``enable_spectral_norm`` key applies to all convolutions, but not to
+          the MLP head, which has its own flag.
         mlp_resnet_params: Parameters passed to :class:`dlk.nets.mlp.MLPResNet`.
         conv: Convolution layer factory used for 1D blocks.
 
     Implementation plan: docs/features/2025.005__ConvResNet__1-plan.md
+    Spectral normalization: docs/features/2026.007__conv_spectral_norm__1-plan.md
     """
 
     def __init__(
@@ -227,6 +232,7 @@ class ConvResNet(nn.Module):
         self.conv_resnet_params.setdefault("channels_mult", [8, 16, 32])
         self.conv_resnet_params.setdefault("kernels", [5, 5, 5])
         self.conv_resnet_params.setdefault("use_dropout", False)
+        self.conv_resnet_params.setdefault("enable_spectral_norm", False)
         self.conv_resnet_params.setdefault("block_kwargs", {})
         assert len(self.conv_resnet_params["channels_mult"]) == len(
             self.conv_resnet_params["kernels"]
@@ -259,6 +265,8 @@ class ConvResNet(nn.Module):
         self.input_layer: nn.Module = conv(
             in_channels, out_channels, 1, groups=in_channels
         )
+        if self.conv_resnet_params["enable_spectral_norm"]:
+            self.input_layer = _spectral_norm(self.input_layer)
         in_channels = out_channels
 
         # create convolutional residual blocks
@@ -275,6 +283,9 @@ class ConvResNet(nn.Module):
                     output_channels=out_channels,
                     dropout=dropout,
                     scale_factor=scale_factor,
+                    enable_spectral_norm=self.conv_resnet_params[
+                        "enable_spectral_norm"
+                    ],
                     **self.conv_resnet_params["block_kwargs"],
                 )
             )
@@ -667,6 +678,20 @@ class UNetResBlock(nn.Module):
 # --------------------------------------
 
 
+def _spectral_norm(layer: nn.Module) -> nn.Module:
+    """Wrap a layer with `parametrizations.spectral_norm`, unless already wrapped.
+
+    Args:
+        layer: Layer whose weight should be spectrally normalized.
+
+    Returns:
+        The wrapped layer, or `layer` itself if it is already wrapped.
+    """
+    if get_spectral_norm(layer) is not None:
+        return layer
+    return spectral_norm(layer)
+
+
 def Normalization(num_channels: int, num_groups: int = 1) -> nn.GroupNorm:
     """Build a group normalization layer for 1D feature maps.
 
@@ -697,6 +722,11 @@ class UniversalMultiLevelBlock(nn.Module):
     downsamples through the stride of ``conv_k``, resizing the skip branch to
     match.
 
+    Spectral normalization alone does not bound the Lipschitz constant of the
+    block, because normalization layers have no bound and ``conv_k`` exceeds its
+    normalized kernel matrix by up to a factor ``sqrt(kernel_size)``; see
+    Section 1.1 of docs/features/2026.007__conv_spectral_norm__1-plan.md.
+
     Args:
         input_channels: Channels in input tensors; `forward` concatenates
           several input tensors along the channels.
@@ -725,6 +755,8 @@ class UniversalMultiLevelBlock(nn.Module):
         interp_mode: Interpolation mode for upsampling.
         skip_interp_mode: Interpolation mode that resizes the skip branch to the
           length of the main branch; ``area`` averages when downsampling.
+        enable_spectral_norm: If ``True``, wrap every convolution of the block
+          with `parametrizations.spectral_norm`.
         conv: Convolution layer factory used in the block.
         conv_kwargs: Optional keyword arguments for ``conv_k``; the 1x1
           convolutions do not receive them. Defaults to replicate padding that
@@ -733,6 +765,9 @@ class UniversalMultiLevelBlock(nn.Module):
     References:
         Huang et al., "Deep Networks with Stochastic Depth", ECCV 2016.
         https://arxiv.org/abs/1603.09382
+
+        Miyato et al., "Spectral Normalization for Generative Adversarial
+        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
     """
 
     def __init__(
@@ -751,7 +786,7 @@ class UniversalMultiLevelBlock(nn.Module):
         drop_path: float = 0.0,
         interp_mode: str = "nearest-exact",
         skip_interp_mode: str = "area",
-        enable_spectral_norm: bool = False,  # TODO
+        enable_spectral_norm: bool = False,
         conv: ModuleFactory = nn.Conv1d,
         conv_kwargs: dict[str, Any] | None = None,
     ) -> None:
@@ -804,6 +839,10 @@ class UniversalMultiLevelBlock(nn.Module):
             "padding", "same" if 1 == stride else dilation * (kernel_size - 1) // 2
         )
 
+        # NOTE: the rest of this constructor, `forward`'s skip branch, and
+        # `init_parameters` are mirrored by `dlk.nets.mlp.ResidualBlock` with
+        # linear layers in place of convolutions; keep both in sync
+
         # resolve normalization
         if normalization is False:
             if normalization_channels is not None:
@@ -845,6 +884,10 @@ class UniversalMultiLevelBlock(nn.Module):
             block["dropout"] = nn.Dropout(dropout)
         if activation is not False:
             block["conv_2"] = conv(channels, self.output_channels, 1)
+        if enable_spectral_norm:
+            for name in list(block):
+                if name.startswith("conv_"):
+                    block[name] = _spectral_norm(block[name])
         self.block = nn.Sequential(block)
 
         # create skip branch
@@ -855,6 +898,8 @@ class UniversalMultiLevelBlock(nn.Module):
             self.skip_connection = nn.Identity()
         else:
             self.skip_connection = conv(input_channels, self.output_channels, 1)
+            if enable_spectral_norm:
+                self.skip_connection = _spectral_norm(self.skip_connection)
 
         # initialize parameters
         self.init_parameters()
