@@ -1,7 +1,16 @@
+from typing import cast
+
+import pytest
 import torch
 import torch.nn as nn
 
-from dlk.nets.conv1d import ConvNet, ConvResNet, MultiLevelBlock
+from dlk.nets.conv1d import (
+    ChannelLayerNorm,
+    ConvNet,
+    ConvNeXtBlock,
+    ConvResNet,
+    UniversalMultiLevelBlock,
+)
 
 
 def test_convnet_forward_output_shape() -> None:
@@ -122,42 +131,41 @@ def test_convresnet_forward_with_hidden_inputs() -> None:
 
 
 def test_multilevel_block_forward_shapes_without_scaling() -> None:
-    """Validate ``MultiLevelBlock`` shapes for level blocks without resizing."""
+    """Validate ``UniversalMultiLevelBlock`` shapes for level blocks without resizing."""
     batch_size = 4
     input_channels = 16
     input_length = 64
     x = torch.randn(batch_size, input_channels, input_length)
 
-    net = MultiLevelBlock(input_channels=input_channels, kernel_size=3)
+    net = UniversalMultiLevelBlock(input_channels=input_channels, kernel_size=3)
     y = net(x)
     assert y.shape == (batch_size, input_channels, input_length)
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
         normalization=False,
-        normalization_layer_channels=False,
-        activation_layer_channels=False,
+        activation=False,
     )
     y = net(x)
     assert y.shape == (batch_size, input_channels, input_length)
 
     output_channels = 32
-    normalization_layer_channels = 8
-    activation_layer_channels = 64
-    net = MultiLevelBlock(
+    normalization_channels = 8
+    activation_channels = 64
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
-        normalization=nn.GroupNorm(2, normalization_layer_channels),
-        normalization_layer_channels=normalization_layer_channels,
+        normalization=lambda num_channels: nn.GroupNorm(2, num_channels),
+        normalization_channels=normalization_channels,
         activation=nn.SiLU(),
-        activation_layer_channels=activation_layer_channels,
+        activation_channels=activation_channels,
         output_channels=output_channels,
     )
     y = net(x)
     assert y.shape == (batch_size, output_channels, input_length)
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
         output_channels=output_channels,
@@ -166,36 +174,133 @@ def test_multilevel_block_forward_shapes_without_scaling() -> None:
     y = net(x)
     assert y.shape == (batch_size, output_channels, input_length)
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
-        dropout=nn.Dropout(0.1, inplace=False),
+        dropout=0.1,
         skip_connection=True,
     )
     y = net(x)
     assert y.shape == (batch_size, input_channels, input_length)
 
+    # concatenate two inputs along the channels
+    net = UniversalMultiLevelBlock(input_channels=input_channels, kernel_size=3)
+    y = net(x[:, :4], x[:, 4:])
+    assert y.shape == (batch_size, input_channels, input_length)
+
+
+@pytest.mark.parametrize(
+    "kernel_size, conv_kwargs, scale_factor, expected_length",
+    [
+        (3, {"padding": 0}, None, 62),
+        (3, {"padding": 0}, 0.5, 31),
+        (4, None, None, 64),
+        (4, None, 0.5, 32),
+        (3, {"dilation": 2}, 0.5, 32),
+        (3, None, 1 / 3, 22),
+        (3, None, 1.5, 96),
+    ],
+)
+def test_multilevel_block_skip_matches_main_branch_length(
+    kernel_size: int,
+    conv_kwargs: dict | None,
+    scale_factor: float | None,
+    expected_length: int,
+) -> None:
+    """Validate that the skip branch follows the length of the main branch."""
+    x = torch.randn(2, 8, 64)
+    net = UniversalMultiLevelBlock(
+        input_channels=8,
+        kernel_size=kernel_size,
+        output_channels=16,
+        scale_factor=scale_factor,
+        skip_connection=True,
+        conv_kwargs=conv_kwargs,
+    )
+    y = net(x)
+    assert y.shape == (2, 16, expected_length)
+
+
+def test_multilevel_block_scale_factor_and_stride() -> None:
+    """Validate the coupling of ``scale_factor`` and the stride."""
+    net = UniversalMultiLevelBlock(
+        input_channels=8, kernel_size=3, scale_factor=0.5, conv_kwargs={"stride": 2}
+    )
+    assert net.scale_factor == 0.5
+    net = UniversalMultiLevelBlock(
+        input_channels=8, kernel_size=3, conv_kwargs={"stride": 4}
+    )
+    assert net.scale_factor == 0.25
+    with pytest.raises(ValueError, match="requires stride"):
+        UniversalMultiLevelBlock(
+            input_channels=8, kernel_size=3, scale_factor=0.5, conv_kwargs={"stride": 3}
+        )
+    with pytest.raises(ValueError, match="inverse of an integer"):
+        UniversalMultiLevelBlock(input_channels=8, kernel_size=3, scale_factor=0.3)
+    with pytest.raises(ValueError, match="must be positive"):
+        UniversalMultiLevelBlock(input_channels=8, kernel_size=3, scale_factor=0.0)
+
+
+def test_multilevel_block_starts_as_skip_branch() -> None:
+    """Validate that the main branch starts at zero with a skip branch."""
+    x = torch.randn(2, 8, 64)
+    net = UniversalMultiLevelBlock(
+        input_channels=8, kernel_size=3, skip_connection=True, skip_scale=0.5
+    )
+    torch.testing.assert_close(net(x), 0.5 * x)
+
+    net = UniversalMultiLevelBlock(
+        input_channels=8, kernel_size=3, activation=False, skip_connection=True
+    )
+    torch.testing.assert_close(net(x), x)
+
+
+def test_multilevel_block_rejects_channels_without_operation() -> None:
+    """Validate that channels of a disabled operation raise an error."""
+    with pytest.raises(ValueError, match="normalization_channels"):
+        UniversalMultiLevelBlock(
+            input_channels=16,
+            kernel_size=3,
+            normalization=False,
+            normalization_channels=8,
+        )
+    with pytest.raises(ValueError, match="activation_channels"):
+        UniversalMultiLevelBlock(
+            input_channels=16,
+            kernel_size=3,
+            activation=False,
+            activation_channels=64,
+        )
+
 
 def test_multilevel_block_forward_shapes_with_downsampling() -> None:
-    """Validate ``MultiLevelBlock`` shapes when downsampling is enabled."""
+    """Validate ``UniversalMultiLevelBlock`` shapes when downsampling is enabled."""
     batch_size = 4
     input_channels = 16
     input_length = 64
     expected_out_size = (batch_size, input_channels, input_length // 2)
     x = torch.randn(batch_size, input_channels, input_length)
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
         scale_factor=0.5,
         normalization=False,
-        normalization_layer_channels=False,
-        activation_layer_channels=False,
+        activation=False,
     )
     y = net(x)
     assert y.shape == expected_out_size
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
+        input_channels=input_channels,
+        kernel_size=3,
+        skip_connection=True,
+        conv_kwargs={"stride": 2},
+    )
+    y = net(x)
+    assert y.shape == expected_out_size
+
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
         scale_factor=0.5,
@@ -206,25 +311,24 @@ def test_multilevel_block_forward_shapes_with_downsampling() -> None:
 
 
 def test_multilevel_block_forward_shapes_with_upsampling() -> None:
-    """Validate ``MultiLevelBlock`` shapes when upsampling is enabled."""
+    """Validate ``UniversalMultiLevelBlock`` shapes when upsampling is enabled."""
     batch_size = 4
     input_channels = 16
     input_length = 64
     expected_out_size = (batch_size, input_channels, input_length * 2)
     x = torch.randn(batch_size, input_channels, input_length)
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
         scale_factor=2.0,
         normalization=False,
-        normalization_layer_channels=False,
-        activation_layer_channels=False,
+        activation=False,
     )
     y = net(x)
     assert y.shape == expected_out_size
 
-    net = MultiLevelBlock(
+    net = UniversalMultiLevelBlock(
         input_channels=input_channels,
         kernel_size=3,
         scale_factor=2.0,
@@ -232,3 +336,60 @@ def test_multilevel_block_forward_shapes_with_upsampling() -> None:
     )
     y = net(x)
     assert y.shape == expected_out_size
+
+
+def test_channel_layer_norm_normalizes_each_position_over_channels() -> None:
+    """Validate ``ChannelLayerNorm`` against statistics over the channels."""
+    x = torch.randn(4, 8, 32)
+    norm = ChannelLayerNorm(8)
+    y = norm(x)
+    mean = x.mean(dim=1, keepdim=True)
+    var = x.var(dim=1, unbiased=False, keepdim=True)
+    torch.testing.assert_close(y, (x - mean) / torch.sqrt(var + norm.eps))
+
+
+@pytest.mark.filterwarnings("ignore:Using padding='same' with even kernel:UserWarning")
+@pytest.mark.parametrize("kernel_size", [7, 4])
+def test_convnext_block_keeps_input_shape(kernel_size: int) -> None:
+    """Validate that ``ConvNeXtBlock`` keeps channels and length."""
+    x = torch.randn(4, 16, 63)
+    net = ConvNeXtBlock(input_channels=16, kernel_size=kernel_size)
+    y = net(x)
+    assert y.shape == x.shape
+
+
+def test_convnext_block_layers() -> None:
+    """Validate the layers of ``ConvNeXtBlock`` and that it starts as the identity."""
+    x = torch.randn(4, 16, 64)
+    net = ConvNeXtBlock(input_channels=16, conv_kwargs={"padding_mode": "replicate"})
+    conv_0 = cast(nn.Conv1d, net.block.conv_0)
+    assert (conv_0.groups, conv_0.padding_mode) == (16, "replicate")
+    assert isinstance(net.block.normalization, ChannelLayerNorm)
+    assert isinstance(net.block.activation, nn.GELU)
+    assert cast(nn.Conv1d, net.block.conv_1).out_channels == 64
+    assert isinstance(net.skip_connection, nn.Identity)
+    torch.testing.assert_close(net(x), x)
+
+
+def test_multilevel_block_drop_path() -> None:
+    """Validate that drop path keeps or drops the main branch per sample."""
+    torch.manual_seed(0)
+    x = torch.randn(64, 16, 32)
+    net = ConvNeXtBlock(input_channels=16, drop_path=0.5)
+    nn.init.normal_(cast(nn.Conv1d, net.block.conv_2).weight)
+
+    # evaluate without drop path
+    net.eval()
+    branch = net(x) - x
+
+    # drop path either removes or rescales the branch of each sample
+    net.train()
+    y = net(x)
+    dropped = torch.isclose(y, x).flatten(1).all(dim=1)
+    assert 0 < dropped.sum() < x.size(0)
+    torch.testing.assert_close(y[~dropped], x[~dropped] + 2.0 * branch[~dropped])
+
+    with pytest.raises(ValueError, match="drop_path"):
+        ConvNeXtBlock(input_channels=16, drop_path=1.0)
+    with pytest.raises(ValueError, match="requires skip_connection"):
+        UniversalMultiLevelBlock(input_channels=16, kernel_size=3, drop_path=0.1)

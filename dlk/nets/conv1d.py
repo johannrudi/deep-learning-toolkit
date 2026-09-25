@@ -1,13 +1,14 @@
 """1D convolutional network architectures and reusable blocks."""
 
-import logging
 import math
 from collections import OrderedDict
 from collections.abc import Sequence
+from functools import partial
 from typing import Any, cast
 
 import torch
 import torch.nn as nn
+from torch.nn.utils import parametrize
 
 from dlk.nets.mlp import MLPResNet
 from dlk.nets.utils import (
@@ -198,10 +199,9 @@ class ConvResNet(nn.Module):
         input_channels: Number of input channels.
         conv_resnet_params: Configuration for convolutional residual layers.
         mlp_resnet_params: Parameters passed to :class:`dlk.nets.mlp.MLPResNet`.
-        with_Conv: Convolution layer factory used for 1D blocks.
+        conv: Convolution layer factory used for 1D blocks.
 
-    Specs:
-    - doc/specify/2025-10-27a.md
+    Implementation plan: docs/features/2025.005__ConvResNet__1-plan.md
     """
 
     def __init__(
@@ -209,7 +209,7 @@ class ConvResNet(nn.Module):
         input_channels: int,
         conv_resnet_params: dict[str, Any] | None = None,
         mlp_resnet_params: dict[str, Any] | None = None,
-        with_Conv: ModuleFactory = nn.Conv1d,
+        conv: ModuleFactory = nn.Conv1d,
     ) -> None:
         super().__init__()
         # set from arguments
@@ -220,70 +220,55 @@ class ConvResNet(nn.Module):
         # set default convolution parameters
         self.conv_resnet_params.setdefault("channels_mult", [8, 16, 32])
         self.conv_resnet_params.setdefault("kernels", [5, 5, 5])
-        self.conv_resnet_params.setdefault("activation", nn.ReLU())
         self.conv_resnet_params.setdefault("use_dropout", False)
-        self.conv_resnet_params.setdefault("mlb_kwargs", {})
+        self.conv_resnet_params.setdefault("block_kwargs", {})
         assert len(self.conv_resnet_params["channels_mult"]) == len(
             self.conv_resnet_params["kernels"]
         )
 
         # set scale factor
-        if "stride" not in self.conv_resnet_params["mlb_kwargs"]:
+        conv_kwargs = self.conv_resnet_params["block_kwargs"].get("conv_kwargs") or {}
+        if "stride" not in conv_kwargs:
             scale_factor = 0.5  # downsample by factor 1/2
         else:
             scale_factor = None
 
-        # set activation
-        activation = self.conv_resnet_params["activation"]
-
-        # set up dropout
-        use_dropout = self.conv_resnet_params["use_dropout"]
-        if use_dropout:
-            dropout = nn.Dropout(use_dropout)
-        else:
-            dropout = None
+        # set dropout probability
+        dropout = float(self.conv_resnet_params["use_dropout"])
 
         # create input layer
         in_channels = self.input_channels
         out_channels = self.conv_resnet_params["channels_mult"][0] * self.input_channels
         kernel_size = self.conv_resnet_params["kernels"][0]
-        self.input_layer: nn.Module = with_Conv(
+        self.input_layer: nn.Module = conv(
             in_channels, out_channels, 1, groups=in_channels
         )
         in_channels = out_channels
 
-        # create convolutional residual blocks using MultiLevelBlock
+        # set default normalization of blocks
+        self.conv_resnet_params["block_kwargs"].setdefault(
+            "normalization", partial(Normalization, num_groups=self.input_channels)
+        )
+
+        # create convolutional residual blocks
         layers = list()
         for mult, kernel_size in zip(
             self.conv_resnet_params["channels_mult"], self.conv_resnet_params["kernels"]
         ):
-            # set defaul normalization, normalization channels, and activation channels
-            # fmt: off
-            if "normalization" not in self.conv_resnet_params["mlb_kwargs"]:
-                self.conv_resnet_params["mlb_kwargs"]["normalization"] = nn.GroupNorm(
-                    self.input_channels, in_channels
-                )
-            if ( "normalization_layer_channels" not in self.conv_resnet_params["mlb_kwargs"]):
-                self.conv_resnet_params["mlb_kwargs"][ "normalization_layer_channels" ] = in_channels
-            if "activation_layer_channels" not in self.conv_resnet_params["mlb_kwargs"]:
-                self.conv_resnet_params["mlb_kwargs"]["activation_layer_channels"] = 4 * in_channels
-            # fmt: on
             # create convolution block
             out_channels = mult * self.input_channels
             layers.append(
-                MultiLevelBlock(
+                LevelBlock(
                     in_channels,
                     kernel_size,
-                    activation=activation,
                     output_channels=out_channels,
                     dropout=dropout,
                     scale_factor=scale_factor,
-                    skip_connection=True,
-                    **self.conv_resnet_params["mlb_kwargs"],
+                    **self.conv_resnet_params["block_kwargs"],
                 )
             )
             in_channels = out_channels
-        self.conv_resnet: nn.Sequential = nn.Sequential(*layers)
+        self.conv_resnet = nn.Sequential(*layers)
         self.conv_output_channels = in_channels
 
         # create dense layers using MLPResNet if parameters provided
@@ -402,7 +387,7 @@ class ConvResNet(nn.Module):
         set_init_parameters(self.input_layer, get_gain(None, default="conv1d"))
         # initialize convolutional block
         for layer in self.conv_resnet:
-            cast(MultiLevelBlock, layer).init_parameters()
+            cast(LevelBlock, layer).init_parameters()
         # initialize dense block
         if self.mlp_resnet is not None:
             self.mlp_resnet.init_parameters()
@@ -557,19 +542,6 @@ class UNetUpsample(nn.Module):
         set_init_parameters(self.block.layer, get_gain(activation, default="conv1d"))
 
 
-def Normalization(num_channels: int, num_groups: int = 1) -> nn.GroupNorm:
-    """Build a group normalization layer for 1D feature maps.
-
-    Args:
-        num_channels: Number of channels in the normalized tensor.
-        num_groups: Number of groups used by group normalization.
-
-    Returns:
-        Configured group normalization layer.
-    """
-    return nn.GroupNorm(num_groups, num_channels)
-
-
 class UNetResBlock(nn.Module):
     """
     A residual block that can optionally change the number of channels.
@@ -649,139 +621,197 @@ class UNetResBlock(nn.Module):
 
 
 # --------------------------------------
-# Universal-Design Multi-Level Components
+# Universal Multi-Level Components
 # --------------------------------------
 
 
-class MultiLevelBlock(nn.Module):
-    """
-    Build a universal-design multi-level convolutional block.
+def Normalization(num_channels: int, num_groups: int = 1) -> nn.GroupNorm:
+    """Build a group normalization layer for 1D feature maps.
 
     Args:
-        input_channels: Channels in input tensors.
-        kernel_size: Convolution kernel size.
-        normalization: Optional normalization module before projection layers.
-        normalization_layer_channels: Intermediate channels for normalization path.
-        activation: Optional activation module.
-        activation_layer_channels: Intermediate channels for activation path.
-        output_channels: Output channels of the block.
-        dropout: Optional dropout module applied after activation.
-        scale_factor: Relative scaling factor for sequence length.
+        num_channels: Number of channels in the normalized tensor.
+        num_groups: Number of groups used by group normalization.
+
+    Returns:
+        Configured group normalization layer.
+    """
+    return nn.GroupNorm(num_groups, num_channels)
+
+
+class UniversalMultiLevelBlock(nn.Module):
+    """
+    Build a universal multi-level convolutional block.
+
+    The main branch chains a convolution with kernel size ``kernel_size`` and two
+    optional stages, each of which ends with a 1x1 convolution::
+
+        conv_k -> [normalization -> conv_1x1] -> [activation -> dropout -> conv_1x1]
+
+    An optional skip branch adds the input to the output of the main branch,
+    through a 1x1 convolution when the channels differ. During training, drop
+    path (stochastic depth) then drops the main branch for each sample with
+    probability ``drop_path``. The block scales the sequence length by
+    ``scale_factor``: it upsamples by interpolation before both branches, and it
+    downsamples through the stride of ``conv_k``, resizing the skip branch to
+    match.
+
+    Args:
+        input_channels: Channels in input tensors; `forward` concatenates
+          several input tensors along the channels.
+        kernel_size: Kernel size of the convolution ``conv_k``.
+        normalization: Factory that builds the normalization layer from its number
+          of channels; ``True`` for group normalization with one group, ``False``
+          to drop the normalization and the 1x1 convolution after it.
+        normalization_channels: Channels of the normalization; defaults to
+          ``input_channels``. Requires normalization.
+        activation: Activation module; ``True`` for GELU, ``False`` to drop the
+          activation and the 1x1 convolution after it.
+        activation_channels: Channels of the activation; defaults to four times
+          the channels of the preceding layer. Requires activation.
+        output_channels: Output channels of the block; defaults to
+          ``input_channels``.
+        dropout: Dropout probability after the activation; ``0`` disables dropout.
+        scale_factor: Relative scaling factor of the sequence length; a factor
+          below one must be the inverse of an integer, which becomes the stride
+          of ``conv_k``. Defaults to the inverse of the stride in ``conv_kwargs``.
         skip_connection: If ``True``, add a residual skip branch.
-        interp_mode: Interpolation mode for up/down sampling.
-        logger: Logger used for argument-coherence warnings.
-        with_Conv: Convolution layer factory used in the block.
-        **conv_kwargs: Extra keyword arguments passed to convolution layers.
+        skip_scale: Factor that scales the sum of both branches; ``1`` gives the
+          standard residual sum, ``0.5`` the average, and ``1 / sqrt(2)``
+          preserves the variance of two independent branches.
+        drop_path: Probability of dropping the main branch of a sample during
+          training; ``0`` disables drop path. Requires the skip branch.
+        interp_mode: Interpolation mode for upsampling.
+        skip_interp_mode: Interpolation mode that resizes the skip branch to the
+          length of the main branch; ``area`` averages when downsampling.
+        conv: Convolution layer factory used in the block.
+        conv_kwargs: Optional keyword arguments for ``conv_k``; the 1x1
+          convolutions do not receive them. Defaults to replicate padding that
+          keeps the length at stride 1.
+
+    References:
+        Huang et al., "Deep Networks with Stochastic Depth", ECCV 2016.
+        https://arxiv.org/abs/1603.09382
     """
 
     def __init__(
         self,
         input_channels: int,
         kernel_size: int,
-        normalization: nn.Module | bool | None = None,
-        normalization_layer_channels: int | bool | None = None,
-        activation: nn.Module | bool | None = None,
-        activation_layer_channels: int | bool | None = None,
+        normalization: NormalizationFactory | bool = True,
+        normalization_channels: int | None = None,
+        activation: nn.Module | bool = True,
+        activation_channels: int | None = None,
         output_channels: int | None = None,
-        dropout: nn.Module | bool | None = None,
+        dropout: float = 0.0,
         scale_factor: float | None = None,
         skip_connection: bool = False,
+        skip_scale: float = 1.0,
+        drop_path: float = 0.0,
         interp_mode: str = "nearest-exact",
-        logger: logging.Logger = logging.getLogger("dlk.nets.conv1d.MultiLevelBlock"),
-        with_Conv: ModuleFactory = nn.Conv1d,
-        **conv_kwargs: Any,
+        skip_interp_mode: str = "area",
+        conv: ModuleFactory = nn.Conv1d,
+        conv_kwargs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
-        self.conv_kwargs = dict(conv_kwargs)  # copy to avoid modifying input args
-        # set default padding mode (if key does not exist)
-        self.conv_kwargs.setdefault("padding_mode", "replicate")
-        # set default padding size (if key does not exist)
-        # Note: Conv1d expects an int padding; a 2-tuple causes channel padding
-        #   when padding_mode != 'zeros'; use symmetric integer padding for the conv
-        #   layer and keep the 2-tuple separately for size bookkeeping
-        self.conv_kwargs.setdefault("padding", kernel_size // 2)
-        assert isinstance(
-            self.conv_kwargs["padding"], int
-        ), f"Expected type int, got {type(self.conv_kwargs['padding'])}"
-        # store a 2-tuple version of padding for internal calculations (left, right)
-        self._padding = (self.conv_kwargs["padding"], self.conv_kwargs["padding"])
-        # define the padding s.t. `input_size == output_size` after convolution
-        self._padding_const_size = (
-            (kernel_size - 1) // 2,
-            (kernel_size - 1) // 2 + (1 - kernel_size % 2),
-        )
+        if not 0 <= drop_path < 1:
+            raise ValueError(f"invalid arg: {drop_path=} must be in [0, 1)")
+        if 0 < drop_path and not skip_connection:
+            raise ValueError(f"invalid args: {drop_path=} requires skip_connection")
+
         # set attributes from arguments
         self.input_channels = input_channels
+        self.output_channels = output_channels or input_channels
+        self.skip_scale = skip_scale
+        self.drop_path = drop_path
         self.interp_mode = interp_mode
-        if scale_factor is not None:
-            assert (
-                "stride" not in conv_kwargs or scale_factor == conv_kwargs["stride"]
-            ), f"Invalid args: Cannot set both scale_factor={scale_factor} and stride={conv_kwargs['stride']}."
-            if 1 <= scale_factor:
-                self.conv_kwargs["stride"] = 1
-            elif 0 < scale_factor:
-                self.conv_kwargs["stride"] = int(1 / scale_factor)
+        self.skip_interp_mode = skip_interp_mode
+
+        # copy to avoid modifying input args
+        self.conv_kwargs = dict(conv_kwargs or {})
+
+        # set scale factor and stride
+        stride = self.conv_kwargs.get("stride", 1)
+        if scale_factor is None:
+            self.scale_factor = 1.0 / stride
+        else:
+            if scale_factor <= 0:
+                raise ValueError(f"scale factor must be positive, got {scale_factor=}")
+            if scale_factor < 1:
+                expected_stride = round(1 / scale_factor)
+                if not math.isclose(expected_stride * scale_factor, 1.0):
+                    raise ValueError(
+                        f"scale factor must be the inverse of an integer, got {scale_factor=}"
+                    )
             else:
+                expected_stride = 1
+            if "stride" in self.conv_kwargs and stride != expected_stride:
                 raise ValueError(
-                    f"Invalid arg: scale_factor={scale_factor} cannot be non-positive."
+                    f"{scale_factor=} requires stride={expected_stride}, got {stride=}"
                 )
+            stride = expected_stride
             self.scale_factor = float(scale_factor)
-        elif "stride" in conv_kwargs:
-            self.scale_factor = 1.0 / conv_kwargs["stride"]
+        self.conv_kwargs["stride"] = stride
+
+        # set default padding (if keys do not exist)
+        # NOTE: PyTorch supports "same" padding only at stride 1
+        dilation = self.conv_kwargs.get("dilation", 1)
+        self.conv_kwargs.setdefault("padding_mode", "replicate")
+        self.conv_kwargs.setdefault(
+            "padding", "same" if 1 == stride else dilation * (kernel_size - 1) // 2
+        )
+
+        # resolve normalization
+        if normalization is False:
+            if normalization_channels is not None:
+                raise ValueError(
+                    f"invalid args: {normalization_channels=} requires normalization"
+                )
         else:
-            self.scale_factor = 1.0
-        # init channels
-        ch = [input_channels]
-        # set up normalization
-        if normalization_layer_channels or normalization_layer_channels is None:
-            if normalization_layer_channels is None:
-                normalization_layer_channels = ch[-1]
-            ch.append(normalization_layer_channels)
-        if normalization is None:
-            normalization = nn.GroupNorm(1, ch[-1])
-        if (not normalization) != (not normalization_layer_channels):
-            logger.warning(
-                f"Incoherent args: {normalization=}, {normalization_layer_channels=}"
-            )
-        # set up activation
-        if activation_layer_channels or activation_layer_channels is None:
-            if activation_layer_channels is None:
-                activation_layer_channels = 4 * ch[-1]
-            ch.append(activation_layer_channels)
-        if activation is None:
-            activation = nn.ReLU()
-        # set output channels
-        if output_channels is not None:
-            ch.append(output_channels)
+            if normalization is True:
+                normalization = Normalization
+            if normalization_channels is None:
+                normalization_channels = input_channels
+
+        # resolve activation
+        if activation is False:
+            if activation_channels is not None:
+                raise ValueError(
+                    f"invalid args: {activation_channels=} requires activation"
+                )
         else:
-            ch.append(input_channels)
-        # create layers
-        i = 0
+            if activation is True:
+                activation = nn.GELU()
+            if activation_channels is None:
+                activation_channels = 4 * (normalization_channels or input_channels)
+
+        # create main branch
         block = OrderedDict()
-        block["layer_0"] = with_Conv(ch[i], ch[i + 1], kernel_size, **self.conv_kwargs)
-        i += 1
-        if normalization:
-            block["normalization"] = normalization
-        if normalization_layer_channels:
-            block["layer_1"] = with_Conv(ch[i], ch[i + 1], 1)
-            i += 1
-        if activation:
+        channels = normalization_channels or activation_channels or self.output_channels
+        block["conv_0"] = conv(
+            input_channels, channels, kernel_size, **self.conv_kwargs
+        )
+        if normalization is not False:
+            block["normalization"] = normalization(channels)
+            next_channels = activation_channels or self.output_channels
+            block["conv_1"] = conv(channels, next_channels, 1)
+            channels = next_channels
+        if activation is not False:
             block["activation"] = activation
-        if dropout:
-            block["dropout"] = dropout
-        if activation_layer_channels:
-            block["layer_2"] = with_Conv(ch[i], ch[i + 1], 1)
-            i += 1
+        if 0 < dropout:
+            block["dropout"] = nn.Dropout(dropout)
+        if activation is not False:
+            block["conv_2"] = conv(channels, self.output_channels, 1)
         self.block = nn.Sequential(block)
-        # create skip connection
-        if skip_connection:
-            self.skip_interp_mode = interp_mode
-            if ch[0] == ch[-1]:
-                self.skip_connection = nn.Identity()
-            else:
-                self.skip_connection = with_Conv(ch[0], ch[-1], 1)
-        else:
+
+        # create skip branch
+        self.skip_connection: nn.Module | None
+        if not skip_connection:
             self.skip_connection = None
+        elif input_channels == self.output_channels:
+            self.skip_connection = nn.Identity()
+        else:
+            self.skip_connection = conv(input_channels, self.output_channels, 1)
+
         # initialize parameters
         self.init_parameters()
 
@@ -789,74 +819,89 @@ class MultiLevelBlock(nn.Module):
         """Apply the block to one or more channel-compatible input tensors.
 
         Args:
-            *x: One or more tensors concatenated along the channel dimension.
+            *x: One or more tensors with shape ``(batch, channels, length)``,
+              concatenated along the channels.
 
         Returns:
-            Output tensor after optional scaling, block transform, and skip path.
+            Output tensor with ``output_channels`` channels and the length scaled
+            by ``scale_factor``.
         """
         channel_dim, size_dim = 1, 2
-        # concatenate along channel dimension
-        if 1 < len(x):
-            h = torch.cat(x, dim=channel_dim)
-        else:
-            assert 1 == len(x)
-            h = x[0]
+
+        # concatenate inputs along channel dimension
+        h = torch.cat(x, dim=channel_dim) if 1 < len(x) else x[0]
         assert (
             h.size(channel_dim) == self.input_channels
-        ), f"Expect {self.input_channels=}, got {h.size(channel_dim)=}"
+        ), f"expected {self.input_channels=}, got {h.size(channel_dim)=}"
+
         # scale up
         if 1.0 < self.scale_factor:
             h = nn.functional.interpolate(
                 h, scale_factor=self.scale_factor, mode=self.interp_mode
             )
-        # apply block
-        hb = self.block(h)
-        # apply skip connection (optional)
+
+        # apply main branch
+        y = self.block(h)
+
+        # add skip branch (optional)
         if self.skip_connection is not None:
-            # scale down
-            if self.scale_factor < 1.0:
-                hs_size = (
-                    int(math.ceil(h.size(size_dim) * self.scale_factor))
-                    + sum(self._padding)
-                    - sum(self._padding_const_size)
-                )
+            # drop main branch per sample (training only)
+            if self.training and 0 < self.drop_path:
+                keep_prob = 1.0 - self.drop_path
+                mask = torch.bernoulli(y.new_full((y.size(0), 1, 1), keep_prob))
+                y = y * mask / keep_prob
+            # resize skip branch to the length of the main branch
+            if h.size(size_dim) != y.size(size_dim):
                 h = nn.functional.interpolate(
-                    h, size=hs_size, mode=self.skip_interp_mode
+                    h, size=y.size(size_dim), mode=self.skip_interp_mode
                 )
-            hs = self.skip_connection(h)
-            y = 0.5 * hs + 0.5 * hb
-        else:
-            y = hb
+            y = self.skip_scale * (self.skip_connection(h) + y)
         return y
 
     def init_parameters(self) -> None:
-        """Initialize trainable parameters for all active convolutional layers."""
-        if hasattr(self.block, "activation"):
-            gain = get_gain(self.block.activation, default="conv1d")
-        else:
-            gain = get_gain(None, default="conv1d")
-        set_init_parameters(self.block.layer_0, gain)
-        if hasattr(self.block, "layer_1"):
-            set_init_parameters(self.block.layer_1, gain)
-        if hasattr(self.block, "layer_2"):
-            set_init_parameters(self.block.layer_2, gain)
-        if self.skip_connection is not None and not isinstance(
-            self.skip_connection, nn.Identity
-        ):
+        """Initialize trainable parameters for all active convolutional layers.
+
+        A convolution that feeds the activation gets the gain of the activation,
+        and every other convolution the linear gain. With a skip branch, the last
+        convolution of the main branch starts at zero, so the block starts as its
+        skip branch; spectral normalization cannot divide by a zero weight, so
+        parametrized convolutions keep their initialization.
+        """
+        # initialize main branch
+        children = list(self.block.named_children())
+        convs = []
+        for index, (name, module) in enumerate(children):
+            if not name.startswith("conv_"):
+                continue
+            next_name = children[index + 1][0] if index + 1 < len(children) else None
+            if "activation" == next_name:
+                gain = get_gain(self.block.activation, default="conv1d")
+            else:
+                gain = get_gain(None, default="conv1d")
+            set_init_parameters(module, gain)
+            convs.append(module)
+
+        # initialize skip branch
+        if self.skip_connection is None:
+            return
+        if not parametrize.is_parametrized(convs[-1]):
+            set_zero_parameters(convs[-1])
+        if not isinstance(self.skip_connection, nn.Identity):
             set_init_parameters(self.skip_connection)
 
 
-class DownsampleBlock(MultiLevelBlock):
+class DownsampleBlock(UniversalMultiLevelBlock):
     """
-    Downsampling based on the universal-design multi-level block.
+    Downsampling based on the universal multi-level block.
 
     Args:
         input_channels: Channels in input tensors.
         kernel_size: Convolution kernel size.
         scale_factor: Relative downsampling factor for sequence length.
         skip_connection: If ``True``, add a residual skip branch.
-        interp_mode: Interpolation mode used by the skip path.
-        **mlb_kwargs: Additional parameters forwarded to ``MultiLevelBlock``.
+        skip_interp_mode: Interpolation mode that downsamples the skip branch.
+        **block_kwargs: Additional parameters forwarded to
+          ``UniversalMultiLevelBlock``.
     """
 
     def __init__(
@@ -865,31 +910,31 @@ class DownsampleBlock(MultiLevelBlock):
         kernel_size: int,
         scale_factor: float = 0.5,
         skip_connection: bool = True,
-        interp_mode: str = "nearest-exact",
-        **mlb_kwargs: Any,
+        skip_interp_mode: str = "area",
+        **block_kwargs: Any,
     ) -> None:
         super().__init__(
             input_channels,
             kernel_size,
             scale_factor=scale_factor,
             skip_connection=skip_connection,
-            interp_mode=interp_mode,
-            logger=logging.getLogger("dlk.nets.conv1d.DownsampleBlock"),
-            **mlb_kwargs,
+            skip_interp_mode=skip_interp_mode,
+            **block_kwargs,
         )
 
 
-class UpsampleBlock(MultiLevelBlock):
+class UpsampleBlock(UniversalMultiLevelBlock):
     """
-    Upsampling based on the universal-design multi-level block.
+    Upsampling based on the universal multi-level block.
 
     Args:
         input_channels: Channels in input tensors.
         kernel_size: Convolution kernel size.
         scale_factor: Relative upsampling factor for sequence length.
         skip_connection: If ``True``, add a residual skip branch.
-        interp_mode: Interpolation mode used by the skip path.
-        **mlb_kwargs: Additional parameters forwarded to ``MultiLevelBlock``.
+        interp_mode: Interpolation mode for upsampling.
+        **block_kwargs: Additional parameters forwarded to
+          ``UniversalMultiLevelBlock``.
     """
 
     def __init__(
@@ -899,7 +944,7 @@ class UpsampleBlock(MultiLevelBlock):
         scale_factor: float = 2.0,
         skip_connection: bool = True,
         interp_mode: str = "nearest-exact",
-        **mlb_kwargs: Any,
+        **block_kwargs: Any,
     ) -> None:
         super().__init__(
             input_channels,
@@ -907,20 +952,20 @@ class UpsampleBlock(MultiLevelBlock):
             scale_factor=scale_factor,
             skip_connection=skip_connection,
             interp_mode=interp_mode,
-            logger=logging.getLogger("dlk.nets.conv1d.UpsampleBlock"),
-            **mlb_kwargs,
+            **block_kwargs,
         )
 
 
-class LevelBlock(MultiLevelBlock):
+class LevelBlock(UniversalMultiLevelBlock):
     """
-    Residual block based on the universal-design multi-level block.
+    Residual block based on the universal multi-level block.
 
     Args:
         input_channels: Channels in input tensors.
         kernel_size: Convolution kernel size.
         skip_connection: If ``True``, add a residual skip branch.
-        **mlb_kwargs: Additional parameters forwarded to ``MultiLevelBlock``.
+        **block_kwargs: Additional parameters forwarded to
+          ``UniversalMultiLevelBlock``.
     """
 
     def __init__(
@@ -928,12 +973,102 @@ class LevelBlock(MultiLevelBlock):
         input_channels: int,
         kernel_size: int,
         skip_connection: bool = True,
-        **mlb_kwargs: Any,
+        **block_kwargs: Any,
     ) -> None:
+        super().__init__(
+            input_channels=input_channels,
+            kernel_size=kernel_size,
+            skip_connection=skip_connection,
+            **block_kwargs,
+        )
+
+
+# --------------------------------------
+# ConvNeXt Components
+# --------------------------------------
+
+
+class ChannelLayerNorm(nn.LayerNorm):
+    r"""
+    Layer normalization over the channels of 1D feature maps.
+
+    Normalizes each position of a tensor with shape ``(batch, channels, length)``
+    over its channels, as ``nn.LayerNorm`` normalizes each token of a transformer
+    over its features:
+
+    .. math::
+        y_{b,c,l} = \gamma_c \frac{x_{b,c,l} - \mu_{b,l}}{\sqrt{\sigma^2_{b,l}
+        + \epsilon}} + \beta_c
+
+    where :math:`\mu_{b,l}` and :math:`\sigma^2_{b,l}` are the mean and variance
+    over the channels at position :math:`l`.
+
+    Args:
+        num_channels: Number of channels in the normalized tensor.
+        eps: Value added to the variance for numerical stability.
+    """
+
+    def __init__(self, num_channels: int, eps: float = 1e-6) -> None:
+        super().__init__(num_channels, eps=eps)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalize an input tensor over its channels.
+
+        Args:
+            x: Input tensor with shape ``(batch, channels, length)``.
+
+        Returns:
+            Normalized tensor with the shape of the input.
+        """
+        assert (
+            3 == x.dim() and x.size(1) == self.normalized_shape[0]
+        ), f"Expect shape (batch, {self.normalized_shape[0]}, length), got {tuple(x.shape)}"
+        return super().forward(x.transpose(1, 2)).transpose(1, 2)
+
+
+class ConvNeXtBlock(UniversalMultiLevelBlock):
+    """
+    ConvNeXt block based on the universal multi-level block.
+
+    The block adds its main branch to its input::
+
+        y = x + drop_path(conv_1x1(activation(conv_1x1(norm(dwconv_k(x))))))
+
+    The depthwise convolution ``dwconv_k`` mixes along the length within each
+    channel, and the two 1x1 convolutions mix across channels, widening to four
+    times the channels in between. Unlike the original, the block has no layer
+    scale; the last 1x1 convolution starts at zero instead, so the block starts
+    as the identity.
+
+    Args:
+        input_channels: Channels in input tensors.
+        kernel_size: Kernel size of the depthwise convolution.
+        skip_connection: If ``True``, add a residual skip branch.
+        **block_kwargs: Additional parameters forwarded to
+          ``UniversalMultiLevelBlock``; entries of ``conv_kwargs`` override the
+          defaults of one group per channel and zero padding.
+
+    References:
+        Liu et al., "A ConvNet for the 2020s", CVPR 2022.
+        https://arxiv.org/abs/2201.03545
+    """
+
+    def __init__(
+        self,
+        input_channels: int,
+        kernel_size: int = 7,
+        skip_connection: bool = True,
+        **block_kwargs: Any,
+    ) -> None:
+        # set defaults of ConvNeXt (if keys do not exist)
+        conv_kwargs = {"groups": input_channels, "padding_mode": "zeros"}
+        conv_kwargs.update(block_kwargs.pop("conv_kwargs", None) or {})
+        block_kwargs.setdefault("normalization", ChannelLayerNorm)
+        block_kwargs.setdefault("activation", nn.GELU())
         super().__init__(
             input_channels,
             kernel_size,
             skip_connection=skip_connection,
-            logger=logging.getLogger("dlk.nets.conv1d.LevelBlock"),
-            **mlb_kwargs,
+            conv_kwargs=conv_kwargs,
+            **block_kwargs,
         )
