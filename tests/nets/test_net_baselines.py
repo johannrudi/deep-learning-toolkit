@@ -3,7 +3,9 @@
 The networks here are the ones that gain shape accessors when composition lands
 (see ``docs/features/2026.006__compose_nets__1-plan.md``). The accessors are pure
 readers of values the constructors already receive, and these baselines are the
-evidence that adding them moves no forward output.
+evidence that adding them moves no forward output. The file also freezes blocks
+that inherit new constructor flags, such as ``enable_spectral_norm``, to pin that
+the flag off leaves their forward output unchanged.
 
 Each case builds its network under ``torch.manual_seed(0)``, keeps it small and
 on the CPU, and evaluates it in ``eval()`` mode so dropout and batch-norm
@@ -18,15 +20,17 @@ which is the build CI installs. Run this file as a script to regenerate them:
 """
 
 from collections.abc import Callable
+from typing import cast
 
 import pytest
 import torch
 import torch.nn as nn
 
-from dlk.nets.conv1d import ConvNet, ConvResNet
+from dlk.nets.conv1d import ConvNet, ConvNeXtBlock, ConvResNet
 from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal
 from dlk.nets.mlp import MLPNet, MLPResNet
 from dlk.nets.transformer1d import ChannelWiseTransformerNet, TransformerNet
+from dlk.nets.utils import get_gain, set_init_parameters
 
 # Tolerances for the comparison against the stored constants. Both are
 # relative, and they differ in what they are relative to: ELEMENT_RTOL is taken
@@ -98,7 +102,7 @@ def _build_convresnet() -> Case:
         conv_resnet_params={
             "channels_mult": [2, 4],
             "kernels": [3, 3],
-            "activation": nn.ReLU(),
+            "conv_kwargs": {"activation": nn.ReLU()},
         },
         mlp_resnet_params={
             "input_size": 4 * 4,
@@ -107,6 +111,23 @@ def _build_convresnet() -> Case:
         },
     )
     return net, (_input(2, 1, 16),)
+
+
+def _build_convnext_block() -> Case:
+    """Build a small ``ConvNeXtBlock`` behind a linear head, and its input.
+
+    The block's last convolution starts at zero, so a frozen forward would
+    otherwise pin only the identity; re-initialize it under the fixed seed to
+    freeze more than that. The head reduces the block's (2, 4, 16) output to
+    (2, 3) like the other cases, and every output entry still depends on every
+    entry of the block's output.
+    """
+    torch.manual_seed(0)
+    block = ConvNeXtBlock(input_channels=4, kernel_size=3)
+    conv_2 = cast(nn.Conv1d, block.block.conv_2)
+    set_init_parameters(conv_2, get_gain(None, default="conv1d"))
+    net = nn.Sequential(block, nn.Flatten(), nn.Linear(4 * 16, 3))
+    return net, (_input(2, 4, 16),)
 
 
 def _build_transformer_net() -> Case:
@@ -146,6 +167,7 @@ def _build_efficientnet() -> Case:
 BUILDERS: dict[str, Callable[[], Case]] = {
     "channel_wise_transformer_net": _build_channel_wise_transformer_net,
     "convnet": _build_convnet,
+    "convnext_block": _build_convnext_block,
     "convresnet": _build_convresnet,
     "efficientnet_v1_b0_minimal": _build_efficientnet,
     "mlpnet": _build_mlpnet,
@@ -163,9 +185,13 @@ BASELINE_OUTPUTS: dict[str, list[list[float]]] = {
         [3.0222561359405518, -0.6783685684204102, 1.6486051082611084],
         [0.4073147475719452, -1.6424623727798462, 1.8300310373306274],
     ],
+    "convnext_block": [
+        [0.12845762073993683, 1.4875056743621826, 0.40791213512420654],
+        [0.5338109135627747, -1.279374122619629, -1.3488813638687134],
+    ],
     "convresnet": [
-        [-0.017501220107078552, 0.20230475068092346, -0.9614542126655579],
-        [0.269810289144516, -0.3527642488479614, -1.308133840560913],
+        [-0.7722904086112976, -0.05231968313455582, 0.4531893730163574],
+        [0.10470473766326904, 0.17464129626750946, -0.24429607391357422],
     ],
     "efficientnet_v1_b0_minimal": [
         [-3.638240264614012e-10, -1.6396646540517423e-10, -2.7084653964060124e-10],
@@ -176,8 +202,8 @@ BASELINE_OUTPUTS: dict[str, list[list[float]]] = {
         [-1.0519530773162842, 0.15276935696601868, -1.0358805656433105],
     ],
     "mlpresnet": [
-        [-1.0894097089767456, -0.6791186332702637, 0.9551457762718201],
-        [0.3882388472557068, -1.8481355905532837, -1.507836103439331],
+        [-0.14274761080741882, 0.3249003291130066, 0.8066041469573975],
+        [-1.1489803791046143, -1.6987935304641724, -0.1310654878616333],
     ],
     "transformer_net": [
         [0.4538363218307495, -0.943134069442749, -0.13515830039978027],

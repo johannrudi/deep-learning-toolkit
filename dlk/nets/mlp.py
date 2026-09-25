@@ -6,9 +6,15 @@ from typing import Any, cast
 
 import torch
 import torch.nn as nn
+from torch.nn.utils import parametrize
 from torch.nn.utils.parametrizations import spectral_norm
 
-from dlk.nets.utils import get_gain, set_init_parameters
+from dlk.nets.utils import (
+    NormalizationFactory,
+    get_gain,
+    set_init_parameters,
+    set_zero_parameters,
+)
 
 # --------------------------------------
 # MLP Nets
@@ -284,7 +290,7 @@ class SelfAttentionLayer(nn.MultiheadAttention):
         self,
         embedding_size: int,
         n_heads: int,
-        use_dropout: float | bool = False,
+        dropout: float = 0.0,
         **kwargs: Any,
     ) -> None:
         """Initialize a self-attention layer.
@@ -292,16 +298,12 @@ class SelfAttentionLayer(nn.MultiheadAttention):
         Args:
             embedding_size: Embedding dimension expected by attention.
             n_heads: Number of attention heads.
-            use_dropout: Dropout probability for attention weights, or ``False``.
+            dropout: Dropout probability for attention weights.
             **kwargs: Additional ``nn.MultiheadAttention`` keyword arguments.
 
         Returns:
             None.
         """
-        if use_dropout:
-            dropout = use_dropout
-        else:
-            dropout = 0.0
         super().__init__(
             embedding_size, n_heads, dropout=dropout, batch_first=True, **kwargs
         )
@@ -341,8 +343,8 @@ class AttentionBlock(nn.Module):
         activation_layer_size: Width of the feed-forward hidden layer.
         activation: Activation used in the feed-forward layer.
         block_kwargs: Optional keyword arguments passed to ``nn.Linear`` layers.
-        use_dropout: Dropout probability used in the feed-forward path, or ``False``.
-        use_spectral_norm: Whether to wrap linear layers with spectral normalization.
+        dropout: Dropout probability used in the feed-forward path.
+        enable_spectral_norm: Whether to wrap linear layers with spectral normalization.
     """
 
     def __init__(
@@ -353,8 +355,8 @@ class AttentionBlock(nn.Module):
         activation_layer_size: int = 128,
         activation: nn.Module | None = nn.ReLU(),
         block_kwargs: dict[str, Any] | None = None,
-        use_dropout: float | bool = False,
-        use_spectral_norm: bool = False,
+        dropout: float = 0.0,
+        enable_spectral_norm: bool = False,
     ) -> None:
         super().__init__()
 
@@ -374,24 +376,24 @@ class AttentionBlock(nn.Module):
         )
         self.output_embedding_size = out_size
         self.attention_layer = SelfAttentionLayer(
-            in_size, attention_layer_n_heads, use_dropout=use_dropout, **block_kwargs
+            in_size, attention_layer_n_heads, dropout=dropout, **block_kwargs
         )
         block = OrderedDict()
         block["normalization"] = nn.LayerNorm(in_size)
-        block["layer_0"] = nn.Linear(in_size, al_size, **block_kwargs)
+        block["linear_0"] = nn.Linear(in_size, al_size, **block_kwargs)
         block["activation"] = activation
-        if use_dropout:
-            block["dropout"] = nn.Dropout(use_dropout)
-        block["layer_1"] = nn.Linear(al_size, out_size, **block_kwargs)
-        if use_spectral_norm:
+        if 0 < dropout:
+            block["dropout"] = nn.Dropout(dropout)
+        block["linear_1"] = nn.Linear(al_size, out_size, **block_kwargs)
+        if enable_spectral_norm:
             for i in range(2):
-                block[f"layer_{i}"] = spectral_norm(block[f"layer_{i}"])
+                block[f"linear_{i}"] = spectral_norm(block[f"linear_{i}"])
         self.attention_block = nn.Sequential(block)
 
         # create skip connection
         if in_size != out_size:
             self.skip_connection = nn.Linear(in_size, out_size, **block_kwargs)
-            if use_spectral_norm:
+            if enable_spectral_norm:
                 self.skip_connection = spectral_norm(self.skip_connection)
         else:
             self.skip_connection = None
@@ -448,79 +450,159 @@ class AttentionBlock(nn.Module):
             None.
         """
         set_init_parameters(
-            self.attention_block.layer_0,
+            self.attention_block.linear_0,
             get_gain(self.attention_block.activation),
         )
-        set_init_parameters(self.attention_block.layer_1, get_gain(None))
+        set_init_parameters(self.attention_block.linear_1, get_gain(None))
         if self.skip_connection is not None:
             set_init_parameters(self.skip_connection, get_gain(None))
 
 
 class ResidualBlock(nn.Module):
-    r"""Build a residual dense block with normalization, activation, and optional dropout.
+    r"""Build a residual dense block with optional normalization and activation.
 
-    References:
-        Miyato et al., "Spectral Normalization for Generative Adversarial
-        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
+    The main branch chains a linear layer and two optional stages, each of which
+    ends with a linear layer::
+
+        linear_0 -> [normalization -> linear_1] -> [activation -> dropout -> linear_2]
+
+    An optional skip branch adds the input to the output of the main branch,
+    through a linear layer when the sizes differ, and ``skip_scale`` scales the
+    sum. During training, drop path (stochastic depth) then drops the main branch
+    for each sample with probability ``drop_path``. All layers act on the last
+    dimension, so every embedding of a sample passes through the same layers.
+
+    Spectral normalization alone does not bound the Lipschitz constant of the
+    block, because normalization layers have no bound; a bounded block needs
+    ``normalization=False``.
 
     Args:
-        input_size: Length of flattened input vectors.
-        output_size: Length of output vectors; defaults to ``input_size``.
-        normalization_layer_size: Width of the normalization projection layer.
-        activation_layer_size: Width of the feed-forward activation layer.
-        activation: Activation applied in the residual branch.
-        layer_kwargs: Optional keyword arguments passed to ``nn.Linear`` layers.
-        use_dropout: Dropout probability used in the residual branch, or ``False``.
-        use_spectral_norm: Whether to wrap linear layers with spectral normalization.
+        input_size: Size of the last dimension of the input; `forward`
+            concatenates several input tensors along it.
+        output_size: Size of the last dimension of the output; defaults to
+            ``input_size``.
+        normalization: Factory that builds the normalization layer from its size;
+            ``True`` for ``nn.LayerNorm``, ``False`` to drop the normalization and
+            the linear layer after it.
+        normalization_size: Size of the normalization; defaults to
+            ``input_size``. Requires normalization.
+        activation: Activation module; ``True`` for GELU, ``False`` to drop the
+            activation and the linear layer after it.
+        activation_size: Size of the activation; defaults to four times
+            ``normalization_size``, or four times ``input_size`` without
+            normalization. Requires activation.
+        dropout: Dropout probability after the activation; ``0`` disables dropout.
+        skip_connection: If ``True``, add a residual skip branch.
+        skip_scale: Factor that scales the sum of both branches; ``1`` gives the
+            standard residual sum, ``0.5`` the average, and ``1 / sqrt(2)``
+            preserves the variance of two independent branches.
+        drop_path: Probability of dropping the main branch of a sample during
+            training; ``0`` disables drop path. Requires the skip branch.
+        enable_spectral_norm: If ``True``, wrap every linear layer of the block,
+            including the skip linear, with `parametrizations.spectral_norm`.
+        linear_kwargs: Optional keyword arguments for every ``nn.Linear`` of the
+            block, including the skip linear.
+
+    References:
+        Huang et al., "Deep Networks with Stochastic Depth", ECCV 2016.
+        https://arxiv.org/abs/1603.09382
+
+        Miyato et al., "Spectral Normalization for Generative Adversarial
+        Networks", ICLR 2018. https://arxiv.org/abs/1802.05957
     """
 
     def __init__(
         self,
         input_size: int,
         output_size: int | None = None,
-        normalization_layer_size: int = 32,
-        activation_layer_size: int = 128,
-        activation: nn.Module | None = nn.ReLU(),
-        layer_kwargs: dict[str, Any] | None = None,
-        use_dropout: float | bool = False,
-        use_spectral_norm: bool = False,
+        *,
+        normalization: NormalizationFactory | bool = True,
+        normalization_size: int | None = None,
+        activation: nn.Module | bool = True,
+        activation_size: int | None = None,
+        dropout: float = 0.0,
+        skip_connection: bool = True,
+        skip_scale: float = 1.0,
+        drop_path: float = 0.0,
+        enable_spectral_norm: bool = False,
+        linear_kwargs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
+        if not 0 <= drop_path < 1:
+            raise ValueError(f"invalid arg: {drop_path=} must be in [0, 1)")
+        if 0 < drop_path and not skip_connection:
+            raise ValueError(f"invalid args: {drop_path=} requires skip_connection")
 
-        # set default layer kwargs
-        layer_kwargs = dict(layer_kwargs or {})
-
-        # set from arguments
+        # set attributes from arguments
         self.input_size = input_size
-        self.output_size = output_size if output_size is not None else input_size
+        self.output_size = output_size or input_size
+        self.skip_scale = skip_scale
+        self.drop_path = drop_path
 
-        # create layers
-        in_size = self.input_size
-        nl_size = normalization_layer_size
-        al_size = activation_layer_size
-        out_size = self.output_size
-        block = OrderedDict()
-        block["layer_0"] = nn.Linear(in_size, nl_size, **layer_kwargs)
-        block["normalization"] = nn.LayerNorm(nl_size)
-        # TODO:
-        # assert not use_spectral_norm, "layer norm must be deactivated"
-        block["layer_1"] = nn.Linear(nl_size, al_size, **layer_kwargs)
-        block["activation"] = activation
-        if use_dropout:
-            block["dropout"] = nn.Dropout(use_dropout)
-        block["layer_2"] = nn.Linear(al_size, out_size, **layer_kwargs)
-        if use_spectral_norm:
-            for i in range(3):
-                block[f"layer_{i}"] = spectral_norm(block[f"layer_{i}"])
-        self.residual_block = nn.Sequential(block)
+        # copy to avoid modifying input args
+        self.linear_kwargs = dict(linear_kwargs or {})
 
-        # create skip connection
-        if in_size != out_size:
-            self.skip_connection = nn.Linear(in_size, out_size, **layer_kwargs)
-            if use_spectral_norm:
-                self.skip_connection = spectral_norm(self.skip_connection)
+        # NOTE: the rest of this constructor, `forward`'s skip branch, and
+        # `init_parameters` mirror `dlk.nets.conv1d.UniversalMultiLevelBlock`
+        # with linear layers in place of convolutions; keep both in sync
+
+        # resolve normalization
+        if normalization is False:
+            if normalization_size is not None:
+                raise ValueError(
+                    f"invalid args: {normalization_size=} requires normalization"
+                )
         else:
+            if normalization is True:
+                normalization = nn.LayerNorm
+            if normalization_size is None:
+                normalization_size = input_size
+
+        # resolve activation
+        if activation is False:
+            if activation_size is not None:
+                raise ValueError(
+                    f"invalid args: {activation_size=} requires activation"
+                )
+        else:
+            if activation is True:
+                activation = nn.GELU()
+            if activation_size is None:
+                activation_size = 4 * (normalization_size or input_size)
+
+        # create main branch
+        block = OrderedDict()
+        size = normalization_size or activation_size or self.output_size
+        block["linear_0"] = nn.Linear(input_size, size, **self.linear_kwargs)
+        if normalization is not False:
+            block["normalization"] = normalization(size)
+            next_size = activation_size or self.output_size
+            block["linear_1"] = nn.Linear(size, next_size, **self.linear_kwargs)
+            size = next_size
+        if activation is not False:
+            block["activation"] = activation
+        if 0 < dropout:
+            block["dropout"] = nn.Dropout(dropout)
+        if activation is not False:
+            block["linear_2"] = nn.Linear(size, self.output_size, **self.linear_kwargs)
+        if enable_spectral_norm:
+            for name in list(block):
+                if name.startswith("linear_"):
+                    block[name] = spectral_norm(block[name])
+        self.block = nn.Sequential(block)
+
+        # create skip branch
+        self.skip_connection: nn.Module | None
+        if not skip_connection:
             self.skip_connection = None
+        elif self.input_size == self.output_size:
+            self.skip_connection = nn.Identity()
+        else:
+            self.skip_connection = nn.Linear(
+                self.input_size, self.output_size, **self.linear_kwargs
+            )
+            if enable_spectral_norm:
+                self.skip_connection = spectral_norm(self.skip_connection)
 
         # initialize parameters
         self.init_parameters()
@@ -529,57 +611,74 @@ class ResidualBlock(nn.Module):
         r"""Apply the residual block to one or more tensors.
 
         Args:
-            *x: Input tensors concatenated along feature dimensions.
+            *x: One or more tensors with shape ``(batch, embedding, ...)``,
+                flattened from the third dimension on and concatenated along it
+                to ``input_size``.
 
         Returns:
-            Tensor with shape ``(batch, embedding, output_size)``.
+            Output tensor with shape ``(batch, embedding, output_size)``.
         """
+        # NOTE: embed_dim = 1
+        size_dim = 2
+
         # flatten and concatenate along input dimension
-        # embed_dim = 1
-        input_dim = 2
-        if 1 < len(x):
-            h = torch.cat([torch.flatten(x_, input_dim) for x_ in x], dim=input_dim)
-        else:
-            assert 1 == len(x)
-            h = torch.flatten(x[0], input_dim)
+        assert 0 < len(x), "expected at least one tensor"
+        h = torch.cat([torch.flatten(x_, size_dim) for x_ in x], dim=size_dim)
         assert (
-            h.size(input_dim) == self.input_size
-        ), f"{h.size(input_dim)=}, {self.input_size=}"
+            h.size(size_dim) == self.input_size
+        ), f"expected input size {self.input_size}, got {h.size(size_dim)}"
 
         # combine batch and embedding dimensions for subsequent layers
         batch_size = h.size(0)
         h = h.reshape(-1, self.input_size)
 
-        # apply skip connection
+        # apply main branch; separate batch and embedding dimensions
+        y = self.block(h).reshape(batch_size, -1, self.output_size)
+
+        # add skip branch (optional)
         if self.skip_connection is not None:
-            hs = self.skip_connection(h)
-        else:
-            hs = h
-
-        # apply block
-        hb = self.residual_block(h)
-
-        # compute output
-        y = 0.5 * hs + 0.5 * hb
-
-        # separate batch and embedding dimensions
-        y = y.reshape(batch_size, -1, self.output_size)
+            # drop main branch per sample (training only)
+            if self.training and 0 < self.drop_path:
+                keep_prob = 1.0 - self.drop_path
+                mask = torch.bernoulli(y.new_full((batch_size, 1, 1), keep_prob))
+                y = y * mask / keep_prob
+            hs = self.skip_connection(h).reshape(batch_size, -1, self.output_size)
+            y = self.skip_scale * (hs + y)
         return y
 
     def init_parameters(self) -> None:
-        r"""Initialize trainable parameters of ResidualBlock in the residual and skip layers.
+        """Initialize trainable parameters for all linear layers of the block.
+
+        A linear layer that feeds the activation gets the gain of the activation,
+        and every other linear layer the linear gain. With a skip branch, the last
+        linear layer of the main branch starts at zero, so the block starts as its
+        skip branch; spectral normalization cannot divide by a zero weight, so
+        parametrized linear layers keep their initialization.
 
         Returns:
             None.
         """
-        set_init_parameters(self.residual_block.layer_0, get_gain(None))
-        set_init_parameters(
-            self.residual_block.layer_1,
-            get_gain(self.residual_block.activation),
-        )
-        set_init_parameters(self.residual_block.layer_2, get_gain(None))
-        if self.skip_connection is not None:
-            set_init_parameters(self.skip_connection, get_gain(None))
+        # initialize main branch
+        children = list(self.block.named_children())
+        init_modules = []
+        for index, (name, module) in enumerate(children):
+            if not name.startswith("linear_"):
+                continue
+            next_name = children[index + 1][0] if index + 1 < len(children) else None
+            if "activation" == next_name:
+                gain = get_gain(self.block.activation, default="linear")
+            else:
+                gain = get_gain(None, default="linear")
+            set_init_parameters(module, gain)
+            init_modules.append(module)
+
+        # initialize skip branch
+        if self.skip_connection is None:
+            return
+        if not parametrize.is_parametrized(init_modules[-1]):
+            set_zero_parameters(init_modules[-1])
+        if not isinstance(self.skip_connection, nn.Identity):
+            set_init_parameters(self.skip_connection)
 
 
 class MLPResNet(nn.Module):
@@ -587,7 +686,8 @@ class MLPResNet(nn.Module):
 
     With spectral normalization, every linear layer is 1-Lipschitz (Miyato et
     al., 2018), but self-attention is not (Kim et al., 2021), so attention
-    blocks void a global Lipschitz bound.
+    blocks void a global Lipschitz bound. The layer normalization of the
+    residual blocks has no Lipschitz bound either; see `ResidualBlock`.
 
     References:
         Miyato et al., "Spectral Normalization for Generative Adversarial
@@ -606,11 +706,20 @@ class MLPResNet(nn.Module):
         attention_blocks_activation_size: Feed-forward hidden width inside attention blocks.
         attention_blocks_activation: Activation in attention feed-forward layers.
         attention_blocks_kwargs: Optional keyword arguments for attention block linears.
-        residual_blocks_sizes: Per-block sizes ``(in_size, norm_size, act_size, [out_size])``.
-        residual_blocks_activation: Activation in residual block feed-forward layers.
+        residual_blocks_sizes: Per-block sizes ``(in_size, norm_size, act_size, [out_size])``,
+            passed to `ResidualBlock` as ``input_size``, ``normalization_size``,
+            ``activation_size``, and ``output_size``; ``out_size`` defaults to
+            ``in_size``.
+        residual_blocks_activation: Activation module of the residual blocks;
+            ``True`` for GELU, ``False`` to drop the activation and the linear
+            layer after it.
+        residual_blocks_skip_scale: Factor that scales the sum of the skip and
+            main branches of each residual block; ``1`` gives the standard
+            residual sum, ``0.5`` the average.
         residual_blocks_kwargs: Optional keyword arguments for residual block linears.
-        use_dropout: Dropout probability, or ``False`` to disable.
-        use_spectral_norm: Whether to wrap every linear layer, including input,
+        dropout: Dropout probability of the attention and residual blocks in
+            ``[0, 1)``; ``0`` disables dropout.
+        enable_spectral_norm: Whether to wrap every linear layer, including input,
             embedding, and output layers, with spectral normalization; attention
             projections inside ``nn.MultiheadAttention`` stay unwrapped.
         output_layer_activation: Optional activation after the output layer.
@@ -626,7 +735,7 @@ class MLPResNet(nn.Module):
         input_layer_kwargs: dict[str, Any] | None = None,
         attention_blocks_n_heads: Sequence[int] | None = None,
         attention_blocks_activation_size: int = 128,
-        attention_blocks_activation: nn.Module | None = nn.ReLU(),
+        attention_blocks_activation: nn.Module | None = nn.GELU(),
         attention_blocks_kwargs: dict[str, Any] | None = None,
         residual_blocks_sizes: Sequence[Sequence[int]] = (
             (32, 32, 128, 32),
@@ -634,14 +743,18 @@ class MLPResNet(nn.Module):
             (32, 32, 128, 32),
             (32, 32, 128, 32),
         ),
-        residual_blocks_activation: nn.Module | None = nn.ReLU(),
+        residual_blocks_activation: nn.Module | bool = True,
+        residual_blocks_skip_scale: float = 1.0,
         residual_blocks_kwargs: dict[str, Any] | None = None,
-        use_dropout: float | bool = False,
-        use_spectral_norm: bool = False,
+        dropout: float = 0.0,
+        enable_spectral_norm: bool = False,
         output_layer_activation: nn.Module | None = None,
         output_layer_kwargs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
+        if not 0 <= dropout < 1:
+            raise ValueError(f"dropout probability must be in [0, 1), got {dropout=}")
+        dropout = float(dropout)
 
         # set default layer kwargs
         input_layer_kwargs = dict(input_layer_kwargs or {})
@@ -671,7 +784,7 @@ class MLPResNet(nn.Module):
             out_size_ = residual_blocks_sizes[0][0]
         self.output_size = output_size
         layer = nn.Linear(self.input_size, out_size_, **input_layer_kwargs)
-        if use_spectral_norm:
+        if enable_spectral_norm:
             layer = spectral_norm(layer)
         if input_layer_activation is not None:
             self.input_layer = nn.Sequential(
@@ -683,7 +796,7 @@ class MLPResNet(nn.Module):
             self.input_embedding_layer = nn.Linear(
                 1, embedding_size, **input_layer_kwargs
             )
-            if use_spectral_norm:
+            if enable_spectral_norm:
                 self.input_embedding_layer = spectral_norm(self.input_embedding_layer)
         else:
             self.input_embedding_layer = None
@@ -704,20 +817,21 @@ class MLPResNet(nn.Module):
                         activation_layer_size=attention_blocks_activation_size,
                         activation=attention_blocks_activation,
                         block_kwargs=attention_blocks_kwargs,
-                        use_dropout=use_dropout,
-                        use_spectral_norm=use_spectral_norm,
+                        dropout=dropout,
+                        enable_spectral_norm=enable_spectral_norm,
                     )
                 )
             blocks.append(
                 ResidualBlock(
                     block_in_size,
                     output_size=block_out_size,
-                    normalization_layer_size=block_nl_size,
-                    activation_layer_size=block_al_size,
+                    normalization_size=block_nl_size,
+                    activation_size=block_al_size,
                     activation=residual_blocks_activation,
-                    layer_kwargs=residual_blocks_kwargs,
-                    use_dropout=use_dropout,
-                    use_spectral_norm=use_spectral_norm,
+                    dropout=dropout,
+                    skip_scale=residual_blocks_skip_scale,
+                    enable_spectral_norm=enable_spectral_norm,
+                    linear_kwargs=residual_blocks_kwargs,
                 )
             )
         self.blocks = nn.Sequential(*blocks)
@@ -727,13 +841,13 @@ class MLPResNet(nn.Module):
             self.output_embedding_layer = nn.Linear(
                 embedding_size, 1, **output_layer_kwargs
             )
-            if use_spectral_norm:
+            if enable_spectral_norm:
                 self.output_embedding_layer = spectral_norm(self.output_embedding_layer)
         else:
             self.output_embedding_layer = None
         in_size_ = block_out_size
         layer = nn.Linear(in_size_, output_size, **output_layer_kwargs)
-        if use_spectral_norm:
+        if enable_spectral_norm:
             layer = spectral_norm(layer)
         if output_layer_activation is not None:
             self.output_layer = nn.Sequential(
@@ -836,6 +950,9 @@ class MLPResNet(nn.Module):
 
     def init_parameters(self) -> None:
         """Initialize trainable parameters of MLPResNet for input and output projections.
+
+        The attention and residual blocks initialize their own parameters, and the
+        embedding layers keep the PyTorch default initialization.
 
         Returns:
             None.

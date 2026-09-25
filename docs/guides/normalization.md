@@ -286,7 +286,7 @@ $$
 W_{\mathrm{SN}} = \frac{W}{\sigma_{\max}(W)},
 $$
 
-which bounds each layer's Lipschitz constant by one; `MLPResNet` offers it through `use_spectral_norm` for GAN critics. **Weight standardization** gives each output filter zero mean and unit variance over its fan-in, $\hat{W}_{o,:} = (W_{o,:} - \mu_o)/\sigma_o$, and pairs well with group normalization at small batch sizes.
+which bounds each layer's Lipschitz constant by one; `MLPResNet` offers it through `enable_spectral_norm` for GAN critics. **Weight standardization** gives each output filter zero mean and unit variance over its fan-in, $\hat{W}_{o,:} = (W_{o,:} - \mu_o)/\sigma_o$, and pairs well with group normalization at small batch sizes.
 
 ### Normalizing queries and keys
 

@@ -164,7 +164,7 @@ def test_mlpresnet_spectral_norm_wraps_every_linear() -> None:
         input_layer_activation=nn.Tanh(),
         residual_blocks_sizes=[(16, 32, 128, 16), (16, 16, 64, 8)],
         attention_blocks_n_heads=[3, 0],
-        use_spectral_norm=True,
+        enable_spectral_norm=True,
     )
 
     # skip the attention output projection inside `nn.MultiheadAttention`
