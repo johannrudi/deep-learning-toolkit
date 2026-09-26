@@ -188,6 +188,27 @@ def _critic(
     return d_net(x, y) if y is not None else d_net(x)
 
 
+def _segment_coefficients(
+    x_data: torch.Tensor, device: torch.device | None
+) -> torch.Tensor:
+    """Draw one `U(0, 1)` coefficient per sample, shaped to broadcast over `x_data`."""
+    batch_size, *other_dims = x_data.size()
+    sample_device = device if device is not None else x_data.device
+    coefficient_shape = [batch_size] + [1] * len(other_dims)
+    return torch.rand(coefficient_shape, device=sample_device, dtype=x_data.dtype)
+
+
+def _random_unit_directions(
+    x: torch.Tensor, device: torch.device | None
+) -> torch.Tensor:
+    """Draw one direction per sample, uniform on the unit sphere of the flattened sample."""
+    sample_device = device if device is not None else x.device
+    v = torch.randn(x.shape, device=sample_device, dtype=x.dtype)
+    return v / torch.linalg.vector_norm(v.flatten(1), dim=1).view(
+        -1, *[1] * (v.dim() - 1)
+    )
+
+
 def _difference_quotient_penalty(
     d_a: torch.Tensor,
     d_b: torch.Tensor,
@@ -303,11 +324,8 @@ def gradient_penalty_lip_fd_segment(
         https://arxiv.org/abs/1803.01541
     """
     x_gen = x_gen.expand_as(x_data)
-    batch_size, *other_dims = x_data.size()
-    sample_device = device if device is not None else x_data.device
-    coefficient_shape = [batch_size] + [1] * len(other_dims)
-    t_a = torch.rand(coefficient_shape, device=sample_device, dtype=x_data.dtype)
-    t_b = torch.rand(coefficient_shape, device=sample_device, dtype=x_data.dtype)
+    t_a = _segment_coefficients(x_data, device)
+    t_b = _segment_coefficients(x_data, device)
     x_a = t_a * x_data + (1 - t_a) * x_gen
     x_b = t_b * x_data + (1 - t_b) * x_gen
     d_a = _critic(d_net, x_a, y_data)
@@ -319,6 +337,93 @@ def gradient_penalty_lip_fd_segment(
         x_b,
         lip=lip,
         one_sided=one_sided,
+        min_dist=min_dist,
+        dlog=dlog,
+        dlog_prefix="lip_quotient",
+    )
+
+
+def gradient_penalty_lip_fd_random(
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None,
+    lip: float = 1.0,
+    radius: float = 1e-1,
+    min_dist: float = 1e-6,
+    device: torch.device | None = None,
+    dlog: dict[str, float] | None = None,
+) -> torch.Tensor:
+    r"""Compute a finite-difference Lipschitz penalty at randomly perturbed interpolates.
+
+    Draws one interpolate per sample on the real-to-generated segment,
+
+    .. math::
+        \hat{x} = \epsilon x_\mathrm{data} + (1 - \epsilon) x_\mathrm{gen},
+        \qquad \epsilon \sim U(0, 1),
+
+    then perturbs it by a random direction :math:`u`, uniform on the unit
+    sphere in :math:`\mathbb{R}^d`, at a fixed radius :math:`\rho` (argument
+    `radius`),
+
+    .. math::
+        x' = \hat{x} + \rho \, u,
+
+    and penalizes the one-sided difference quotient
+
+    .. math::
+        \mathcal{R} = E[\mathrm{relu}(q(\hat{x}, x') - k)^2].
+
+    The penalty sees only about a :math:`1 / \sqrt{d}` fraction of the slope,
+    so it barely constrains the critic in high dimension. It is kept as a
+    baseline for ablations only, not a recommended penalty. `radius` is an
+    absolute distance in input units; the defaults assume roughly
+    standardized data. See
+    `docs/features/2026.008__gradient_penalties__1-plan.md`, Section B.4, for
+    the derivation.
+
+    Args:
+        d_net: Critic network used to score the interpolate and its
+            perturbation.
+        x_gen: Generated samples from the model. A single sample is
+            broadcast to `x_data`'s batch shape.
+        x_data: Real data samples.
+        y_data: Optional conditional inputs passed to the critic, shared by
+            both points of each pair.
+        lip: Target Lipschitz constant `k`.
+        radius: Perturbation radius `rho`, an absolute distance in input
+            units.
+        min_dist: Minimum denominator, guarding against division by zero.
+        device: Device used to sample the segment coefficient and the
+            direction. Defaults to `x_data`'s device.
+        dlog: Optional dictionary for logging summary statistics. Logs
+            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+
+    Returns:
+        Scalar finite-difference Lipschitz penalty term.
+
+    References:
+        Kodali et al., "On Convergence and Stability of GANs", 2017.
+        https://arxiv.org/abs/1705.07215
+
+        Miyato et al., "Virtual Adversarial Training: A Regularization
+        Method for Supervised and Semi-Supervised Learning", TPAMI 2018.
+        https://arxiv.org/abs/1704.03976
+    """
+    x_gen = x_gen.expand_as(x_data)
+    epsilon = _segment_coefficients(x_data, device)
+    x_hat = epsilon * x_data + (1 - epsilon) * x_gen
+    u = _random_unit_directions(x_hat, device)
+    x_pert = x_hat + radius * u
+    d_hat = _critic(d_net, x_hat, y_data)
+    d_pert = _critic(d_net, x_pert, y_data)
+    return _difference_quotient_penalty(
+        d_hat,
+        d_pert,
+        x_hat,
+        x_pert,
+        lip=lip,
+        one_sided=True,
         min_dist=min_dist,
         dlog=dlog,
         dlog_prefix="lip_quotient",
