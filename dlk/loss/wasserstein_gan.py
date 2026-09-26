@@ -1,4 +1,4 @@
-"""Provide Wasserstein GAN loss and gradient-penalty utilities for critic training."""
+"""Provide Wasserstein GAN loss and Lipschitz penalties for critic training."""
 
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -76,11 +76,10 @@ def gradient_norm_sq(
     with stance:
         if y_data is not None:
             y_data.requires_grad = True
-            d_outputs_hat = d_net(x_hat, y_data)
             grad_inputs = (x_hat, y_data)
         else:
-            d_outputs_hat = d_net(x_hat)
             grad_inputs = x_hat
+        d_outputs_hat = _critic(d_net, x_hat, y_data)
     # compute gradient
     grad_outputs = torch.ones_like(d_outputs_hat, device=device)
     grad = torch.autograd.grad(
@@ -178,3 +177,149 @@ def gradient_penalty_opt(
         assert isinstance(dlog, dict), type(dlog)
         dlog["grad_norm"] = grad_norm.detach().mean().item()
     return grad_penalty
+
+
+def _critic(
+    d_net: Callable[..., torch.Tensor],
+    x: torch.Tensor,
+    y: torch.Tensor | None,
+) -> torch.Tensor:
+    """Score `x` with the critic, passing `y` only when it is given."""
+    return d_net(x, y) if y is not None else d_net(x)
+
+
+def _difference_quotient_penalty(
+    d_a: torch.Tensor,
+    d_b: torch.Tensor,
+    x_a: torch.Tensor,
+    x_b: torch.Tensor,
+    lip: float,
+    one_sided: bool,
+    min_dist: float,
+    dlog: dict[str, float] | None,
+    dlog_prefix: str,
+) -> torch.Tensor:
+    """Compute the finite-difference Lipschitz penalty shared by the FD variants.
+
+    See `docs/features/2026.008__gradient_penalties__1-plan.md`, Section B.0,
+    for the difference-quotient formula and the one- and two-sided penalties.
+
+    Args:
+        d_a: Critic outputs at the first point of each pair.
+        d_b: Critic outputs at the second point of each pair.
+        x_a: First point of each pair.
+        x_b: Second point of each pair.
+        lip: Target Lipschitz constant `k`.
+        one_sided: Whether to penalize only quotients above `lip`.
+        min_dist: Minimum denominator, guarding against division by zero.
+        dlog: Optional dictionary for logging summary statistics.
+        dlog_prefix: Key for the quotient's mean; the max goes under
+            `{dlog_prefix}_max`.
+
+    Returns:
+        Scalar finite-difference Lipschitz penalty term.
+    """
+    d_diff = torch.linalg.vector_norm((d_a - d_b).flatten(1), dim=1)
+    x_diff = torch.linalg.vector_norm((x_a - x_b).flatten(1), dim=1).clamp(min=min_dist)
+    q = d_diff / x_diff
+    if one_sided:
+        penalty = F.relu(q - lip).square().mean()
+    else:
+        penalty = (q - lip).square().mean()
+    # log to dictionary
+    if dlog is not None:
+        assert isinstance(dlog, dict), type(dlog)
+        dlog[dlog_prefix] = q.detach().mean().item()
+        dlog[f"{dlog_prefix}_max"] = q.detach().max().item()
+    return penalty
+
+
+def gradient_penalty_lip_fd_segment(
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None,
+    lip: float = 1.0,
+    one_sided: bool = True,
+    min_dist: float = 1e-6,
+    device: torch.device | None = None,
+    dlog: dict[str, float] | None = None,
+) -> torch.Tensor:
+    r"""Compute a finite-difference Lipschitz penalty on real-to-generated segments.
+
+    Draws two points per sample on the segment between `x_gen` and `x_data`,
+
+    .. math::
+        x_a = t_a x_\mathrm{data} + (1 - t_a) x_\mathrm{gen}, \qquad
+        x_b = t_b x_\mathrm{data} + (1 - t_b) x_\mathrm{gen},
+
+    with :math:`t_a, t_b \sim U(0, 1)` drawn independently per sample, and
+    penalizes their difference quotient
+
+    .. math::
+        q = \frac{|D(x_a) - D(x_b)|}{\max(|t_a - t_b| \, \|x_\mathrm{data} - x_\mathrm{gen}\|, \delta)},
+
+    with a small :math:`\delta` (argument `min_dist`) that guards against
+    division by zero, and with the one- and two-sided penalties
+
+    .. math::
+        \mathcal{R}_\mathrm{one} = E[\mathrm{relu}(q - k)^2] \quad (\texttt{one\_sided=True}),
+        \qquad
+        \mathcal{R}_\mathrm{two} = E[(q - k)^2] \quad (\texttt{one\_sided=False}).
+
+    By the mean value theorem, :math:`q` is a lower bound on the local
+    Lipschitz constant along the segment, and constrains the slope of `D` in
+    `x` only, not in `y`. See
+    `docs/features/2026.008__gradient_penalties__1-plan.md`, Section B.1, for
+    the derivation.
+
+    Args:
+        d_net: Critic network used to score the segment points.
+        x_gen: Generated samples from the model. A single sample is
+            broadcast to `x_data`'s batch shape.
+        x_data: Real data samples.
+        y_data: Optional conditional inputs passed to the critic, shared by
+            both points of each pair.
+        lip: Target Lipschitz constant `k`.
+        one_sided: Whether to penalize only quotients above `lip`.
+        min_dist: Minimum denominator, guarding against division by zero.
+        device: Device used to sample the segment coefficients. Defaults to
+            `x_data`'s device.
+        dlog: Optional dictionary for logging summary statistics. Logs
+            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+
+    Returns:
+        Scalar finite-difference Lipschitz penalty term.
+
+    References:
+        Gulrajani et al., "Improved Training of Wasserstein GANs", NeurIPS 2017.
+        https://arxiv.org/abs/1704.00028
+
+        Petzka, Fischer, Lukovnikov, "On the Regularization of Wasserstein GANs",
+        ICLR 2018. https://arxiv.org/abs/1709.08894
+
+        Wei et al., "Improving the Improved Training of Wasserstein GANs: A
+        Consistency Term and Its Dual Effect", ICLR 2018.
+        https://arxiv.org/abs/1803.01541
+    """
+    x_gen = x_gen.expand_as(x_data)
+    batch_size, *other_dims = x_data.size()
+    sample_device = device if device is not None else x_data.device
+    coefficient_shape = [batch_size] + [1] * len(other_dims)
+    t_a = torch.rand(coefficient_shape, device=sample_device, dtype=x_data.dtype)
+    t_b = torch.rand(coefficient_shape, device=sample_device, dtype=x_data.dtype)
+    x_a = t_a * x_data + (1 - t_a) * x_gen
+    x_b = t_b * x_data + (1 - t_b) * x_gen
+    d_a = _critic(d_net, x_a, y_data)
+    d_b = _critic(d_net, x_b, y_data)
+    return _difference_quotient_penalty(
+        d_a,
+        d_b,
+        x_a,
+        x_b,
+        lip=lip,
+        one_sided=one_sided,
+        min_dist=min_dist,
+        dlog=dlog,
+        dlog_prefix="lip_quotient",
+    )
