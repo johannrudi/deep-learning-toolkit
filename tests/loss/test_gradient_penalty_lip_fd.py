@@ -3,6 +3,7 @@
 import inspect
 import math
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 import torch
@@ -10,6 +11,7 @@ from torch._dynamo.testing import CompileCounterWithBackend
 
 from dlk.loss.wasserstein_gan import (
     gradient_penalty_lip_fd_adversarial,
+    gradient_penalty_lip_fd_endpoint,
     gradient_penalty_lip_fd_random,
     gradient_penalty_lip_fd_segment,
 )
@@ -21,25 +23,53 @@ Y_SIZE = 3
 PenaltyFn = Callable[..., torch.Tensor]
 CompileFn = Callable[[torch.nn.Module], CompileCounterWithBackend]
 
-# Geometry tests: exact quotient identities against `|w^T u|`; segment now,
-# endpoint later.
-SEGMENT_PENALTY_FNS: tuple[PenaltyFn, ...] = (gradient_penalty_lip_fd_segment,)
+
+def _endpoint_from_critic(
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None,
+    **kwargs: Any,
+) -> torch.Tensor:
+    """Adapt the endpoint penalty to the shared `(d_net, x_gen, x_data, y_data)` test signature.
+
+    Scores `x_gen.expand_as(x_data)` and `x_data` with `d_net`, `_critic`-style
+    (`d_net(x, y)` or `d_net(x)`), then calls `gradient_penalty_lip_fd_endpoint`
+    on the resulting outputs, as the loop's opt-in keywords would.
+    """
+    x_gen = x_gen.expand_as(x_data)
+    d_outputs_gen = d_net(x_gen, y_data) if y_data is not None else d_net(x_gen)
+    d_outputs_data = d_net(x_data, y_data) if y_data is not None else d_net(x_data)
+    return gradient_penalty_lip_fd_endpoint(
+        x_gen, x_data, d_outputs_gen, d_outputs_data, **kwargs
+    )
+
+
+# Geometry tests: exact quotient identities against `|w^T u|`; holds for
+# segment (any pair, by the mean value theorem argument in B.1) and endpoint
+# (the pair is exactly `x_data`, `x_gen`).
+SEGMENT_PENALTY_FNS: tuple[PenaltyFn, ...] = (
+    gradient_penalty_lip_fd_segment,
+    _endpoint_from_critic,
+)
 
 # Zero/positive-above-target tests: variants whose quotient is exact for any
 # linear critic, independent of the pair drawn (segment: `|w^T u|` from an
-# aligned pair; adversarial: `‖w‖` after one power step).
+# aligned pair; adversarial: `‖w‖` after one power step; endpoint: `|w^T u|`,
+# same as segment, since the pair is fixed at the endpoints).
 LINEAR_EXACT_PENALTY_FNS: tuple[PenaltyFn, ...] = (
     gradient_penalty_lip_fd_segment,
     gradient_penalty_lip_fd_adversarial,
+    _endpoint_from_critic,
 )
 
-# General penalty tests: identical pairs, broadcasting, conditional and
-# unconditional critic, compiled critic; segment, random, and adversarial
-# now, endpoint later.
+# General penalty tests: broadcasting, conditional and unconditional critic,
+# compiled critic; segment, random, adversarial, and endpoint.
 FD_PENALTY_FNS: tuple[PenaltyFn, ...] = (
     gradient_penalty_lip_fd_segment,
     gradient_penalty_lip_fd_random,
     gradient_penalty_lip_fd_adversarial,
+    _endpoint_from_critic,
 )
 
 
@@ -247,9 +277,15 @@ def test_gradient_matches_analytic_value(penalty_fn: PenaltyFn) -> None:
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 
 
-@pytest.mark.parametrize("penalty_fn", SEGMENT_PENALTY_FNS)
+@pytest.mark.parametrize("penalty_fn", [gradient_penalty_lip_fd_segment])
 def test_pairs_lie_on_segment_with_matching_dtype(penalty_fn: PenaltyFn) -> None:
-    """Both points lie on the segment, at a bounded, per-sample `t`, in `x_data`'s dtype."""
+    """Both points lie on the segment, at a bounded, per-sample `t`, in `x_data`'s dtype.
+
+    The endpoint variant is not parametrized here: its pair is fixed at
+    `t in {0, 1}`, which `_assert_on_segment` rejects (it requires `t` to
+    vary across samples); see `test_endpoint_quotient_matches_formula` for
+    its geometry check instead.
+    """
     torch.manual_seed(0)
     d_net = _SpyCritic(_LinearCritic(X_SIZE)).double()
     x_gen = torch.randn(BATCH_SIZE, X_SIZE, dtype=torch.float64)
@@ -263,7 +299,52 @@ def test_pairs_lie_on_segment_with_matching_dtype(penalty_fn: PenaltyFn) -> None
         _assert_on_segment(x_pair, x_gen, x_data)
 
 
-@pytest.mark.parametrize("penalty_fn", FD_PENALTY_FNS)
+def test_endpoint_quotient_matches_formula() -> None:
+    """`dlog["lip_quotient"]`/`_max` match the B.2 formula, including the `min_dist` clamp.
+
+    Calls `gradient_penalty_lip_fd_endpoint` directly on hand-made tensors
+    (no critic), so the pair is exactly `(x_data, x_gen)`, unlike the
+    interpolated segment pair.
+    """
+    torch.manual_seed(0)
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+    x_gen[0] = x_data[0]  # one identical pair, to exercise the `min_dist` clamp
+    d_outputs_gen = torch.randn(BATCH_SIZE, 1)
+    d_outputs_data = torch.randn(BATCH_SIZE, 1)
+    min_dist = 1e-6
+
+    dlog: dict[str, float] = {}
+    gradient_penalty_lip_fd_endpoint(
+        x_gen, x_data, d_outputs_gen, d_outputs_data, min_dist=min_dist, dlog=dlog
+    )
+
+    x_diff = torch.linalg.vector_norm((x_data - x_gen).flatten(1), dim=1)
+    d_diff = torch.linalg.vector_norm(
+        (d_outputs_data - d_outputs_gen).flatten(1), dim=1
+    )
+    expected_q = d_diff / x_diff.clamp(min=min_dist)
+
+    torch.testing.assert_close(
+        torch.tensor(dlog["lip_quotient"]), expected_q.mean(), rtol=1e-5, atol=1e-8
+    )
+    torch.testing.assert_close(
+        torch.tensor(dlog["lip_quotient_max"]), expected_q.max(), rtol=1e-5, atol=1e-8
+    )
+
+
+# Excludes the endpoint variant: with `x_gen = x_data.clone()`, its pair is
+# bit-identical (unlike the other variants' interpolation/perturbation
+# arithmetic), so its gradient is exactly, not just numerically, zero; see
+# `test_endpoint_identical_pairs_give_exactly_zero_gradient`.
+@pytest.mark.parametrize(
+    "penalty_fn",
+    [
+        gradient_penalty_lip_fd_segment,
+        gradient_penalty_lip_fd_random,
+        gradient_penalty_lip_fd_adversarial,
+    ],
+)
 def test_identical_pairs_finite_gradients(penalty_fn: PenaltyFn) -> None:
     """Identical `x_gen`/`x_data` give a finite penalty and a nonzero, finite gradient."""
     torch.manual_seed(0)
@@ -288,6 +369,25 @@ def test_identical_pairs_finite_gradients(penalty_fn: PenaltyFn) -> None:
         assert torch.isfinite(p.grad).all()
         grad_nonzero = grad_nonzero or bool((p.grad != 0).any())
     assert grad_nonzero
+
+
+def test_endpoint_identical_pairs_give_exactly_zero_gradient() -> None:
+    """Identical `x_gen`/`x_data` give an exactly zero penalty and gradient (7(b): finite gradients)."""
+    torch.manual_seed(0)
+    d_net = _MLPCritic()
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+    x_gen = x_data.clone()
+    y_data = torch.randn(BATCH_SIZE, Y_SIZE)
+
+    penalty = _endpoint_from_critic(
+        d_net, x_gen, x_data, y_data, lip=0.0, one_sided=False
+    )
+    torch.testing.assert_close(penalty, torch.zeros_like(penalty))
+
+    penalty.backward()
+    for p in d_net.parameters():
+        assert p.grad is not None
+        assert (p.grad == 0).all()
 
 
 @pytest.mark.parametrize("penalty_fn", FD_PENALTY_FNS)

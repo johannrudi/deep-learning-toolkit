@@ -557,3 +557,90 @@ def gradient_penalty_lip_fd_adversarial(
         dlog=dlog,
         dlog_prefix="lip_quotient",
     )
+
+
+def gradient_penalty_lip_fd_endpoint(
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    d_outputs_gen: torch.Tensor,
+    d_outputs_data: torch.Tensor,
+    lip: float = 1.0,
+    one_sided: bool = True,
+    min_dist: float = 1e-6,
+    dlog: dict[str, float] | None = None,
+) -> torch.Tensor:
+    r"""Compute a finite-difference Lipschitz penalty at the real and generated endpoints.
+
+    Penalizes the difference quotient of each real-to-generated pair itself,
+
+    .. math::
+        q_i = \frac{|D(x_{\mathrm{data},i}) - D(x_{\mathrm{gen},i})|}
+                   {\max(\|x_{\mathrm{data},i} - x_{\mathrm{gen},i}\|, \delta)},
+
+    with a small :math:`\delta` (argument `min_dist`) that guards against
+    division by zero, and with the one- and two-sided penalties
+
+    .. math::
+        \mathcal{R}_\mathrm{one} = E[\mathrm{relu}(q - k)^2] \quad (\texttt{one\_sided=True}),
+        \qquad
+        \mathcal{R}_\mathrm{two} = E[(q - k)^2] \quad (\texttt{one\_sided=False}).
+
+    :math:`q` is the average slope of `D` over the *whole* segment, the
+    loosest of the segment-based bounds. Unlike the other variants, this
+    function takes no `d_net`: its numerator reuses critic outputs already
+    computed by the Wasserstein loss, so it costs no extra critic evaluation,
+    and it takes those outputs directly, obtained through the training
+    loop's opt-in keywords (see `dlk.opt.train_gan.DiscriminatorRegularizerFn`).
+    A consumer closure declares them by name, with a `None` default to match
+    the loop's fixed regularizer signature:
+
+    .. code-block:: python
+
+        def d_reg_fn(d_net, x_gen, x_data, y_data, *, d_outputs_gen=None, d_outputs_data=None, dlog=None):
+            assert d_outputs_gen is not None and d_outputs_data is not None
+            return reg_param * gradient_penalty_lip_fd_endpoint(
+                x_gen=x_gen,
+                x_data=x_data,
+                d_outputs_gen=d_outputs_gen,
+                d_outputs_data=d_outputs_data,
+                dlog=dlog,
+            )
+
+    See `docs/features/2026.008__gradient_penalties__1-plan.md`, Section B.2,
+    for the derivation.
+
+    Args:
+        x_gen: Generated samples from the model. A single sample is
+            broadcast to `x_data`'s batch shape.
+        x_data: Real data samples.
+        d_outputs_gen: Critic outputs for `x_gen`, from the loss's forward pass.
+        d_outputs_data: Critic outputs for `x_data`, from the loss's forward pass.
+        lip: Target Lipschitz constant `k`.
+        one_sided: Whether to penalize only quotients above `lip`.
+        min_dist: Minimum denominator, guarding against division by zero.
+        dlog: Optional dictionary for logging summary statistics. Logs
+            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+
+    Returns:
+        Scalar finite-difference Lipschitz penalty term.
+
+    References:
+        Gulrajani et al., "Improved Training of Wasserstein GANs", NeurIPS 2017.
+        https://arxiv.org/abs/1704.00028
+
+        Wei et al., "Improving the Improved Training of Wasserstein GANs: A
+        Consistency Term and Its Dual Effect", ICLR 2018.
+        https://arxiv.org/abs/1803.01541
+    """
+    x_gen = x_gen.expand_as(x_data)
+    return _difference_quotient_penalty(
+        d_outputs_data,
+        d_outputs_gen,
+        x_data,
+        x_gen,
+        lip=lip,
+        one_sided=one_sided,
+        min_dist=min_dist,
+        dlog=dlog,
+        dlog_prefix="lip_quotient",
+    )

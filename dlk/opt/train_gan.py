@@ -1,13 +1,14 @@
 """Reusable epoch- and batch-level training loops for GAN models."""
 
 import enum
+import inspect
 import logging
 import math
 import pathlib
 import time
 from collections.abc import Callable
 from datetime import datetime
-from typing import Protocol, TypeAlias
+from typing import Protocol, TypeAlias, cast
 
 import torch
 from torch.profiler import record_function
@@ -34,10 +35,14 @@ MONITOR_BASENAMES = [
     "d_pre_loss_g",
     "d_pre_reg",
     "d_pre_grad_norm",
+    "d_pre_lip_quotient",
+    "d_pre_lip_quotient_max",
     "d_post_loss",
     "d_post_loss_g",
     "d_post_reg",
     "d_post_grad_norm",
+    "d_post_lip_quotient",
+    "d_post_lip_quotient_max",
     "time_step",
 ]
 
@@ -69,7 +74,15 @@ LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
 
 
 class DiscriminatorRegularizerFn(Protocol):
-    """Protocol for discriminator regularizers that optionally emit logs."""
+    """Protocol for discriminator regularizers that optionally emit logs.
+
+    The loop also passes `d_outputs_gen` and `d_outputs_data` as keywords: the
+    loss's critic outputs, cast to `float32`, still attached to the autograd
+    graph. A regularizer receives them only if it declares them by name (an
+    `nn.Module` regularizer, by its `forward`) or accepts `**kwargs`. Declare
+    them with a `None` default (`d_outputs_gen: torch.Tensor | None = None`,
+    ...) to match this Protocol's fixed signature without a cast.
+    """
 
     def __call__(
         self,
@@ -82,6 +95,29 @@ class DiscriminatorRegularizerFn(Protocol):
     ) -> torch.Tensor:
         """Return a scalar regularization penalty for discriminator updates."""
         ...
+
+
+# Opt-in keyword names a regularizer may declare to receive the loss's critic
+# outputs; see `DiscriminatorRegularizerFn`.
+_CRITIC_OUTPUT_KWARGS = ("d_outputs_gen", "d_outputs_data")
+
+
+def _critic_output_kwargs(d_reg_fn: Callable[..., torch.Tensor]) -> tuple[str, ...]:
+    """Return the opt-in keyword names that `d_reg_fn` declares.
+
+    Returns all of them if `d_reg_fn` accepts `**kwargs`. Relies on
+    `inspect.signature` to see through `functools.partial` and callable
+    instances.
+    """
+    # `inspect.signature` on an `nn.Module` reports `Module.__call__`'s
+    # `(*args, **kwargs)`, not its actual parameters; inspect `forward`
+    # instead, unwrapping a compiled module first
+    target = getattr(d_reg_fn, "_orig_mod", d_reg_fn)
+    target = target.forward if isinstance(target, torch.nn.Module) else target
+    parameters = inspect.signature(target).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return _CRITIC_OUTPUT_KWARGS
+    return tuple(name for name in _CRITIC_OUTPUT_KWARGS if name in parameters)
 
 
 # --------------------------------------
@@ -402,10 +438,23 @@ def _train_step_discriminator(
             d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
 
     # evaluate the regularizer in full precision
+    # NOTE: gradient penalties double-backward through the critic here;
+    #       finite-difference penalties do not
     with record_function(RecordFunctionName.D_REGULARIZE):
         d_reg_dlog: dict[str, float] = {}
         if d_reg_fn is not None:
-            d_reg = d_reg_fn(d_net, x_gen, x_data, y_data, dlog=d_reg_dlog)
+            all_outputs = {
+                "d_outputs_gen": d_outputs_gen,
+                "d_outputs_data": d_outputs_data,
+            }
+            critic_outputs = {
+                name: all_outputs[name].float()
+                for name in _critic_output_kwargs(d_reg_fn)
+            }
+            # cast: `d_reg_fn` may declare the opt-in keywords, which this Protocol's fixed signature does not
+            d_reg = cast(Callable[..., torch.Tensor], d_reg_fn)(
+                d_net, x_gen, x_data, y_data, dlog=d_reg_dlog, **critic_outputs
+            )
         else:
             d_reg = d_loss.new_tensor(0.0)
 
