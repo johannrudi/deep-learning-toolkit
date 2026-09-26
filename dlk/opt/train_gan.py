@@ -37,12 +37,16 @@ MONITOR_BASENAMES = [
     "d_pre_grad_norm",
     "d_pre_lip_quotient",
     "d_pre_lip_quotient_max",
+    "d_pre_sn_max",
+    "d_pre_sn_mean",
     "d_post_loss",
     "d_post_loss_g",
     "d_post_reg",
     "d_post_grad_norm",
     "d_post_lip_quotient",
     "d_post_lip_quotient_max",
+    "d_post_sn_max",
+    "d_post_sn_mean",
     "time_step",
 ]
 
