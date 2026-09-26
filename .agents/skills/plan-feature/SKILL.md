@@ -13,14 +13,15 @@ Produce a concise, executable plan document in `docs/features/`, following the p
 
 Nothing here is mechanical. Step 1 asks for gaps, meaning the operation a module lacks, which is harder to see than the one it has. Step 2 asks for a core principle that collapses many small decisions into one. Both are synthesis, and both fail quietly: a plan naming a generic principle and listing no gaps reads like a plan.
 
-Nothing checks the result at the time it is written. Before implementing a plan, confirm the `file:line` anchors still resolve and that each claimed gap is real.
+Nothing checks the result at the time it is written. The plan's `Base-Commit` lets `impl-feature` measure how far the code has drifted before implementing it.
 
 ## 1. Gather (do this in parallel, before designing anything)
 
+- **Base commit**: run `.agents/skills/plan-feature/scripts/plan_base.sh <files the plan edits>` once the inventory names them. It fails if those files have uncommitted changes; ask the user to commit them first. Record its `Base-Commit` in the frontmatter. If `published` is empty, tell the user that a rebase of the branch would drop the commit. If the code changes during planning and you refresh the anchors, rerun it and update the field. The rule: the plan's line numbers are valid at `Base-Commit`.
 - **Code to be extended**: build a file-by-file inventory with `file:line` touch points. Look specifically for: shared utilities vs duplicated scaffolds (duplication means changes must be mirrored), Protocols or signatures that mirror other functions (lockstep invariants), and *gaps* — missing inverse operations (e.g. save without load), missing tests, unused hooks. Gaps become plan items.
 - **With a user-provided consuming application** (e.g. `../neural_nets/mops_gan/`): find every call site into the toolkit and the arguments passed. This defines the migration contract — the plan must show what "small and obvious changes" look like on the caller's side.
 - **External research** when a technology choice exists: prefer the option upstream actively maintains; capture the conclusion and why in the plan's Context (one short paragraph, not a survey).
-- **Repo conventions**: docs frontmatter (`Title/Author/Co-Authored-By/Date`), test style in `tests/`, the quality gate (`make format`, `make lint`, `make test`), dependency version ranges in `pyproject.toml`, and `uv run` for all Python invocations.
+- **Repo conventions**: docs frontmatter (`Title/Author/Co-Authored-By/Date/Base-Commit`), test style in `tests/`, the quality gate (`make format`, `make lint`, `make test`, and `make test TESTS="<files>"` for specific tests), dependency version ranges in `pyproject.toml`, and `uv run` only for commands without a `make` target (e.g. the smoke run).
 
 ## 2. Decide
 
@@ -34,7 +35,7 @@ Nothing checks the result at the time it is written. Before implementing a plan,
 
 **Structure**: (keep it scannable; only the recommended approach, no alternative surveys)
 
-1. Frontmatter: `Title/Author/Co-Authored-By/Date`.
+1. Frontmatter: `Title/Author/Co-Authored-By/Date/Base-Commit` (full hash). `impl-feature` adds `Branch` later.
 2. **Context** — why the change, current state including gaps, research conclusion, settled design decisions, core principle.
 3. **Terminology** — short explanations of every piece of jargon the plan introduces. Write for a reader who has not used the technology.
 4. **Numbered per-file sections** — for edits to existing files, use a table of pre-change `file:line` targets (label them "pre-change lines"; they shift during implementation). Call out required correctness fixes separately from mechanical changes.
@@ -58,7 +59,7 @@ Append a final section "Addendum: deviations and findings during implementation"
 
 ## Pitfalls learned
 
-- Line numbers in the plan go stale the moment edits start; that is fine — they should only be search anchors, not addresses. Additional information in the text should be given so the anchors can be found after the implementation.
+- Line numbers in the plan are valid at `Base-Commit` and go stale the moment edits start; that is fine — they should only be search anchors, not addresses. Additional information in the text should be given so the anchors can be found after the implementation.
 - Deprecation warnings during the smoke run are findings, not noise: resolve them with version-compatible shims when the dependency range spans the deprecation.
 - Frozen regression constants are machine/version-specific; the regeneration entry point is mandatory, not optional.
 - When tests spawn worker processes, force them onto the hardware-independent path (e.g. hide GPUs) so the suite passes on any machine.

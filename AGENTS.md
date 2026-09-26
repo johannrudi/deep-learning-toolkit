@@ -22,6 +22,7 @@
 - run `make testq` to run `pytest -q` across the codebase
 - run `make testv` to run `pytest -v` across the codebase
 - run `make testvv` to run `pytest -sv` across the codebase
+- run `make test TESTS="<files or node ids>"` to run specific tests; `TESTS` works with every test target
 
 ## CI
 

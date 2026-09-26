@@ -28,6 +28,9 @@ TESTS_DIR    := tests
 EXAMPLES_DIR := examples
 RELEASES_DIR := docs/releases
 
+# set the tests to run; empty runs all (e.g., make test TESTS="tests/loss/test_x.py::test_y")
+TESTS ?=
+
 # set files
 CITATION_FILE := CITATION.cff
 
@@ -68,16 +71,16 @@ lint:
 .PHONY: test testq testv testvv
 
 test: compile
-	@$(PY_TEST)
+	@$(PY_TEST) $(TESTS)
 
 testq: compile
-	@$(PY_TEST) --quiet
+	@$(PY_TEST) --quiet $(TESTS)
 
 testv: compile
-	@$(PY_TEST) --verbose
+	@$(PY_TEST) --verbose $(TESTS)
 
 testvv: compile
-	@$(PY_TEST) --verbose --capture=no
+	@$(PY_TEST) --verbose --capture=no $(TESTS)
 
 .PHONY: version version-patch version-minor version-major
 
