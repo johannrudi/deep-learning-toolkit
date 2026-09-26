@@ -6,6 +6,8 @@ from contextlib import nullcontext
 import torch
 import torch.nn.functional as F
 
+from dlk.opt import distributed
+
 
 def wasserstein_loss_fn(
     d_outputs_gen: torch.Tensor,
@@ -204,9 +206,8 @@ def _random_unit_directions(
     """Draw one direction per sample, uniform on the unit sphere of the flattened sample."""
     sample_device = device if device is not None else x.device
     v = torch.randn(x.shape, device=sample_device, dtype=x.dtype)
-    return v / torch.linalg.vector_norm(v.flatten(1), dim=1).view(
-        -1, *[1] * (v.dim() - 1)
-    )
+    v_norm = torch.linalg.vector_norm(v, dim=tuple(range(1, v.dim())), keepdim=True)
+    return v / v_norm
 
 
 def _difference_quotient_penalty(
@@ -376,9 +377,11 @@ def gradient_penalty_lip_fd_random(
 
     The penalty sees only about a :math:`1 / \sqrt{d}` fraction of the slope,
     so it barely constrains the critic in high dimension. It is kept as a
-    baseline for ablations only, not a recommended penalty. `radius` is an
-    absolute distance in input units; the defaults assume roughly
-    standardized data. See
+    baseline for ablations only, not a recommended penalty. Call it in full
+    precision (outside autocast), as the training loop does; small
+    perturbations fall within a few low-precision ulps of the outputs.
+    `radius` is an absolute distance in input units; the defaults assume
+    roughly standardized data. See
     `docs/features/2026.008__gradient_penalties__1-plan.md`, Section B.4, for
     the derivation.
 
@@ -422,6 +425,132 @@ def gradient_penalty_lip_fd_random(
         d_pert,
         x_hat,
         x_pert,
+        lip=lip,
+        one_sided=True,
+        min_dist=min_dist,
+        dlog=dlog,
+        dlog_prefix="lip_quotient",
+    )
+
+
+def gradient_penalty_lip_fd_adversarial(
+    d_net: Callable[..., torch.Tensor],
+    x_gen: torch.Tensor,
+    x_data: torch.Tensor,
+    y_data: torch.Tensor | None,
+    lip: float = 1.0,
+    xi: float = 1e-2,
+    radius: float = 1e-1,
+    min_dist: float = 1e-6,
+    device: torch.device | None = None,
+    dlog: dict[str, float] | None = None,
+) -> torch.Tensor:
+    r"""Compute a finite-difference Lipschitz penalty at an adversarially searched direction.
+
+    Draws one interpolate per sample on the real-to-generated segment,
+
+    .. math::
+        \hat{x} = \epsilon x_\mathrm{data} + (1 - \epsilon) x_\mathrm{gen},
+        \qquad \epsilon \sim U(0, 1),
+
+    then searches for the perturbation that most violates the Lipschitz
+    constraint,
+
+    .. math::
+        r^* = \arg\max_{\|r\| \le \rho} |D(\hat{x}) - D(\hat{x} + r)|,
+
+    approximated by one power-iteration step (Miyato et al. 2018, VAT).
+    Starting from a random direction :math:`d \sim \mathcal{N}(0, I)` of size
+    :math:`\xi` (argument `xi`),
+
+    .. math::
+        r_0 = \xi \, \frac{d}{\|d\|}, \qquad
+        g = \nabla_r \, |D(\hat{x}) - D(\hat{x} + r)| \big|_{r = r_0}, \qquad
+        r_\mathrm{adv} = \rho \, \frac{g}{\|g\|},
+
+    with :math:`\rho` (argument `radius`), and penalizes the one-sided
+    difference quotient at :math:`x' = \hat{x} + r_\mathrm{adv}`,
+
+    .. math::
+        \mathcal{R} = E[\mathrm{relu}(q(\hat{x}, x') - k)^2].
+
+    For small `xi`, `g` is parallel to :math:`\nabla_x D(\hat{x})`, so
+    :math:`q(\hat{x}, x') \approx \|\nabla_x D(\hat{x})\|`. For a linear
+    critic this is exact after one step. The search takes a first-order
+    input gradient without `create_graph`, so it works with a compiled
+    critic (no `eager` needed). It runs on
+    `dlk.opt.distributed.unwrap_net(d_net)`, so it does not arm DDP's
+    gradient reducer. Call it in full precision (outside autocast), as the
+    training loop does; small perturbations fall within a few low-precision
+    ulps of the outputs. `xi` and `radius` are absolute distances in input
+    units; the defaults assume roughly standardized data. See
+    `docs/features/2026.008__gradient_penalties__1-plan.md`, Section B.3.
+
+    Args:
+        d_net: Critic network used to score the interpolate and the
+            adversarial perturbation.
+        x_gen: Generated samples from the model. A single sample is
+            broadcast to `x_data`'s batch shape.
+        x_data: Real data samples.
+        y_data: Optional conditional inputs passed to the critic, shared by
+            both points of each pair.
+        lip: Target Lipschitz constant `k`.
+        xi: Size of the initial random direction used to start the power
+            iteration, an absolute distance in input units.
+        radius: Perturbation radius `rho` of the adversarial direction, an
+            absolute distance in input units.
+        min_dist: Minimum denominator, guarding against division by zero.
+        device: Device used to sample the segment coefficient and the
+            initial direction. Defaults to `x_data`'s device.
+        dlog: Optional dictionary for logging summary statistics. Logs
+            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+
+    Returns:
+        Scalar finite-difference Lipschitz penalty term.
+
+    References:
+        Terjék, "Adversarial Lipschitz Regularization", ICLR 2020.
+        https://arxiv.org/abs/1907.05681
+
+        Miyato et al., "Virtual Adversarial Training: A Regularization
+        Method for Supervised and Semi-Supervised Learning", TPAMI 2018.
+        https://arxiv.org/abs/1704.03976
+    """
+    x_gen = x_gen.expand_as(x_data)
+    epsilon = _segment_coefficients(x_data, device)
+    x_hat = epsilon * x_data + (1 - epsilon) * x_gen
+    d_hat = _critic(d_net, x_hat, y_data)
+
+    # search on the unwrapped critic; see the docstring
+    search_net = (
+        distributed.unwrap_net(d_net) if isinstance(d_net, torch.nn.Module) else d_net
+    )
+    d = _random_unit_directions(x_hat, device)
+    r = (xi * d).requires_grad_()
+    with torch.enable_grad():
+        d_r = _critic(search_net, x_hat.detach() + r, y_data)
+        # sum over the batch: samples are independent, so each sample's
+        # gradient is its own
+        distance = torch.linalg.vector_norm(
+            (d_hat.detach() - d_r).flatten(1), dim=1
+        ).sum()
+    (g,) = torch.autograd.grad(distance, r)
+
+    g_norm = torch.linalg.vector_norm(g, dim=tuple(range(1, g.dim())), keepdim=True)
+    # fall back to the random direction where the critic is flat in every
+    # direction at that point
+    direction = torch.where(
+        g_norm > 0, g / g_norm.clamp(min=torch.finfo(g.dtype).tiny), d
+    )
+    r_adv = (radius * direction).detach()
+
+    x_adv = x_hat + r_adv
+    d_adv = _critic(d_net, x_adv, y_data)
+    return _difference_quotient_penalty(
+        d_hat,
+        d_adv,
+        x_hat,
+        x_adv,
         lip=lip,
         one_sided=True,
         min_dist=min_dist,

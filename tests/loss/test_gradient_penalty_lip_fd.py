@@ -9,6 +9,7 @@ import torch
 from torch._dynamo.testing import CompileCounterWithBackend
 
 from dlk.loss.wasserstein_gan import (
+    gradient_penalty_lip_fd_adversarial,
     gradient_penalty_lip_fd_random,
     gradient_penalty_lip_fd_segment,
 )
@@ -24,12 +25,21 @@ CompileFn = Callable[[torch.nn.Module], CompileCounterWithBackend]
 # endpoint later.
 SEGMENT_PENALTY_FNS: tuple[PenaltyFn, ...] = (gradient_penalty_lip_fd_segment,)
 
+# Zero/positive-above-target tests: variants whose quotient is exact for any
+# linear critic, independent of the pair drawn (segment: `|w^T u|` from an
+# aligned pair; adversarial: `‖w‖` after one power step).
+LINEAR_EXACT_PENALTY_FNS: tuple[PenaltyFn, ...] = (
+    gradient_penalty_lip_fd_segment,
+    gradient_penalty_lip_fd_adversarial,
+)
+
 # General penalty tests: identical pairs, broadcasting, conditional and
-# unconditional critic, compiled critic; segment and random now, endpoint and
-# adversarial later.
+# unconditional critic, compiled critic; segment, random, and adversarial
+# now, endpoint later.
 FD_PENALTY_FNS: tuple[PenaltyFn, ...] = (
     gradient_penalty_lip_fd_segment,
     gradient_penalty_lip_fd_random,
+    gradient_penalty_lip_fd_adversarial,
 )
 
 
@@ -83,6 +93,26 @@ class _SpyCritic(torch.nn.Module):
         """Record `x`, then delegate to the wrapped critic."""
         self.inputs.append(x)
         return self.inner(x, y)
+
+
+class _FlatCritic(torch.nn.Module):
+    """Critic whose output is constant in `x`, to exercise the flat-direction fallback."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bias = torch.nn.Parameter(torch.zeros(1))
+
+    def forward(self, x: torch.Tensor, y: torch.Tensor | None = None) -> torch.Tensor:
+        """Return `bias`, ignoring `y`.
+
+        `x.sum(1, keepdim=True) * 0` is load-bearing: it keeps `x` in the
+        autograd graph with an exactly zero gradient. Without it, the
+        output would not depend on `x` at all, and `torch.autograd.grad`
+        would find no path to differentiate, rather than a valid zero
+        gradient.
+        """
+        del y
+        return x.sum(1, keepdim=True) * 0 + self.bias
 
 
 def _linear_critic_with_norm(input_size: int, w_norm: float) -> _LinearCritic:
@@ -159,7 +189,7 @@ def test_dlog_matches_directional_derivative(
     )
 
 
-@pytest.mark.parametrize("penalty_fn", SEGMENT_PENALTY_FNS)
+@pytest.mark.parametrize("penalty_fn", LINEAR_EXACT_PENALTY_FNS)
 def test_penalty_zero_below_target(penalty_fn: PenaltyFn) -> None:
     """The one-sided penalty is exactly 0 when `‖w‖ <= lip`."""
     torch.manual_seed(0)
@@ -169,7 +199,7 @@ def test_penalty_zero_below_target(penalty_fn: PenaltyFn) -> None:
     torch.testing.assert_close(penalty, torch.zeros_like(penalty))
 
 
-@pytest.mark.parametrize("penalty_fn", SEGMENT_PENALTY_FNS)
+@pytest.mark.parametrize("penalty_fn", LINEAR_EXACT_PENALTY_FNS)
 def test_penalty_positive_above_target(penalty_fn: PenaltyFn) -> None:
     """The one-sided penalty equals `(‖w‖ - lip)^2` when `‖w‖ > lip`."""
     torch.manual_seed(0)
@@ -243,8 +273,9 @@ def test_identical_pairs_finite_gradients(penalty_fn: PenaltyFn) -> None:
     y_data = torch.randn(BATCH_SIZE, Y_SIZE)
 
     # Segment: two-sided, nonzero lip, forces a nonzero gradient through the
-    # (exactly zero) zero-difference norm. Random: lip=0.0 already gives a
-    # generically nonzero `q`, since its pair is always `radius` apart.
+    # (exactly zero) zero-difference norm. Random and adversarial: lip=0.0
+    # already gives a generically nonzero `q`, since each pair is always
+    # `radius` apart.
     two_sided_kwargs = _two_sided_kwargs(penalty_fn)
     lip = 1.0 if two_sided_kwargs else 0.0
     penalty = penalty_fn(d_net, x_gen, x_data, y_data, lip=lip, **two_sided_kwargs)
@@ -299,11 +330,16 @@ def test_runs_conditional_and_unconditional(
 def test_compiled_critic_trains_without_recompile(
     penalty_fn: PenaltyFn, compile_aot_eager: CompileFn
 ) -> None:
-    """A compiled critic trains for a few steps with no recompile after the first."""
+    """A compiled critic trains for a few steps with no recompile after the first step.
+
+    The adversarial variant's direction search adds a second graph, for its
+    grad-requiring input; the pinned frame count below accounts for that.
+    """
     torch.manual_seed(0)
     d_net = _MLPCritic()
     counter = compile_aot_eager(d_net)
     opt = torch.optim.SGD(d_net.parameters(), lr=0.1)
+    expected_frame_count = 2 if penalty_fn is gradient_penalty_lip_fd_adversarial else 1
 
     params_before = [p.detach().clone() for p in d_net.parameters()]
     for _ in range(3):
@@ -315,14 +351,15 @@ def test_compiled_critic_trains_without_recompile(
 
         opt.zero_grad()
         # `lip=0.0` keeps the penalty active regardless of scale; two-sided
-        # where supported, one-sided otherwise (the random quotient is >= 0).
+        # where supported, one-sided otherwise (the random and adversarial
+        # quotients are >= 0).
         penalty = penalty_fn(
             d_net, x_gen, x_data, y_data, lip=0.0, **_two_sided_kwargs(penalty_fn)
         )
         penalty.backward()
         opt.step()
 
-    assert counter.frame_count == 1
+        assert counter.frame_count == expected_frame_count
     # The final layer's bias cancels out of every difference quotient, so it
     # gets no gradient and never changes; the other parameters do.
     changed = [
@@ -459,3 +496,155 @@ def test_random_gradient_matches_analytic_value() -> None:
 
     assert inner.w.grad is not None
     torch.testing.assert_close(inner.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
+
+
+# Adversarial-variant-specific tests, beyond the generic FD_PENALTY_FNS ones above.
+
+
+def test_adversarial_quotient_equals_weight_norm_for_linear_critic() -> None:
+    """`dlog["lip_quotient"]` and its max both equal `‖w‖` exactly, after one power step."""
+    torch.manual_seed(0)
+    d_net = _LinearCritic(X_SIZE)
+    w_norm = d_net.w.norm().item()
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+
+    dlog: dict[str, float] = {}
+    gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None, dlog=dlog)
+
+    assert dlog["lip_quotient"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
+    assert dlog["lip_quotient_max"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
+
+
+def test_adversarial_pair_geometry() -> None:
+    """The three recorded critic calls are `x_hat`, `x_hat + r0`, and `x_adv`, `xi`/`radius` apart."""
+    torch.manual_seed(0)
+    d_net = _SpyCritic(_MLPCritic())
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+    y_data = torch.randn(BATCH_SIZE, Y_SIZE)
+    xi, radius = 0.03, 0.2
+
+    gradient_penalty_lip_fd_adversarial(
+        d_net, x_gen, x_data, y_data, xi=xi, radius=radius
+    )
+
+    assert len(d_net.inputs) == 3
+    x_hat, x_r0, x_adv = d_net.inputs
+    r0_norm = torch.linalg.vector_norm((x_r0 - x_hat).flatten(1), dim=1)
+    torch.testing.assert_close(r0_norm, torch.full_like(r0_norm, xi))
+    r_adv_norm = torch.linalg.vector_norm((x_adv - x_hat).flatten(1), dim=1)
+    torch.testing.assert_close(r_adv_norm, torch.full_like(r_adv_norm, radius))
+
+
+def test_adversarial_quotient_approximates_gradient_norm_and_beats_random() -> None:
+    """For small `xi`/`radius`, `q` approximates `‖grad_x D(x_hat)‖` and exceeds the random quotient."""
+    torch.manual_seed(0)
+    small = 1e-4
+    inner = _MLPCritic().double()
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE, dtype=torch.float64)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE, dtype=torch.float64)
+    y_data = torch.randn(BATCH_SIZE, Y_SIZE, dtype=torch.float64)
+
+    seed = 42
+    spy = _SpyCritic(inner)
+    torch.manual_seed(seed)
+    dlog_adv: dict[str, float] = {}
+    gradient_penalty_lip_fd_adversarial(
+        spy, x_gen, x_data, y_data, xi=small, radius=small, dlog=dlog_adv
+    )
+
+    torch.manual_seed(seed)
+    dlog_random: dict[str, float] = {}
+    gradient_penalty_lip_fd_random(
+        inner, x_gen, x_data, y_data, radius=small, dlog=dlog_random
+    )
+
+    # recompute the reference gradient norm at `x_hat` (the spy's first call)
+    # independently, with an ordinary `torch.autograd.grad` call
+    x_hat = spy.inputs[0].detach().requires_grad_()
+    d_ref = inner(x_hat, y_data)
+    (grad_ref,) = torch.autograd.grad(d_ref.sum(), x_hat)
+    grad_norm_ref = torch.linalg.vector_norm(grad_ref.flatten(1), dim=1)
+
+    torch.testing.assert_close(
+        torch.tensor(dlog_adv["lip_quotient"], dtype=torch.float64),
+        grad_norm_ref.mean(),
+        rtol=2e-2,
+        atol=1e-6,
+    )
+    # the random direction only sees a `1/sqrt(d)`-ish fraction of the slope
+    assert dlog_adv["lip_quotient"] >= dlog_random["lip_quotient"]
+
+
+def test_adversarial_gradient_matches_analytic_value() -> None:
+    """`w.grad` equals `2 (‖w‖ - lip) w / ‖w‖`; fails if `d_hat`/`d_adv` were detached."""
+    torch.manual_seed(0)
+    w_norm = 2.0
+    d_net = _linear_critic_with_norm(X_SIZE, w_norm)
+    w = d_net.w.detach().clone()
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+
+    lip = w_norm - 0.5
+    penalty = gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None, lip=lip)
+    penalty.backward()
+
+    expected_grad = 2 * (w_norm - lip) * w / w_norm
+    assert d_net.w.grad is not None
+    torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
+
+
+def test_adversarial_search_does_not_touch_parameter_gradients() -> None:
+    """The direction search leaves every critic parameter's `.grad` at `None`."""
+    torch.manual_seed(0)
+    d_net = _MLPCritic()
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+    y_data = torch.randn(BATCH_SIZE, Y_SIZE)
+
+    gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, y_data)
+
+    for p in d_net.parameters():
+        assert p.grad is None
+
+
+def test_adversarial_direction_search_uses_unwrap_net(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The search runs on `unwrap_net(d_net)`'s return value, called once with `d_net`."""
+    torch.manual_seed(0)
+    d_net = _MLPCritic()
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+    y_data = torch.randn(BATCH_SIZE, Y_SIZE)
+
+    calls: list[torch.nn.Module] = []
+    spies: list[_SpyCritic] = []
+
+    def fake_unwrap_net(net: torch.nn.Module) -> torch.nn.Module:
+        calls.append(net)
+        spy = _SpyCritic(net)
+        spies.append(spy)
+        return spy
+
+    monkeypatch.setattr("dlk.opt.distributed.unwrap_net", fake_unwrap_net)
+
+    gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, y_data)
+
+    assert calls == [d_net]
+    assert len(spies) == 1
+    assert len(spies[0].inputs) == 1
+    assert spies[0].inputs[0].requires_grad
+
+
+def test_adversarial_flat_critic_direction_fallback_is_finite() -> None:
+    """A critic flat in `x` falls back to the random direction and gives a finite 0 penalty."""
+    torch.manual_seed(0)
+    d_net = _FlatCritic()
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+
+    penalty = gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None)
+    assert torch.isfinite(penalty)
+    torch.testing.assert_close(penalty, torch.zeros_like(penalty))
