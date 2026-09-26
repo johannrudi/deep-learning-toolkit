@@ -387,8 +387,11 @@ def _train_step_discriminator(
             # generate outputs with `g_net` without tracking gradients
             # NOTE: `no_grad` (not `.detach()`) keeps a DDP-wrapped `g_net` from arming
             #       its gradient reducer for a backward pass that never happens
+            # NOTE: `.clone()` copies the output out of the CUDA-graph memory pool
+            #       (compile modes "reduce-overhead", "max-autotune"); otherwise
+            #       the next compiled call starts a new generation and overwrites it
             with torch.no_grad():
-                x_gen = g_net(y_data, z)
+                x_gen = g_net(y_data, z).clone()
 
             # evalutate discriminator
             d_outputs_gen = d_net(x_gen, y_data)
@@ -578,6 +581,9 @@ def train_batches(
         # set networks to training mode
         g_net.train()
         d_net.train()
+
+        # mark a new iteration for CUDA graphs (no-op without them)
+        torch.compiler.cudagraph_mark_step_begin()
 
         # start iteration timer
         time_step = time.perf_counter()
