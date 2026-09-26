@@ -2,6 +2,7 @@ import argparse
 import json
 import pathlib
 import re
+import sys
 import tomllib as toml
 from typing import Any
 
@@ -235,55 +236,78 @@ def save(
             yaml.safe_dump(params, f, default_flow_style=False, sort_keys=False)
 
 
-def _update_existing_nested_parameters(
+def _update_nested_parameters(
     params: dict[str, Any],
     updates: dict[str, Any],
     key_prefix: str = "",
+    allow_new_keys: bool = False,
 ) -> None:
-    """Recursively update only existing keys in a nested parameter dictionary.
+    """Recursively update a nested parameter dictionary.
 
     Args:
         params (dict[str, Any]): Mutable parameter dictionary to update in place.
         updates (dict[str, Any]): Nested dictionary with proposed updates.
         key_prefix (str, optional): Dot-delimited key path used for warnings.
             Defaults to ``""``.
+        allow_new_keys (bool, optional): If True, a key with no counterpart in
+            ``params`` is added instead of being ignored. Defaults to False,
+            which only updates keys that already exist (protects against typos
+            in the override).
 
     Returns:
         None: Updates ``params`` in place.
     """
     for key, value in updates.items():
         current_key_path = f"{key_prefix}.{key}" if key_prefix else key
+
         if key not in params:
-            print(
-                f"Warning: parameter {repr(current_key_path)} does not exist and is ignored"
-            )
+            if allow_new_keys:
+                print(
+                    f"Info: parameter {repr(current_key_path)} did not exist and was added"
+                )
+                params[key] = value
+            else:
+                print(
+                    f"Warning: parameter {repr(current_key_path)} does not exist and is ignored",
+                    file=sys.stderr,
+                )
             continue
 
         current_value = params[key]
-        if isinstance(current_value, dict) and not isinstance(value, dict):
-            print(f"Warning: expected dict, but got value {repr(value)} and is ignored")
-            continue
 
         if isinstance(current_value, dict) and isinstance(value, dict):
             # recurse into nested dictionaries when both values are dictionaries
-            _update_existing_nested_parameters(
+            _update_nested_parameters(
                 params=current_value,
                 updates=value,
                 key_prefix=current_key_path,
+                allow_new_keys=allow_new_keys,
             )
             continue
+
+        if isinstance(current_value, dict) and value is not None:
+            # `null` is an intentional "clear this" override, not a type mismatch
+            print(
+                f"Warning: expected dict, but got value {repr(value)} and is ignored",
+                file=sys.stderr,
+            )
+            continue
+
         params[key] = value
 
 
 def update_from_json(
     params: dict[str, Any],
     json_params: str,
+    allow_new_keys: bool = False,
 ) -> None:
-    """Update existing parameters from a JSON string.
+    """Update parameters from a JSON string.
 
     Args:
         json_params (str): JSON string with parameter updates.
         params (dict[str, Any]): Mutable parameter dictionary to update in place.
+        allow_new_keys (bool, optional): If True, ``json_params`` may add keys
+            not already present in ``params``. Defaults to False.
 
     Returns:
         None: Updates ``params`` in place.
@@ -299,18 +323,23 @@ def update_from_json(
     if not isinstance(updates, dict):
         raise ValueError("json_params must decode to a dictionary.")
 
-    _update_existing_nested_parameters(params=params, updates=updates)
+    _update_nested_parameters(
+        params=params, updates=updates, allow_new_keys=allow_new_keys
+    )
 
 
 def update_from_toml(
     params: dict[str, Any],
     toml_params: str,
+    allow_new_keys: bool = False,
 ) -> None:
-    """Update existing parameters from a TOML string.
+    """Update parameters from a TOML string.
 
     Args:
         toml_params (str): TOML string with parameter updates.
         params (dict[str, Any]): Mutable parameter dictionary to update in place.
+        allow_new_keys (bool, optional): If True, ``toml_params`` may add keys
+            not already present in ``params``. Defaults to False.
 
     Returns:
         None: Updates ``params`` in place.
@@ -323,30 +352,9 @@ def update_from_toml(
     except toml.TOMLDecodeError as error:
         raise ValueError("toml_params is not valid TOML.") from error
 
-    _update_existing_nested_parameters(params=params, updates=updates)
-
-
-def update_runconfig_params_from_args(
-    runconfig_params: dict[str, Any],
-    args: argparse.Namespace | None,
-) -> None:
-    """Update run configuration parameters from parsed command line arguments.
-
-    Args:
-        runconfig_params (dict): Mutable run configuration dictionary to update.
-        args (argparse.Namespace | None): Parsed command line arguments.
-
-    Returns:
-        None: Updates ``runconfig_params`` in place.
-    """
-    if not args:
-        return
-
-    # copy arguments to runconfig parameters
-    for key, value in list(vars(args).items()):
-        if value is None:
-            continue
-        runconfig_params[key] = value
+    _update_nested_parameters(
+        params=params, updates=updates, allow_new_keys=allow_new_keys
+    )
 
 
 def add_args_to_parser(
@@ -366,25 +374,34 @@ def add_args_to_parser(
     )
     parser.add_argument(
         "-j",
-        "--json_params",
+        "--json-params",
         default=None,
         help="JSON string to override parameters from the `--params` file",
     )
     parser.add_argument(
         "-t",
-        "--toml_params",
+        "--toml-params",
         default=None,
         help="TOML string to override parameters from the `--params` file",
     )
     parser.add_argument(
+        "--allow-new-params",
+        action="store_true",
+        help=(
+            "Allow `--json-params`/`--toml-params` to add keys not already"
+            " present in `--params` (default: unknown keys are ignored with"
+            " a warning)"
+        ),
+    )
+    parser.add_argument(
         "-s",
-        "--save_dir",
+        "--save-dir",
         default=None,
         help="Directory for saving the network and all outputs",
     )
     parser.add_argument(
         "-l",
-        "--load_dir",
+        "--load-dir",
         default=None,
         help="Directory for loading a network",
     )
@@ -410,3 +427,49 @@ def add_args_to_parser(
             + " Combinations like train_eval are possible."
         ),
     )
+
+
+def override_runconfig_from_args(
+    runconfig: dict[str, Any],
+    args: argparse.Namespace | None,
+) -> None:
+    """Update run configuration parameters from parsed command line arguments.
+
+    Args:
+        runconfig (dict): Mutable run configuration dictionary to update.
+        args (argparse.Namespace | None): Parsed command line arguments.
+
+    Returns:
+        None: Updates ``runconfig`` in place.
+    """
+    if not args:
+        return
+
+    # copy arguments to runconfig parameters
+    for key, value in list(vars(args).items()):
+        if value is None:
+            continue
+        runconfig[key] = value
+
+
+def override_params_from_args(
+    params: dict[str, Any],
+    args: argparse.Namespace,
+) -> None:
+    """Apply the `--json-params`/`--toml-params` CLI overrides onto `params`.
+
+    Companion to `add_args_to_parser`, which defines the `json_params`,
+    `toml_params`, and `allow_new_params` attributes this function reads.
+
+    Args:
+        params (dict[str, Any]): Mutable parameter dictionary to update in place.
+        args (argparse.Namespace): Parsed command line arguments, as produced
+            by a parser set up with `add_args_to_parser`.
+
+    Returns:
+        None: Updates ``params`` in place.
+    """
+    if args.json_params is not None:
+        update_from_json(params, args.json_params, allow_new_keys=args.allow_new_params)
+    if args.toml_params is not None:
+        update_from_toml(params, args.toml_params, allow_new_keys=args.allow_new_params)

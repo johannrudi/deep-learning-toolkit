@@ -119,9 +119,9 @@ def test_update_parameters_from_json_updates_nested_keys_and_warns_for_unknown(
         "seed": 11,
     }
     captured = capsys.readouterr()
-    assert "Warning: parameter 'train.optimizer.beta1' does not exist" in captured.out
-    assert "Warning: parameter 'train.missing' does not exist" in captured.out
-    assert "Warning: parameter 'ghost' does not exist" in captured.out
+    assert "Warning: parameter 'train.optimizer.beta1' does not exist" in captured.err
+    assert "Warning: parameter 'train.missing' does not exist" in captured.err
+    assert "Warning: parameter 'ghost' does not exist" in captured.err
 
 
 def test_update_parameters_from_json_raises_for_invalid_json() -> None:
@@ -171,9 +171,9 @@ beta1 = 0.9
         "seed": 11,
     }
     captured = capsys.readouterr()
-    assert "Warning: parameter 'train.optimizer.beta1' does not exist" in captured.out
-    assert "Warning: parameter 'train.missing' does not exist" in captured.out
-    assert "Warning: parameter 'ghost' does not exist" in captured.out
+    assert "Warning: parameter 'train.optimizer.beta1' does not exist" in captured.err
+    assert "Warning: parameter 'train.missing' does not exist" in captured.err
+    assert "Warning: parameter 'ghost' does not exist" in captured.err
 
 
 def test_update_parameters_from_toml_raises_for_invalid_toml() -> None:
