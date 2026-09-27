@@ -1,4 +1,4 @@
-"""Tests for the opt-in `d_outputs_gen`/`d_outputs_data` keywords in `dlk.opt.train_gan`."""
+"""Tests for the mandatory `d_outputs_gen`/`d_outputs_data` keywords and `d_reg_autocast` in `dlk.opt.train_gan`."""
 
 import functools
 from collections.abc import Callable
@@ -99,8 +99,8 @@ def _train(
     """Seed, build a tiny GAN and dataloader, and run `train_epochs` with shared defaults.
 
     `overrides` merges into the `train_epochs` keyword arguments (`loss_fn`,
-    `n_epochs`, `d_opt_pre`, `d_opt_post`, `autocast_dtype`, ...). Returns the
-    epoch-level dlog and the trained `d_net`.
+    `n_epochs`, `d_opt_pre`, `d_opt_post`, `autocast_dtype`, `d_reg_autocast`,
+    ...). Returns the epoch-level dlog and the trained `d_net`.
     """
     torch.manual_seed(0)
     g_net, d_net, g_optimizer, d_optimizer = _build_gan()
@@ -141,9 +141,8 @@ def _make_recording_loss_fn() -> (
     return loss_fn, calls
 
 
-def test_regularizer_declaring_only_gen_receives_only_that_keyword() -> None:
-    """A regularizer declaring only `d_outputs_gen` is called with only that keyword."""
-    received: list[torch.Tensor] = []
+def test_regularizer_ignoring_both_keywords_trains() -> None:
+    """A closure that declares (with `None` defaults) but ignores both keywords still trains."""
 
     def d_reg_fn(
         d_net: torch.nn.Module,
@@ -151,32 +150,11 @@ def test_regularizer_declaring_only_gen_receives_only_that_keyword() -> None:
         x_data: torch.Tensor,
         y_data: torch.Tensor,
         *,
+        dlog: dict[str, float] | None = None,
         d_outputs_gen: torch.Tensor | None = None,
-        dlog: dict[str, float] | None = None,
+        d_outputs_data: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        assert d_outputs_gen is not None
-        received.append(d_outputs_gen)
-        return d_outputs_gen.new_tensor(0.0)
-
-    # `d_reg_fn` has no `d_outputs_data` parameter and no `**kwargs`; if the
-    # loop tried to pass it anyway, this call would raise `TypeError`.
-    _train(d_reg_fn, d_opt_pre=1, d_opt_post=0)
-
-    # exactly one discriminator step per batch, each calling `d_reg_fn` once
-    assert len(received) == N_BATCHES
-
-
-def test_fixed_signature_closure_runs_with_no_unexpected_keyword() -> None:
-    """A closure with the fixed `fhn_gan`/`mops_gan` signature still runs."""
-
-    def d_reg_fn(
-        d_net: torch.nn.Module,
-        x_gen: torch.Tensor,
-        x_data: torch.Tensor,
-        y_data: torch.Tensor,
-        *,
-        dlog: dict[str, float] | None = None,
-    ) -> torch.Tensor:
+        del x_gen, d_outputs_gen, d_outputs_data
         penalty = 0.1 * d_net(x_data, y_data).square().mean()
         if dlog is not None:
             dlog["reg"] = penalty.item()
@@ -190,7 +168,7 @@ def test_fixed_signature_closure_runs_with_no_unexpected_keyword() -> None:
 def _both_keywords_regularizer() -> (
     tuple[DiscriminatorRegularizerFn, list[dict[str, torch.Tensor]]]
 ):
-    """Build a regularizer that declares both opt-in keywords, recording every call."""
+    """Build a regularizer that records the `d_outputs_gen`/`d_outputs_data` it is called with."""
     calls: list[dict[str, torch.Tensor]] = []
 
     def d_reg_fn(
@@ -203,6 +181,7 @@ def _both_keywords_regularizer() -> (
         d_outputs_data: torch.Tensor | None = None,
         dlog: dict[str, float] | None = None,
     ) -> torch.Tensor:
+        del d_net, x_gen, x_data, y_data, dlog
         assert d_outputs_gen is not None and d_outputs_data is not None
         calls.append({"d_outputs_gen": d_outputs_gen, "d_outputs_data": d_outputs_data})
         return d_outputs_gen.new_tensor(0.0)
@@ -211,10 +190,10 @@ def _both_keywords_regularizer() -> (
 
 
 @pytest.mark.parametrize("autocast_dtype", [None, torch.bfloat16])
-def test_regularizer_declaring_both_keywords_receives_matching_full_batch_float32(
+def test_regularizer_receives_matching_full_batch_float32_by_default(
     autocast_dtype: torch.dtype | None,
 ) -> None:
-    """Both keywords carry full-batch, `float32`, graph-attached copies of the loss's outputs."""
+    """With `d_reg_autocast=False` (default), both keywords carry `float32` copies of the loss's outputs."""
     loss_fn, loss_calls = _make_recording_loss_fn()
     d_reg_fn, reg_calls = _both_keywords_regularizer()
 
@@ -240,8 +219,70 @@ def test_regularizer_declaring_both_keywords_receives_matching_full_batch_float3
         torch.testing.assert_close(d_outputs_data, loss_data.float())
 
 
+def test_autocast_d_reg_fn_skips_the_float32_cast() -> None:
+    """With `d_reg_autocast=True` under `bfloat16` autocast, the keywords keep the autocast dtype."""
+    d_reg_fn, reg_calls = _both_keywords_regularizer()
+
+    _train(
+        d_reg_fn,
+        d_opt_pre=1,
+        d_opt_post=0,
+        autocast_dtype=torch.bfloat16,
+        autocast_d_reg_fn=True,
+    )
+
+    assert len(reg_calls) == N_BATCHES
+    for reg_call in reg_calls:
+        assert reg_call["d_outputs_gen"].dtype == torch.bfloat16
+        assert reg_call["d_outputs_data"].dtype == torch.bfloat16
+
+
+def test_autocast_d_reg_fn_wraps_the_regularizer_call_in_autocast() -> None:
+    """`autocast_d_reg_fn=True` runs `d_reg_fn` (and any fresh `d_net` call inside it) under autocast.
+
+    With `autocast_d_reg_fn=False` (default), the same `d_net` call runs at full
+    precision, since `d_reg_fn` sits outside the forward pass's autocast
+    context.
+    """
+    dtypes_seen: list[torch.dtype] = []
+
+    def d_reg_fn(
+        d_net: torch.nn.Module,
+        x_gen: torch.Tensor,
+        x_data: torch.Tensor,
+        y_data: torch.Tensor,
+        *,
+        dlog: dict[str, float] | None = None,
+        d_outputs_gen: torch.Tensor | None = None,
+        d_outputs_data: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        del x_gen, d_outputs_gen, d_outputs_data, dlog
+        penalty = d_net(x_data, y_data).square().mean()
+        dtypes_seen.append(penalty.dtype)
+        return 0.1 * penalty.float()
+
+    _train(
+        d_reg_fn,
+        d_opt_pre=1,
+        d_opt_post=0,
+        autocast_dtype=torch.bfloat16,
+        autocast_d_reg_fn=True,
+    )
+    assert all(dtype == torch.bfloat16 for dtype in dtypes_seen)
+
+    dtypes_seen.clear()
+    _train(
+        d_reg_fn,
+        d_opt_pre=1,
+        d_opt_post=0,
+        autocast_dtype=torch.bfloat16,
+        autocast_d_reg_fn=False,
+    )
+    assert all(dtype == torch.float32 for dtype in dtypes_seen)
+
+
 def _scenario_functools_partial() -> None:
-    """`functools.partial` of a function declaring both opt-in keywords, with an extra bound arg."""
+    """`functools.partial` of a function declaring both keywords, with an extra bound arg."""
     received: list[dict[str, torch.Tensor]] = []
 
     def reg_fn(
@@ -255,6 +296,7 @@ def _scenario_functools_partial() -> None:
         d_outputs_data: torch.Tensor | None = None,
         dlog: dict[str, float] | None = None,
     ) -> torch.Tensor:
+        del d_net, x_gen, x_data, y_data, dlog
         assert d_outputs_gen is not None and d_outputs_data is not None
         received.append(
             {"d_outputs_gen": d_outputs_gen, "d_outputs_data": d_outputs_data}
@@ -267,29 +309,8 @@ def _scenario_functools_partial() -> None:
     assert all({"d_outputs_gen", "d_outputs_data"} == set(c) for c in received)
 
 
-def _scenario_kwargs_closure() -> None:
-    """A regularizer accepting `**kwargs` receives both opt-in keywords through it."""
-    received: list[dict[str, torch.Tensor]] = []
-
-    def reg_fn(
-        d_net: torch.nn.Module,
-        x_gen: torch.Tensor,
-        x_data: torch.Tensor,
-        y_data: torch.Tensor,
-        dlog: dict[str, float] | None = None,
-        **kwargs: torch.Tensor,
-    ) -> torch.Tensor:
-        received.append(dict(kwargs))
-        return x_data.new_tensor(0.0)
-
-    _train(reg_fn, d_opt_pre=1, d_opt_post=0)
-
-    assert len(received) == N_BATCHES
-    assert all({"d_outputs_gen", "d_outputs_data"} == set(c) for c in received)
-
-
 def _scenario_callable_class() -> None:
-    """A callable class instance, with the opt-in keywords declared on `__call__`."""
+    """A callable class instance, with both keywords declared on `__call__`."""
 
     class _Regularizer:
         def __init__(self) -> None:
@@ -320,7 +341,7 @@ def _scenario_callable_class() -> None:
 
 
 def _scenario_module_both_keywords() -> None:
-    """An `nn.Module` regularizer, with the opt-in keywords declared on `forward`."""
+    """An `nn.Module` regularizer, with both keywords declared on `forward`."""
 
     class _Regularizer(torch.nn.Module):
         def __init__(self) -> None:
@@ -351,59 +372,29 @@ def _scenario_module_both_keywords() -> None:
     assert all({"d_outputs_gen", "d_outputs_data"} == set(c) for c in reg_fn.calls)
 
 
-def _scenario_module_fixed_signature() -> None:
-    """An `nn.Module` regularizer with the fixed signature (no opt-in keywords) trains.
-
-    Regression: `inspect.signature` on the module instance itself reports
-    `Module.__call__`'s `(*args, **kwargs)`, not `forward`'s actual
-    parameters. Before `_critic_output_kwargs` inspected `forward` directly,
-    this made the loop think the module accepted every opt-in keyword and
-    pass them, raising `TypeError` from `forward`.
-    """
-
-    class _Regularizer(torch.nn.Module):
-        def forward(
-            self,
-            d_net: torch.nn.Module,
-            x_gen: torch.Tensor,
-            x_data: torch.Tensor,
-            y_data: torch.Tensor,
-            *,
-            dlog: dict[str, float] | None = None,
-        ) -> torch.Tensor:
-            return 0.1 * d_net(x_data, y_data).square().mean()
-
-    epoch_dlog, _ = _train(_Regularizer(), d_opt_pre=1, d_opt_post=0)
-
-    assert epoch_dlog["d_pre_reg_mean"].shape == (1,)
-
-
 @pytest.mark.parametrize(
     "scenario",
     [
         _scenario_functools_partial,
-        _scenario_kwargs_closure,
         _scenario_callable_class,
         _scenario_module_both_keywords,
-        _scenario_module_fixed_signature,
     ],
     ids=[
         "functools_partial",
-        "kwargs_closure",
         "callable_class",
         "module_both_keywords",
-        "module_fixed_signature",
     ],
 )
-def test_regularizer_forms_receive_declared_keywords(
+def test_regularizer_forms_receive_both_keywords(
     scenario: Callable[[], None],
 ) -> None:
-    """Each regularizer form trains and, if it declares opt-in keywords, receives them."""
+    """Each regularizer form trains and receives both mandatory keywords."""
     scenario()
 
 
-def test_endpoint_closure_trains_and_logs_positive_lip_quotient() -> None:
-    """The Section 6 endpoint closure trains for a few steps and logs a positive `lip_quotient`."""
+def test_endpoint_closure_trains_and_logs_positive_penalty_value() -> None:
+    """The Section 6 endpoint closure trains for a few steps and logs a positive
+    `grad_norm_fd`."""
     reg_param = 0.1
 
     def d_reg_fn(
@@ -416,6 +407,7 @@ def test_endpoint_closure_trains_and_logs_positive_lip_quotient() -> None:
         d_outputs_data: torch.Tensor | None = None,
         dlog: dict[str, float] | None = None,
     ) -> torch.Tensor:
+        del d_net, y_data
         assert d_outputs_gen is not None and d_outputs_data is not None
         return reg_param * gradient_penalty_lip_fd_endpoint(
             x_gen=x_gen,
@@ -432,9 +424,9 @@ def test_endpoint_closure_trains_and_logs_positive_lip_quotient() -> None:
     torch.manual_seed(0)
     _, d_net_init, _, _ = _build_gan()
 
-    assert (epoch_dlog["d_pre_lip_quotient_mean"] > 0.0).all()
+    assert (epoch_dlog["d_pre_grad_norm_fd_mean"] > 0.0).all()
     assert (
-        epoch_dlog["d_post_lip_quotient_mean"] > 0.0
+        epoch_dlog["d_post_grad_norm_fd_mean"] > 0.0
     ).all()  # d_opt_post defaults to 1
     changed = [
         not torch.equal(p_before, p_after)
@@ -453,14 +445,14 @@ def test_endpoint_closure_trains_and_logs_positive_lip_quotient() -> None:
         gradient_penalty_lip_fd_adversarial,
     ],
 )
-def test_fixed_signature_penalty_closures_train_without_keyerror(
+def test_penalty_closures_ignoring_both_keywords_train_without_keyerror(
     penalty_fn: Callable[..., torch.Tensor],
 ) -> None:
-    """Segment, random, and adversarial closures, called with the fixed signature, train one epoch.
+    """Segment, random, and adversarial closures, ignoring both keywords, train one epoch.
 
-    Regression guard: these penalties log `lip_quotient`/`lip_quotient_max`
-    through the same `dlog` path as the endpoint variant, which
-    `monitor.batch_update` only accepts for tags in `MONITOR_BASENAMES`.
+    Regression guard: these penalties log `grad_norm_fd` through the same
+    `dlog` path as the endpoint variant, which `monitor.batch_update` only
+    accepts for tags in `MONITOR_BASENAMES`.
     """
 
     def d_reg_fn(
@@ -470,7 +462,10 @@ def test_fixed_signature_penalty_closures_train_without_keyerror(
         y_data: torch.Tensor,
         *,
         dlog: dict[str, float] | None = None,
+        d_outputs_gen: torch.Tensor | None = None,
+        d_outputs_data: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        del d_outputs_gen, d_outputs_data
         return 0.1 * penalty_fn(d_net, x_gen, x_data, y_data, dlog=dlog)
 
     _train(d_reg_fn)

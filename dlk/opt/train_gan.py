@@ -1,14 +1,14 @@
 """Reusable epoch- and batch-level training loops for GAN models."""
 
+import contextlib
 import enum
-import inspect
 import logging
 import math
 import pathlib
 import time
 from collections.abc import Callable
 from datetime import datetime
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, TypeAlias
 
 import torch
 from torch.profiler import record_function
@@ -35,18 +35,14 @@ MONITOR_BASENAMES = [
     "d_pre_loss_g",
     "d_pre_reg",
     "d_pre_grad_norm",
-    "d_pre_lip_quotient",
-    "d_pre_lip_quotient_max",
-    "d_pre_sn_max",
-    "d_pre_sn_mean",
+    "d_pre_grad_norm_fd",
+    "d_pre_spectral_norm",
     "d_post_loss",
     "d_post_loss_g",
     "d_post_reg",
     "d_post_grad_norm",
-    "d_post_lip_quotient",
-    "d_post_lip_quotient_max",
-    "d_post_sn_max",
-    "d_post_sn_mean",
+    "d_post_grad_norm_fd",
+    "d_post_spectral_norm",
     "time_step",
 ]
 
@@ -80,12 +76,13 @@ LatentSampleFn: TypeAlias = Callable[[int], torch.Tensor]
 class DiscriminatorRegularizerFn(Protocol):
     """Protocol for discriminator regularizers that optionally emit logs.
 
-    The loop also passes `d_outputs_gen` and `d_outputs_data` as keywords: the
-    loss's critic outputs, cast to `float32`, still attached to the autograd
-    graph. A regularizer receives them only if it declares them by name (an
-    `nn.Module` regularizer, by its `forward`) or accepts `**kwargs`. Declare
-    them with a `None` default (`d_outputs_gen: torch.Tensor | None = None`,
-    ...) to match this Protocol's fixed signature without a cast.
+    The loop always passes `d_outputs_gen` and `d_outputs_data` as keywords:
+    the loss's own critic outputs, still attached to the autograd graph. Every
+    conforming regularizer must accept them, even if it ignores both (a `None`
+    default, as declared here, is enough to ignore them). They are `float32`
+    unless the loop is called with `autocast_d_reg_fn=True`, in which case they
+    keep whatever dtype the forward pass's autocast produced; see
+    `train_epochs`.
     """
 
     def __call__(
@@ -96,32 +93,11 @@ class DiscriminatorRegularizerFn(Protocol):
         y_data: torch.Tensor,
         *,
         dlog: dict[str, float] | None = None,
+        d_outputs_gen: torch.Tensor | None = None,
+        d_outputs_data: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return a scalar regularization penalty for discriminator updates."""
         ...
-
-
-# Opt-in keyword names a regularizer may declare to receive the loss's critic
-# outputs; see `DiscriminatorRegularizerFn`.
-_CRITIC_OUTPUT_KWARGS = ("d_outputs_gen", "d_outputs_data")
-
-
-def _critic_output_kwargs(d_reg_fn: Callable[..., torch.Tensor]) -> tuple[str, ...]:
-    """Return the opt-in keyword names that `d_reg_fn` declares.
-
-    Returns all of them if `d_reg_fn` accepts `**kwargs`. Relies on
-    `inspect.signature` to see through `functools.partial` and callable
-    instances.
-    """
-    # `inspect.signature` on an `nn.Module` reports `Module.__call__`'s
-    # `(*args, **kwargs)`, not its actual parameters; inspect `forward`
-    # instead, unwrapping a compiled module first
-    target = getattr(d_reg_fn, "_orig_mod", d_reg_fn)
-    target = target.forward if isinstance(target, torch.nn.Module) else target
-    parameters = inspect.signature(target).parameters
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
-        return _CRITIC_OUTPUT_KWARGS
-    return tuple(name for name in _CRITIC_OUTPUT_KWARGS if name in parameters)
 
 
 # --------------------------------------
@@ -150,6 +126,7 @@ def train_epochs(
     epoch_initialize_fn: EpochHookFn | None = None,
     epoch_finalize_fn: EpochHookFn | None = None,
     autocast_dtype: torch.dtype | None = None,
+    autocast_d_reg_fn: bool = False,
 ) -> TrainLog:
     """Run the GAN training loop over epochs.
 
@@ -195,8 +172,12 @@ def train_epochs(
         epoch_finalize_fn: Optional callback invoked at the end of each epoch.
         autocast_dtype: Compute dtype for the autocast forward passes of both
             networks. Use `torch.bfloat16` for mixed precision, `None` or
-            `torch.float32` for full precision. `d_reg_fn` always runs in full
-            precision.
+            `torch.float32` for full precision. `d_reg_fn` runs in full
+            precision unless `autocast_d_reg_fn` is `True`.
+        autocast_d_reg_fn: If `True`, run `d_reg_fn` inside the same autocast
+            context as the forward passes, and leave `d_outputs_gen`/
+            `d_outputs_data` at whatever dtype that context produced, instead
+            of casting them to `float32`. See `DiscriminatorRegularizerFn`.
 
     Returns:
         Aggregated epoch-level training diagnostics.
@@ -283,6 +264,7 @@ def train_epochs(
                 device=device,
                 logger=logger,
                 autocast_dtype=autocast_dtype,
+                autocast_d_reg_fn=autocast_d_reg_fn,
             )
 
             # update the learning rate schedulers
@@ -393,6 +375,7 @@ def _train_step_discriminator(
     dlog_item: dict[str, float] | None = None,
     device: torch.device | None = None,
     autocast_dtype: torch.dtype | None = None,
+    autocast_d_reg_fn: bool = False,
 ) -> float:
     """Run one discriminator optimization step.
 
@@ -410,6 +393,10 @@ def _train_step_discriminator(
         autocast_dtype: Compute dtype for the autocast forward pass. Use
             `torch.bfloat16` for mixed precision, `None` or `torch.float32` for
             full precision.
+        autocast_d_reg_fn: If `True`, run `d_reg_fn` inside the same autocast
+            context as the forward pass, and leave `d_outputs_gen`/
+            `d_outputs_data` at whatever dtype that context produced, instead
+            of casting them to `float32`. See `DiscriminatorRegularizerFn`.
 
     Returns:
         Total discriminator loss value after regularization.
@@ -433,7 +420,7 @@ def _train_step_discriminator(
             with torch.no_grad():
                 x_gen = g_net(y_data, z).clone()
 
-            # evalutate discriminator
+            # evaluate discriminator
             d_outputs_gen = d_net(x_gen, y_data)
             d_outputs_data = d_net(x_data, y_data)
 
@@ -441,24 +428,30 @@ def _train_step_discriminator(
             # NOTE: output must have correct sign for minimization
             d_loss, d_loss_g = loss_fn(d_outputs_gen, d_outputs_data)
 
-    # evaluate the regularizer in full precision
+    # evaluate the regularizer in full precision, unless `autocast_d_reg_fn` opts out
     # NOTE: gradient penalties double-backward through the critic here;
     #       finite-difference penalties do not
     with record_function(RecordFunctionName.D_REGULARIZE):
         d_reg_dlog: dict[str, float] = {}
         if d_reg_fn is not None:
-            all_outputs = {
-                "d_outputs_gen": d_outputs_gen,
-                "d_outputs_data": d_outputs_data,
-            }
-            critic_outputs = {
-                name: all_outputs[name].float()
-                for name in _critic_output_kwargs(d_reg_fn)
-            }
-            # cast: `d_reg_fn` may declare the opt-in keywords, which this Protocol's fixed signature does not
-            d_reg = cast(Callable[..., torch.Tensor], d_reg_fn)(
-                d_net, x_gen, x_data, y_data, dlog=d_reg_dlog, **critic_outputs
-            )
+            if autocast_d_reg_fn:
+                reg_context = autocast_context(device, autocast_dtype)
+                d_outputs_gen_ = d_outputs_gen
+                d_outputs_data_ = d_outputs_data
+            else:
+                reg_context = contextlib.nullcontext()
+                d_outputs_gen_ = d_outputs_gen.float()
+                d_outputs_data_ = d_outputs_data.float()
+            with reg_context:
+                d_reg = d_reg_fn(
+                    d_net,
+                    x_gen,
+                    x_data,
+                    y_data,
+                    dlog=d_reg_dlog,
+                    d_outputs_gen=d_outputs_gen_,
+                    d_outputs_data=d_outputs_data_,
+                )
         else:
             d_reg = d_loss.new_tensor(0.0)
 
@@ -530,7 +523,7 @@ def _train_step_generator(
             # generate outputs with `g_net`
             x_gen = g_net(y_data, z)
 
-            # evalutate discriminator
+            # evaluate discriminator
             d_outputs_gen = d_net(x_gen, y_data)
 
             # evaluate discriminator loss
@@ -574,6 +567,7 @@ def train_batches(
     batch_finalize_fn: BatchHookFn | None = None,
     max_batches: int | None = None,
     autocast_dtype: torch.dtype | None = None,
+    autocast_d_reg_fn: bool = False,
 ) -> TrainLog:
     """Run the GAN training loop over batches for one epoch.
 
@@ -601,8 +595,12 @@ def train_batches(
         max_batches: Optional cap on number of processed batches.
         autocast_dtype: Compute dtype for the autocast forward passes of both
             networks. Use `torch.bfloat16` for mixed precision, `None` or
-            `torch.float32` for full precision. `d_reg_fn` always runs in full
-            precision.
+            `torch.float32` for full precision. `d_reg_fn` runs in full
+            precision unless `autocast_d_reg_fn` is `True`.
+        autocast_d_reg_fn: If `True`, run `d_reg_fn` inside the same autocast
+            context as the forward passes, and leave `d_outputs_gen`/
+            `d_outputs_data` at whatever dtype that context produced, instead
+            of casting them to `float32`. See `DiscriminatorRegularizerFn`.
 
     Returns:
         Batch-level diagnostics aggregated across the epoch.
@@ -665,6 +663,7 @@ def train_batches(
                 dlog_item=dlog_pre_buf,
                 device=device,
                 autocast_dtype=autocast_dtype,
+                autocast_d_reg_fn=autocast_d_reg_fn,
             )
             logger.debug(
                 f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, pre {i:2d}, "
@@ -705,6 +704,7 @@ def train_batches(
                 dlog_item=dlog_post_buf,
                 device=device,
                 autocast_dtype=autocast_dtype,
+                autocast_d_reg_fn=autocast_d_reg_fn,
             )
             logger.debug(
                 f"epoch {epoch_idx:6d}, batch {batch_idx:6d}, post {j:2d}, "

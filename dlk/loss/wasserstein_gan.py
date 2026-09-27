@@ -15,9 +15,23 @@ def wasserstein_loss_fn(
 ) -> tuple[torch.Tensor, torch.Tensor | None]:
     r"""Compute the Wasserstein value functions for critic or generator training steps.
 
+    The critic `D` approximates the maximizer of the Kantorovich-Rubinstein dual
+    form of the Wasserstein-1 distance between the data distribution
+    :math:`P_r` and the generator distribution :math:`P_g` (Villani 2009;
+    Arjovsky et al. 2017),
+
+    .. math::
+        W_1(P_r, P_g) = \sup_{\|f\|_L \le 1} \; E_{x \sim P_r}[f(x)] - E_{x \sim P_g}[f(x)],
+
+    which this function estimates over a batch as
+
     .. math::
         \ell_D = -E[ D(x_\mathrm{data}) ] + E[ D(x_\mathrm{gen}) ]
         \ell_G = -E[ D(x_\mathrm{gen}) ]
+
+    Any `K`-Lipschitz critic yields `K` times the true distance, so only `K`
+    needs to stay bounded; the exact value does not matter. `gradient_penalty_lip`,
+    `gradient_penalty_opt`, and the finite-difference penalties below constrain `K`.
 
     Args:
         d_outputs_gen: Critic outputs for generated samples. Pass during
@@ -30,6 +44,12 @@ def wasserstein_loss_fn(
             - The total critic loss term to minimize.
             - The generated-sample score term when both inputs are provided,
               otherwise ``None`` for generator-only updates.
+
+    References:
+        Villani, "Optimal Transport: Old and New", Springer 2009.
+
+        Arjovsky, Chintala, Bottou, "Wasserstein GAN", 2017.
+        https://arxiv.org/abs/1701.07875
     """
     assert d_outputs_gen is not None
 
@@ -44,6 +64,15 @@ def wasserstein_loss_fn(
     # loss for generator update
     w_loss = -torch.mean(d_outputs_gen)  # value to be minimized
     return w_loss, None
+
+
+def _critic(
+    d_net: Callable[..., torch.Tensor],
+    x: torch.Tensor,
+    y: torch.Tensor | None,
+) -> torch.Tensor:
+    """Score `x` with the critic, passing `y` only when it is given."""
+    return d_net(x, y) if y is not None else d_net(x)
 
 
 def gradient_norm_sq(
@@ -77,31 +106,77 @@ def gradient_norm_sq(
     stance = torch.compiler.set_stance("force_eager") if eager else nullcontext()
     with stance:
         if y_data is not None:
-            y_data.requires_grad = True
+            # detach and re-enable grad on a copy so the caller's tensor is left alone
+            y_data = y_data.detach().requires_grad_(True)
             grad_inputs = (x_hat, y_data)
         else:
             grad_inputs = x_hat
         d_outputs_hat = _critic(d_net, x_hat, y_data)
     # compute gradient
-    grad_outputs = torch.ones_like(d_outputs_hat, device=device)
+    grad_outputs = torch.ones_like(d_outputs_hat)
     grad = torch.autograd.grad(
         outputs=d_outputs_hat,
         inputs=grad_inputs,
         grad_outputs=grad_outputs,
         create_graph=True,  # needed for the gradient wrt. parameters during training
     )
-    # compute the squared l2-norm of the gradient
-    grad_x = grad[0].view(batch_size, -1)
-    grad_x_norm = torch.sum(torch.square(grad_x), dim=1)
+    # compute the squared l2-norm of the gradient; `flatten(1)`, unlike
+    # `.view(batch_size, -1)`, also works on non-contiguous gradients
+    grad_x = grad[0].flatten(1)
+    grad_x_norm_sq = torch.sum(torch.square(grad_x), dim=1)
     if y_data is not None:
-        grad_y = grad[1].view(batch_size, -1)
-        grad_y_norm = torch.sum(torch.square(grad_y), dim=1)
-        grad_norm_sq = torch.add(grad_x_norm, grad_y_norm)
+        grad_y = grad[1].flatten(1)
+        grad_y_norm_sq = torch.sum(torch.square(grad_y), dim=1)
+        grad_norm_sq = torch.add(grad_x_norm_sq, grad_y_norm_sq)
     else:
-        grad_norm_sq = grad_x_norm
+        grad_norm_sq = grad_x_norm_sq
     return grad_norm_sq
 
 
+# tiny margin added before `sqrt` in the two-sided penalty; a zero gradient
+# norm otherwise yields an infinite derivative and NaN parameter gradients
+_GRAD_NORM_SQRT_EPS = 1e-12
+# TODO: delete after fixing below
+
+
+# TODO: delete after putting into new function gradient_penalty
+def _autograd_gradient_penalty(
+    grad_norm_sq: torch.Tensor,
+    lip: float,
+    one_sided: bool,
+    eps: float,
+    dlog: dict[str, float] | None,
+) -> torch.Tensor:
+    """Compute the autograd gradient penalty shared by the two variants below.
+
+    Args:
+        grad_norm_sq: Per-sample squared gradient norm, from `gradient_norm_sq`.
+        lip: Target Lipschitz constant `k`; `gradient_penalty_opt` fixes it at 1.
+        one_sided: ``True`` for the one-sided penalty on the squared norm used
+            by `gradient_penalty_lip`; ``False`` for the two-sided penalty on
+            the norm itself used by `gradient_penalty_opt`.
+        eps: One-sided margin added before thresholding at ``lip * lip``.
+            Ignored when `one_sided` is ``False``.
+        dlog: Optional dictionary for logging summary statistics.
+
+    Returns:
+        Scalar gradient penalty term.
+    """
+    if one_sided:
+        grad_norm = torch.sqrt(grad_norm_sq.detach())  # only for logging purposes
+        grad_penalty = F.relu(grad_norm_sq + eps - lip * lip).mean()
+    else:
+        # TODO: this does not make sense; it should not take a sqrt, too; see ^
+        grad_norm = torch.sqrt(grad_norm_sq + _GRAD_NORM_SQRT_EPS)
+        grad_penalty = ((grad_norm - lip) ** 2).mean()
+    # log to dictionary
+    if dlog is not None:
+        dlog["grad_norm"] = grad_norm.detach().mean().item()
+    return grad_penalty
+
+
+# TODO: this function should be just gradient_penalty, and a kwarg one_sided sets the
+# two versions
 def gradient_penalty_lip(
     d_net: Callable[..., torch.Tensor],
     x_gen: torch.Tensor,
@@ -113,34 +188,57 @@ def gradient_penalty_lip(
     eager: bool = False,
     dlog: dict[str, float] | None = None,
 ) -> torch.Tensor:
-    """Compute the regularization term for the critic network.
+    r"""Compute a one-sided Lipschitz penalty on the squared gradient norm.
 
-    This penalizes gradients greater `k` to achieve k-Lipschitz continuity.
+    Draws a random interpolate between `x_gen` and `x_data`,
+
+    .. math::
+        \hat{x} = \epsilon \, x_\mathrm{data} + (1 - \epsilon) \, x_\mathrm{gen},
+        \qquad \epsilon \sim U(0, 1),
+
+    and penalizes the squared norm of the critic's gradient at :math:`\hat{x}`
+    (and, for a conditional critic, at `y_data`; see `gradient_norm_sq`)
+    whenever it exceeds the target Lipschitz constant `lip`,
+
+    .. math::
+        g = \nabla_{(x, y)} D(\hat{x}, y_\mathrm{data}), \qquad
+        \mathcal{R} = E[\mathrm{relu}(\|g\|^2 + \varepsilon - \mathtt{lip}^2)],
+
+    with a margin :math:`\varepsilon` (argument `eps`). This is a one-sided
+    variant in the spirit of WGAN-LP (Petzka et al. 2018), applied to the
+    squared norm rather than the norm itself: WGAN-LP penalizes
+    :math:`E[\mathrm{relu}(\|g\| - \mathtt{lip})^2]`; this function's form
+    penalizes the same set of points, with a different shape of penalty.
 
     Args:
         d_net: Critic network used to score interpolated samples.
         x_gen: Generated samples from the model.
         x_data: Real data samples.
         y_data: Optional conditional inputs passed to the critic.
-        lip: Target Lipschitz constant.
-        eps: Numerical margin added before thresholding.
+        lip: Target Lipschitz constant `k`. The penalty is zero while the
+            gradient norm stays at or below `lip` (up to the margin `eps`).
+        eps: Margin added to the squared gradient norm before comparing to
+            ``lip * lip``.
         device: Device used to sample interpolation coefficients.
         eager: Whether to run the critic in eager mode; see `gradient_norm_sq`.
         dlog: Optional dictionary for logging summary statistics.
 
     Returns:
         Scalar gradient penalty term.
+
+    References:
+        Gulrajani, Ahmed, Arjovsky, Dumoulin, Courville, "Improved Training of
+        Wasserstein GANs", NeurIPS 2017. https://arxiv.org/abs/1704.00028
+
+        Petzka, Fischer, Lukovnikov, "On the Regularization of Wasserstein
+        GANs", ICLR 2018. https://arxiv.org/abs/1709.08894
     """
     grad_norm_sq = gradient_norm_sq(
         d_net, x_gen, x_data, y_data=y_data, device=device, eager=eager
     )
-    grad_norm = torch.sqrt(grad_norm_sq.detach())  # only for logging purposes
-    grad_penalty = F.relu(grad_norm_sq + eps - lip * lip).mean()
-    # log to dictionary
-    if dlog is not None:
-        assert isinstance(dlog, dict), type(dlog)
-        dlog["grad_norm"] = grad_norm.detach().mean().item()
-    return grad_penalty
+    return _autograd_gradient_penalty(
+        grad_norm_sq, lip=lip, one_sided=True, eps=eps, dlog=dlog
+    )
 
 
 def gradient_penalty_opt(
@@ -152,10 +250,26 @@ def gradient_penalty_opt(
     eager: bool = False,
     dlog: dict[str, float] | None = None,
 ) -> torch.Tensor:
-    """Compute the regularization term for the critic network.
+    r"""Compute the two-sided WGAN-GP gradient penalty.
 
-    This achieves the optimal Kantorovich potential in the Kantorovich–Rubinstein
-    duality.
+    Draws a random interpolate between `x_gen` and `x_data`,
+
+    .. math::
+        \hat{x} = \epsilon \, x_\mathrm{data} + (1 - \epsilon) \, x_\mathrm{gen},
+        \qquad \epsilon \sim U(0, 1),
+
+    and penalizes any deviation of the critic's gradient norm at
+    :math:`\hat{x}` (and, for a conditional critic, at `y_data`; see
+    `gradient_norm_sq`) from 1, the norm attained by the optimal critic on
+    segments between coupled real and generated points (Gulrajani et al.
+    2017, Proposition 1),
+
+    .. math::
+        g = \nabla_{(x, y)} D(\hat{x}, y_\mathrm{data}), \qquad
+        \mathcal{R} = E[(\|g\| - 1)^2].
+
+    This achieves the optimal Kantorovich potential in the
+    Kantorovich–Rubinstein duality (see `wasserstein_loss_fn`).
 
     Args:
         d_net: Critic network used to score interpolated samples.
@@ -168,26 +282,17 @@ def gradient_penalty_opt(
 
     Returns:
         Scalar gradient penalty term.
+
+    References:
+        Gulrajani, Ahmed, Arjovsky, Dumoulin, Courville, "Improved Training of
+        Wasserstein GANs", NeurIPS 2017. https://arxiv.org/abs/1704.00028
     """
     grad_norm_sq = gradient_norm_sq(
         d_net, x_gen, x_data, y_data=y_data, device=device, eager=eager
     )
-    grad_norm = torch.sqrt(grad_norm_sq)
-    grad_penalty = ((grad_norm - 1.0) ** 2).mean()
-    # log to dictionary
-    if dlog is not None:
-        assert isinstance(dlog, dict), type(dlog)
-        dlog["grad_norm"] = grad_norm.detach().mean().item()
-    return grad_penalty
-
-
-def _critic(
-    d_net: Callable[..., torch.Tensor],
-    x: torch.Tensor,
-    y: torch.Tensor | None,
-) -> torch.Tensor:
-    """Score `x` with the critic, passing `y` only when it is given."""
-    return d_net(x, y) if y is not None else d_net(x)
+    return _autograd_gradient_penalty(
+        grad_norm_sq, lip=1.0, one_sided=False, eps=0.0, dlog=dlog
+    )
 
 
 def _segment_coefficients(
@@ -210,7 +315,7 @@ def _random_unit_directions(
     return v / v_norm
 
 
-def _difference_quotient_penalty(
+def _finite_difference_penalty(
     d_a: torch.Tensor,
     d_b: torch.Tensor,
     x_a: torch.Tensor,
@@ -231,16 +336,16 @@ def _difference_quotient_penalty(
         d_b: Critic outputs at the second point of each pair.
         x_a: First point of each pair.
         x_b: Second point of each pair.
-        lip: Target Lipschitz constant `k`.
+        lip: Target Lipschitz constant.
         one_sided: Whether to penalize only quotients above `lip`.
         min_dist: Minimum denominator, guarding against division by zero.
         dlog: Optional dictionary for logging summary statistics.
-        dlog_prefix: Key for the quotient's mean; the max goes under
-            `{dlog_prefix}_max`.
+        dlog_prefix: Key for the quotient's mean.
 
     Returns:
         Scalar finite-difference Lipschitz penalty term.
     """
+    # TODO: taking a norm and then squaring makes no sense
     d_diff = torch.linalg.vector_norm((d_a - d_b).flatten(1), dim=1)
     x_diff = torch.linalg.vector_norm((x_a - x_b).flatten(1), dim=1).clamp(min=min_dist)
     q = d_diff / x_diff
@@ -250,9 +355,7 @@ def _difference_quotient_penalty(
         penalty = (q - lip).square().mean()
     # log to dictionary
     if dlog is not None:
-        assert isinstance(dlog, dict), type(dlog)
         dlog[dlog_prefix] = q.detach().mean().item()
-        dlog[f"{dlog_prefix}_max"] = q.detach().max().item()
     return penalty
 
 
@@ -308,7 +411,7 @@ def gradient_penalty_lip_fd_segment(
         device: Device used to sample the segment coefficients. Defaults to
             `x_data`'s device.
         dlog: Optional dictionary for logging summary statistics. Logs
-            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+            `grad_norm_fd` (mean of `q`).
 
     Returns:
         Scalar finite-difference Lipschitz penalty term.
@@ -331,7 +434,7 @@ def gradient_penalty_lip_fd_segment(
     x_b = t_b * x_data + (1 - t_b) * x_gen
     d_a = _critic(d_net, x_a, y_data)
     d_b = _critic(d_net, x_b, y_data)
-    return _difference_quotient_penalty(
+    return _finite_difference_penalty(
         d_a,
         d_b,
         x_a,
@@ -340,7 +443,7 @@ def gradient_penalty_lip_fd_segment(
         one_sided=one_sided,
         min_dist=min_dist,
         dlog=dlog,
-        dlog_prefix="lip_quotient",
+        dlog_prefix="grad_norm_fd",
     )
 
 
@@ -360,8 +463,8 @@ def gradient_penalty_lip_fd_random(
     Draws one interpolate per sample on the real-to-generated segment,
 
     .. math::
-        \hat{x} = \epsilon x_\mathrm{data} + (1 - \epsilon) x_\mathrm{gen},
-        \qquad \epsilon \sim U(0, 1),
+        \hat{x} = t x_\mathrm{data} + (1 - t) x_\mathrm{gen},
+        \qquad t \sim U(0, 1),
 
     then perturbs it by a random direction :math:`u`, uniform on the unit
     sphere in :math:`\mathbb{R}^d`, at a fixed radius :math:`\rho` (argument
@@ -400,7 +503,7 @@ def gradient_penalty_lip_fd_random(
         device: Device used to sample the segment coefficient and the
             direction. Defaults to `x_data`'s device.
         dlog: Optional dictionary for logging summary statistics. Logs
-            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+            `grad_norm_fd` (mean of `q`).
 
     Returns:
         Scalar finite-difference Lipschitz penalty term.
@@ -414,13 +517,13 @@ def gradient_penalty_lip_fd_random(
         https://arxiv.org/abs/1704.03976
     """
     x_gen = x_gen.expand_as(x_data)
-    epsilon = _segment_coefficients(x_data, device)
-    x_hat = epsilon * x_data + (1 - epsilon) * x_gen
+    t = _segment_coefficients(x_data, device)
+    x_hat = t * x_data + (1 - t) * x_gen
     u = _random_unit_directions(x_hat, device)
     x_pert = x_hat + radius * u
     d_hat = _critic(d_net, x_hat, y_data)
     d_pert = _critic(d_net, x_pert, y_data)
-    return _difference_quotient_penalty(
+    return _finite_difference_penalty(
         d_hat,
         d_pert,
         x_hat,
@@ -429,7 +532,7 @@ def gradient_penalty_lip_fd_random(
         one_sided=True,
         min_dist=min_dist,
         dlog=dlog,
-        dlog_prefix="lip_quotient",
+        dlog_prefix="grad_norm_fd",
     )
 
 
@@ -450,8 +553,8 @@ def gradient_penalty_lip_fd_adversarial(
     Draws one interpolate per sample on the real-to-generated segment,
 
     .. math::
-        \hat{x} = \epsilon x_\mathrm{data} + (1 - \epsilon) x_\mathrm{gen},
-        \qquad \epsilon \sim U(0, 1),
+        \hat{x} = t x_\mathrm{data} + (1 - t) x_\mathrm{gen},
+        \qquad t \sim U(0, 1),
 
     then searches for the perturbation that most violates the Lipschitz
     constraint,
@@ -503,7 +606,7 @@ def gradient_penalty_lip_fd_adversarial(
         device: Device used to sample the segment coefficient and the
             initial direction. Defaults to `x_data`'s device.
         dlog: Optional dictionary for logging summary statistics. Logs
-            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+            `grad_norm_fd` (mean of `q`).
 
     Returns:
         Scalar finite-difference Lipschitz penalty term.
@@ -517,11 +620,14 @@ def gradient_penalty_lip_fd_adversarial(
         https://arxiv.org/abs/1704.03976
     """
     x_gen = x_gen.expand_as(x_data)
-    epsilon = _segment_coefficients(x_data, device)
-    x_hat = epsilon * x_data + (1 - epsilon) * x_gen
+    t = _segment_coefficients(x_data, device)
+    x_hat = t * x_data + (1 - t) * x_gen
     d_hat = _critic(d_net, x_hat, y_data)
 
-    # search on the unwrapped critic; see the docstring
+    # search on the unwrapped critic; see the docstring. Needed under
+    # `static_graph=True` DDP, where a search through the wrapper would
+    # desynchronize the critic; the toolkit's DDP training loop does not
+    # support that setting, so no test currently observes the difference.
     search_net = (
         distributed.unwrap_net(d_net) if isinstance(d_net, torch.nn.Module) else d_net
     )
@@ -546,7 +652,7 @@ def gradient_penalty_lip_fd_adversarial(
 
     x_adv = x_hat + r_adv
     d_adv = _critic(d_net, x_adv, y_data)
-    return _difference_quotient_penalty(
+    return _finite_difference_penalty(
         d_hat,
         d_adv,
         x_hat,
@@ -555,7 +661,7 @@ def gradient_penalty_lip_fd_adversarial(
         one_sided=True,
         min_dist=min_dist,
         dlog=dlog,
-        dlog_prefix="lip_quotient",
+        dlog_prefix="grad_norm_fd",
     )
 
 
@@ -590,9 +696,9 @@ def gradient_penalty_lip_fd_endpoint(
     function takes no `d_net`: its numerator reuses critic outputs already
     computed by the Wasserstein loss, so it costs no extra critic evaluation,
     and it takes those outputs directly, obtained through the training
-    loop's opt-in keywords (see `dlk.opt.train_gan.DiscriminatorRegularizerFn`).
-    A consumer closure declares them by name, with a `None` default to match
-    the loop's fixed regularizer signature:
+    loop's `d_outputs_gen`/`d_outputs_data` keywords (see
+    `dlk.opt.train_gan.DiscriminatorRegularizerFn`, which every regularizer
+    must accept). A consumer closure narrows them with an `assert`:
 
     .. code-block:: python
 
@@ -619,7 +725,7 @@ def gradient_penalty_lip_fd_endpoint(
         one_sided: Whether to penalize only quotients above `lip`.
         min_dist: Minimum denominator, guarding against division by zero.
         dlog: Optional dictionary for logging summary statistics. Logs
-            `lip_quotient` (mean of `q`) and `lip_quotient_max` (max of `q`).
+            `grad_norm_fd` (mean of `q`).
 
     Returns:
         Scalar finite-difference Lipschitz penalty term.
@@ -633,7 +739,7 @@ def gradient_penalty_lip_fd_endpoint(
         https://arxiv.org/abs/1803.01541
     """
     x_gen = x_gen.expand_as(x_data)
-    return _difference_quotient_penalty(
+    return _finite_difference_penalty(
         d_outputs_data,
         d_outputs_gen,
         x_data,
@@ -642,5 +748,5 @@ def gradient_penalty_lip_fd_endpoint(
         one_sided=one_sided,
         min_dist=min_dist,
         dlog=dlog,
-        dlog_prefix="lip_quotient",
+        dlog_prefix="grad_norm_fd",
     )

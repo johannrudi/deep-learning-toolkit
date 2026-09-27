@@ -30,6 +30,7 @@ from dlk.opt.train_gan import train_epochs as train_epochs_gan
 REGRESSION_RTOL = 1e-4
 
 
+# TODO: contextmanager is deprecated
 @contextlib.contextmanager
 def _single_threaded_torch() -> Iterator[None]:
     """Force single-threaded CPU ops to remove one source of reduction-order noise."""
@@ -142,8 +143,15 @@ def _d_reg_fn(
     y_data: torch.Tensor,
     *,
     dlog: dict[str, float] | None = None,
+    d_outputs_gen: torch.Tensor | None = None,
+    d_outputs_data: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    """Compute a simple squared-output discriminator penalty."""
+    """Compute a simple squared-output discriminator penalty.
+
+    `d_outputs_gen`/`d_outputs_data` are unused; declared to conform to
+    `DiscriminatorRegularizerFn`.
+    """
+    del d_outputs_gen, d_outputs_data
     penalty = 0.1 * d_net(x_data, y_data).square().mean()
     if dlog is not None:
         dlog["reg"] = penalty.item()

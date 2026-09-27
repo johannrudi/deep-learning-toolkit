@@ -64,7 +64,7 @@ def test_sigma_matches_matrix_norm_after_warmup(
     reg(net, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)
 
     expected = torch.linalg.matrix_norm(_expected_reshape(layer), ord=2).item()
-    assert dlog["sn_max"] == pytest.approx(expected, rel=1e-3)
+    assert dlog["spectral_norm"] == pytest.approx(expected, rel=1e-3)
 
 
 # --------------------------------------
@@ -176,7 +176,7 @@ def test_ddp_wrapped_network_is_unwrapped(monkeypatch: pytest.MonkeyPatch) -> No
     penalty = reg(wrapper, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)  # type: ignore[arg-type]
 
     assert penalty.item() > 0.0
-    assert "sn_max" in dlog
+    assert "spectral_norm" in dlog
 
 
 def test_no_qualifying_layer_returns_zero_and_no_dlog_keys() -> None:
@@ -349,10 +349,11 @@ def _loss_fn(
     return d_outputs_gen.mean() - d_outputs_data.mean(), -d_outputs_gen.mean()
 
 
-def test_compiled_critic_trains_and_logs_sn_stats(
+def test_compiled_critic_trains_and_logs_spectral_norm(
     compile_aot_eager: Callable[[torch.nn.Module], CompileCounterWithBackend],
 ) -> None:
-    """`SpectralNormRegularizer` as `d_reg_fn` trains a compiled critic and logs `sn_max`/`sn_mean`."""
+    """`SpectralNormRegularizer` as `d_reg_fn` trains a compiled critic and logs
+    `spectral_norm`."""
     torch.manual_seed(0)
     g_net = _Generator()
     d_net = _Discriminator()
@@ -374,8 +375,7 @@ def test_compiled_critic_trains_and_logs_sn_stats(
         d_reg_fn=SpectralNormRegularizer(max_norm=0.5),
     )
 
-    assert (epoch_dlog["d_pre_sn_max_mean"] > 0.0).all()
-    assert (epoch_dlog["d_pre_sn_mean_mean"] > 0.0).all()
+    assert (epoch_dlog["d_pre_spectral_norm_mean"] > 0.0).all()
     changed = [
         not torch.equal(before, after)
         for before, after in zip(initial_params, d_net.parameters(), strict=True)

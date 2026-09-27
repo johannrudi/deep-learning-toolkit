@@ -57,12 +57,17 @@ def _gradient_penalty_fn(
     y_data: torch.Tensor,
     *,
     dlog: dict[str, float] | None = None,
+    d_outputs_gen: torch.Tensor | None = None,
+    d_outputs_data: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Compute a gradient penalty with double backward through `d_net`.
 
     Exercises the riskiest DDP path: an extra discriminator forward and an
     inner `autograd.grad` w.r.t. inputs with `create_graph=True`.
+    `d_outputs_gen`/`d_outputs_data` are unused; declared to conform to
+    `DiscriminatorRegularizerFn`.
     """
+    del d_outputs_gen, d_outputs_data
     alpha = torch.rand((x_data.size(0), 1))
     x_hat = (alpha * x_data + (1.0 - alpha) * x_gen).requires_grad_(True)
     d_outputs = d_net(x_hat, y_data)
@@ -157,12 +162,17 @@ def _gradient_penalty_fd_adversarial_fn(
     y_data: torch.Tensor,
     *,
     dlog: dict[str, float] | None = None,
+    d_outputs_gen: torch.Tensor | None = None,
+    d_outputs_data: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Compute the adversarial finite-difference Lipschitz penalty.
 
     Exercises the riskiest DDP path: an extra input-gradient backward through
     the compiled critic, unwrapped from DDP, inside a DDP training step.
+    `d_outputs_gen`/`d_outputs_data` are unused; declared to conform to
+    `DiscriminatorRegularizerFn`.
     """
+    del d_outputs_gen, d_outputs_data
     return gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, y_data, dlog=dlog)
 
 
@@ -212,10 +222,10 @@ def _train_gan_fd_adversarial_compiled_worker(
     # reduced loss and regularizer statistics must be identical across ranks
     _assert_tags_synced(
         epoch_dlog,
-        ["g_loss_mean", "d_pre_loss_mean", "d_pre_reg_mean", "d_pre_lip_quotient_mean"],
+        ["g_loss_mean", "d_pre_loss_mean", "d_pre_reg_mean", "d_pre_grad_norm_fd_mean"],
         world_size,
     )
-    assert torch.all(epoch_dlog["d_pre_lip_quotient_mean"] > 0.0)
+    assert torch.all(epoch_dlog["d_pre_grad_norm_fd_mean"] > 0.0)
 
     # confirm the critic's parameters moved from their post-wrap initial values
     d_params_final = torch.nn.utils.parameters_to_vector(d_net.parameters())

@@ -191,7 +191,7 @@ def _assert_on_segment(
 def test_dlog_matches_directional_derivative(
     penalty_fn: PenaltyFn, non_contiguous: bool
 ) -> None:
-    """`dlog["lip_quotient"]` and its max equal the exact directional slope."""
+    """`dlog["grad_norm_fd"]` and its max equal the exact directional slope."""
     torch.manual_seed(0)
     if non_contiguous:
         channels, length = 2, 3
@@ -212,10 +212,7 @@ def test_dlog_matches_directional_derivative(
     expected_q = (u @ d_net.w).squeeze(1).abs()
 
     torch.testing.assert_close(
-        torch.tensor(dlog["lip_quotient"]), expected_q.mean(), rtol=1e-5, atol=1e-8
-    )
-    torch.testing.assert_close(
-        torch.tensor(dlog["lip_quotient_max"]), expected_q.max(), rtol=1e-5, atol=1e-8
+        torch.tensor(dlog["grad_norm_fd"]), expected_q.mean(), rtol=1e-5, atol=1e-8
     )
 
 
@@ -300,7 +297,7 @@ def test_pairs_lie_on_segment_with_matching_dtype(penalty_fn: PenaltyFn) -> None
 
 
 def test_endpoint_quotient_matches_formula() -> None:
-    """`dlog["lip_quotient"]`/`_max` match the B.2 formula, including the `min_dist` clamp.
+    """`dlog["grad_norm_fd"]` match the B.2 formula, including the `min_dist` clamp.
 
     Calls `gradient_penalty_lip_fd_endpoint` directly on hand-made tensors
     (no critic), so the pair is exactly `(x_data, x_gen)`, unlike the
@@ -326,10 +323,7 @@ def test_endpoint_quotient_matches_formula() -> None:
     expected_q = d_diff / x_diff.clamp(min=min_dist)
 
     torch.testing.assert_close(
-        torch.tensor(dlog["lip_quotient"]), expected_q.mean(), rtol=1e-5, atol=1e-8
-    )
-    torch.testing.assert_close(
-        torch.tensor(dlog["lip_quotient_max"]), expected_q.max(), rtol=1e-5, atol=1e-8
+        torch.tensor(dlog["grad_norm_fd"]), expected_q.mean(), rtol=1e-5, atol=1e-8
     )
 
 
@@ -473,7 +467,7 @@ def test_compiled_critic_trains_without_recompile(
 
 
 def test_random_quotient_matches_sphere_moment() -> None:
-    """`dlog["lip_quotient"]` matches the exact mean `‖w‖ E|u_1|` of a linear critic."""
+    """`dlog["grad_norm_fd"]` matches the exact mean `‖w‖ E|u_1|` of a linear critic."""
     torch.manual_seed(0)
     d = 16
     batch_size = 4096
@@ -506,9 +500,7 @@ def test_random_quotient_matches_sphere_moment() -> None:
     # The crude bound `Var(|u_1|) <= E[u_1^2] = 1/d` gives a relative standard
     # error of about 1.9% for this batch size; the exact `Var(|u_1|)` gives
     # about 1.1%. `rel=0.03` covers the looser bound with room to spare.
-    assert dlog["lip_quotient"] == pytest.approx(expected_mean_q, rel=0.03)
-    # `q = |w^T u| <= ‖w‖ ‖u‖ = ‖w‖` exactly, up to floating-point error.
-    assert dlog["lip_quotient_max"] <= w_norm * (1 + 1e-4)
+    assert dlog["grad_norm_fd"] == pytest.approx(expected_mean_q, rel=0.03)
 
 
 def test_random_penalty_zero_below_target() -> None:
@@ -602,7 +594,7 @@ def test_random_gradient_matches_analytic_value() -> None:
 
 
 def test_adversarial_quotient_equals_weight_norm_for_linear_critic() -> None:
-    """`dlog["lip_quotient"]` and its max both equal `‖w‖` exactly, after one power step."""
+    """`dlog["grad_norm_fd"]` equals `‖w‖` exactly, after one power step."""
     torch.manual_seed(0)
     d_net = _LinearCritic(X_SIZE)
     w_norm = d_net.w.norm().item()
@@ -612,8 +604,7 @@ def test_adversarial_quotient_equals_weight_norm_for_linear_critic() -> None:
     dlog: dict[str, float] = {}
     gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None, dlog=dlog)
 
-    assert dlog["lip_quotient"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
-    assert dlog["lip_quotient_max"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
+    assert dlog["grad_norm_fd"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
 
 
 def test_adversarial_pair_geometry() -> None:
@@ -668,13 +659,13 @@ def test_adversarial_quotient_approximates_gradient_norm_and_beats_random() -> N
     grad_norm_ref = torch.linalg.vector_norm(grad_ref.flatten(1), dim=1)
 
     torch.testing.assert_close(
-        torch.tensor(dlog_adv["lip_quotient"], dtype=torch.float64),
+        torch.tensor(dlog_adv["grad_norm_fd"], dtype=torch.float64),
         grad_norm_ref.mean(),
         rtol=2e-2,
         atol=1e-6,
     )
     # the random direction only sees a `1/sqrt(d)`-ish fraction of the slope
-    assert dlog_adv["lip_quotient"] >= dlog_random["lip_quotient"]
+    assert dlog_adv["grad_norm_fd"] >= dlog_random["grad_norm_fd"]
 
 
 def test_adversarial_gradient_matches_analytic_value() -> None:

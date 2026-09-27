@@ -73,7 +73,7 @@ class SpectralNormRegularizer:
     r"""Penalize network weights' spectral norms, as an alternative to spectral normalization.
 
     Unlike `torch.nn.utils.parametrizations.spectral_norm`, this leaves the
-    network's forward pass unchanged; it only adds a soft pressure through
+    network's forward pass unchanged; it only penalizes large spectral norms through
     the loss. `__call__` matches `dlk.opt.train_gan.DiscriminatorRegularizerFn`,
     so an instance can be passed directly as `d_reg_fn`:
 
@@ -81,10 +81,7 @@ class SpectralNormRegularizer:
 
         from dlk.loss.spectral_norm import SpectralNormRegularizer
 
-        d_reg_fn = SpectralNormRegularizer(
-            penalty_weight=params["training"]["d_regularization_parameter"],
-            max_norm=1.0,
-        )
+        d_reg_fn = SpectralNormRegularizer(penalty_weight=0.11, max_norm=1.0)
 
     For Lipschitz control, prefer the hinge form (`max_norm=1.0`): the
     published form (`max_norm=None`) also shrinks layers already below 1,
@@ -210,17 +207,18 @@ class SpectralNormRegularizer:
         y_data: torch.Tensor,
         *,
         dlog: dict[str, float] | None = None,
+        d_outputs_gen: torch.Tensor | None = None,
+        d_outputs_data: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Return `self.penalty(d_net)`, matching `dlk.opt.train_gan.DiscriminatorRegularizerFn`.
 
-        `x_gen`, `x_data`, and `y_data` are unused: the regularizer only
-        depends on the critic's weights. Logs `sn_max` and `sn_mean` of the
-        layers' sigmas when `dlog` is given and at least one layer qualified.
+        `x_gen`, `x_data`, `y_data`, `d_outputs_gen`, and `d_outputs_data` are
+        unused: the regularizer only depends on the critic's weights. Logs
+        `spectral_norm`, the mean of the layers' sigmas when `dlog` is given
+        and at least one layer qualified.
         """
-        del x_gen, x_data, y_data
+        del x_gen, x_data, y_data, d_outputs_gen, d_outputs_data
         penalty, sigmas = self._penalty_and_sigmas(d_net)
         if dlog is not None and sigmas.numel() > 0:
-            assert isinstance(dlog, dict), type(dlog)
-            dlog["sn_max"] = sigmas.max().item()
-            dlog["sn_mean"] = sigmas.mean().item()
+            dlog["spectral_norm"] = sigmas.mean().item()
         return penalty
