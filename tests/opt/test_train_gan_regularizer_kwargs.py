@@ -7,11 +7,11 @@ from typing import Any
 import pytest
 import torch
 
-from dlk.loss.wasserstein_gan import (
-    gradient_penalty_lip_fd_adversarial,
-    gradient_penalty_lip_fd_endpoint,
-    gradient_penalty_lip_fd_random,
-    gradient_penalty_lip_fd_segment,
+from dlk.loss.gradient_penalty import (
+    gradient_penalty_fd_adversarial,
+    gradient_penalty_fd_endpoint,
+    gradient_penalty_fd_random,
+    gradient_penalty_fd_segment,
 )
 from dlk.opt.monitor import TrainLog
 from dlk.opt.train_gan import DiscriminatorRegularizerFn, GANLossFn, train_epochs
@@ -394,7 +394,7 @@ def test_regularizer_forms_receive_both_keywords(
 
 def test_endpoint_closure_trains_and_logs_positive_penalty_value() -> None:
     """The Section 6 endpoint closure trains for a few steps and logs a positive
-    `grad_norm_fd`."""
+    `grad_fd_norm`."""
     reg_param = 0.1
 
     def d_reg_fn(
@@ -407,11 +407,11 @@ def test_endpoint_closure_trains_and_logs_positive_penalty_value() -> None:
         d_outputs_data: torch.Tensor | None = None,
         dlog: dict[str, float] | None = None,
     ) -> torch.Tensor:
-        del d_net, y_data
-        assert d_outputs_gen is not None and d_outputs_data is not None
-        return reg_param * gradient_penalty_lip_fd_endpoint(
-            x_gen=x_gen,
-            x_data=x_data,
+        return reg_param * gradient_penalty_fd_endpoint(
+            d_net,
+            x_gen,
+            x_data,
+            y_data,
             d_outputs_gen=d_outputs_gen,
             d_outputs_data=d_outputs_data,
             dlog=dlog,
@@ -424,9 +424,9 @@ def test_endpoint_closure_trains_and_logs_positive_penalty_value() -> None:
     torch.manual_seed(0)
     _, d_net_init, _, _ = _build_gan()
 
-    assert (epoch_dlog["d_pre_grad_norm_fd_mean"] > 0.0).all()
+    assert (epoch_dlog["d_pre_grad_fd_norm_mean"] > 0.0).all()
     assert (
-        epoch_dlog["d_post_grad_norm_fd_mean"] > 0.0
+        epoch_dlog["d_post_grad_fd_norm_mean"] > 0.0
     ).all()  # d_opt_post defaults to 1
     changed = [
         not torch.equal(p_before, p_after)
@@ -440,9 +440,9 @@ def test_endpoint_closure_trains_and_logs_positive_penalty_value() -> None:
 @pytest.mark.parametrize(
     "penalty_fn",
     [
-        gradient_penalty_lip_fd_segment,
-        gradient_penalty_lip_fd_random,
-        gradient_penalty_lip_fd_adversarial,
+        gradient_penalty_fd_segment,
+        gradient_penalty_fd_random,
+        gradient_penalty_fd_adversarial,
     ],
 )
 def test_penalty_closures_ignoring_both_keywords_train_without_keyerror(
@@ -450,7 +450,7 @@ def test_penalty_closures_ignoring_both_keywords_train_without_keyerror(
 ) -> None:
     """Segment, random, and adversarial closures, ignoring both keywords, train one epoch.
 
-    Regression guard: these penalties log `grad_norm_fd` through the same
+    Regression guard: these penalties log `grad_fd_norm` through the same
     `dlog` path as the endpoint variant, which `monitor.batch_update` only
     accepts for tags in `MONITOR_BASENAMES`.
     """

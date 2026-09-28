@@ -79,7 +79,7 @@ class SpectralNormRegularizer:
 
     .. code-block:: python
 
-        from dlk.loss.spectral_norm import SpectralNormRegularizer
+        from dlk.loss.spectral_penalty import SpectralNormRegularizer
 
         d_reg_fn = SpectralNormRegularizer(penalty_weight=0.11, max_norm=1.0)
 

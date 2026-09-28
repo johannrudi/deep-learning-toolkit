@@ -3,7 +3,7 @@
 import torch
 from ddp_test_utils import init_worker, run_distributed
 
-from dlk.loss.wasserstein_gan import gradient_penalty_lip_fd_adversarial
+from dlk.loss.gradient_penalty import gradient_penalty_fd_adversarial
 from dlk.opt import distributed
 from dlk.opt.compile import compile_net_from_params
 from dlk.opt.train_gan import train_epochs
@@ -173,7 +173,7 @@ def _gradient_penalty_fd_adversarial_fn(
     `DiscriminatorRegularizerFn`.
     """
     del d_outputs_gen, d_outputs_data
-    return gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, y_data, dlog=dlog)
+    return gradient_penalty_fd_adversarial(d_net, x_gen, x_data, y_data, dlog=dlog)
 
 
 def _train_gan_fd_adversarial_compiled_worker(
@@ -222,10 +222,10 @@ def _train_gan_fd_adversarial_compiled_worker(
     # reduced loss and regularizer statistics must be identical across ranks
     _assert_tags_synced(
         epoch_dlog,
-        ["g_loss_mean", "d_pre_loss_mean", "d_pre_reg_mean", "d_pre_grad_norm_fd_mean"],
+        ["g_loss_mean", "d_pre_loss_mean", "d_pre_reg_mean", "d_pre_grad_fd_norm_mean"],
         world_size,
     )
-    assert torch.all(epoch_dlog["d_pre_grad_norm_fd_mean"] > 0.0)
+    assert torch.all(epoch_dlog["d_pre_grad_fd_norm_mean"] > 0.0)
 
     # confirm the critic's parameters moved from their post-wrap initial values
     d_params_final = torch.nn.utils.parameters_to_vector(d_net.parameters())
@@ -234,6 +234,6 @@ def _train_gan_fd_adversarial_compiled_worker(
     distributed.finalize()
 
 
-def test_gradient_penalty_lip_fd_adversarial_compiled_ddp() -> None:
+def test_gradient_penalty_fd_adversarial_compiled_ddp() -> None:
     """Train a DDP GAN with a compiled critic under the adversarial FD penalty."""
     run_distributed(_train_gan_fd_adversarial_compiled_worker)

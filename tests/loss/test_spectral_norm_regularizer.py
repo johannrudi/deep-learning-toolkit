@@ -1,4 +1,4 @@
-"""Unit tests for `SpectralNormRegularizer` in `dlk.loss.spectral_norm`."""
+"""Unit tests for `SpectralNormRegularizer` in `dlk.loss.spectral_penalty`."""
 
 from collections.abc import Callable
 from typing import cast
@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch._dynamo.testing import CompileCounterWithBackend
 from torch.nn.utils.parametrizations import spectral_norm, weight_norm
 
-from dlk.loss.spectral_norm import SpectralNormRegularizer
+from dlk.loss.spectral_penalty import SpectralNormRegularizer
 from dlk.opt import distributed
 from dlk.opt.train_gan import train_epochs
 

@@ -1,24 +1,28 @@
-"""Unit tests for the finite-difference Lipschitz penalties in `dlk.loss.wasserstein_gan`."""
+"""Unit tests for the finite-difference gradient penalties in `dlk.loss.gradient_penalty`."""
 
-import inspect
 import math
 from collections.abc import Callable
 from typing import Any
 
 import pytest
 import torch
+import torch.nn.functional as F
 from torch._dynamo.testing import CompileCounterWithBackend
 
-from dlk.loss.wasserstein_gan import (
-    gradient_penalty_lip_fd_adversarial,
-    gradient_penalty_lip_fd_endpoint,
-    gradient_penalty_lip_fd_random,
-    gradient_penalty_lip_fd_segment,
+from dlk.loss.gradient_penalty import (
+    gradient_penalty_fd_adversarial,
+    gradient_penalty_fd_endpoint,
+    gradient_penalty_fd_random,
+    gradient_penalty_fd_segment,
 )
 
 BATCH_SIZE = 8
 X_SIZE = 4
 Y_SIZE = 3
+EPS = 1e-6  # the penalties' default `eps`
+
+# one-sided penalty `relu(q^2 - lip^2)`, exactly zero below the target
+ONE_SIDED_RELU_KWARGS: dict[str, Any] = {"eps": 0.0, "one_sided_nonlinearity": F.relu}
 
 PenaltyFn = Callable[..., torch.Tensor]
 CompileFn = Callable[[torch.nn.Module], CompileCounterWithBackend]
@@ -31,17 +35,23 @@ def _endpoint_from_critic(
     y_data: torch.Tensor | None,
     **kwargs: Any,
 ) -> torch.Tensor:
-    """Adapt the endpoint penalty to the shared `(d_net, x_gen, x_data, y_data)` test signature.
+    """Adapt the endpoint penalty to score its own endpoints, like the other variants.
 
     Scores `x_gen.expand_as(x_data)` and `x_data` with `d_net`, `_critic`-style
-    (`d_net(x, y)` or `d_net(x)`), then calls `gradient_penalty_lip_fd_endpoint`
-    on the resulting outputs, as the loop's opt-in keywords would.
+    (`d_net(x, y)` or `d_net(x)`), then calls `gradient_penalty_fd_endpoint`
+    on the resulting outputs, as the loop's keywords would.
     """
     x_gen = x_gen.expand_as(x_data)
     d_outputs_gen = d_net(x_gen, y_data) if y_data is not None else d_net(x_gen)
     d_outputs_data = d_net(x_data, y_data) if y_data is not None else d_net(x_data)
-    return gradient_penalty_lip_fd_endpoint(
-        x_gen, x_data, d_outputs_gen, d_outputs_data, **kwargs
+    return gradient_penalty_fd_endpoint(
+        d_net,
+        x_gen,
+        x_data,
+        y_data,
+        d_outputs_gen=d_outputs_gen,
+        d_outputs_data=d_outputs_data,
+        **kwargs,
     )
 
 
@@ -49,7 +59,7 @@ def _endpoint_from_critic(
 # segment (any pair, by the mean value theorem argument in B.1) and endpoint
 # (the pair is exactly `x_data`, `x_gen`).
 SEGMENT_PENALTY_FNS: tuple[PenaltyFn, ...] = (
-    gradient_penalty_lip_fd_segment,
+    gradient_penalty_fd_segment,
     _endpoint_from_critic,
 )
 
@@ -58,26 +68,19 @@ SEGMENT_PENALTY_FNS: tuple[PenaltyFn, ...] = (
 # aligned pair; adversarial: `‖w‖` after one power step; endpoint: `|w^T u|`,
 # same as segment, since the pair is fixed at the endpoints).
 LINEAR_EXACT_PENALTY_FNS: tuple[PenaltyFn, ...] = (
-    gradient_penalty_lip_fd_segment,
-    gradient_penalty_lip_fd_adversarial,
+    gradient_penalty_fd_segment,
+    gradient_penalty_fd_adversarial,
     _endpoint_from_critic,
 )
 
 # General penalty tests: broadcasting, conditional and unconditional critic,
 # compiled critic; segment, random, adversarial, and endpoint.
 FD_PENALTY_FNS: tuple[PenaltyFn, ...] = (
-    gradient_penalty_lip_fd_segment,
-    gradient_penalty_lip_fd_random,
-    gradient_penalty_lip_fd_adversarial,
+    gradient_penalty_fd_segment,
+    gradient_penalty_fd_random,
+    gradient_penalty_fd_adversarial,
     _endpoint_from_critic,
 )
-
-
-def _two_sided_kwargs(penalty_fn: PenaltyFn) -> dict[str, bool]:
-    """Request the two-sided penalty from variants that support it."""
-    if "one_sided" in inspect.signature(penalty_fn).parameters:
-        return {"one_sided": False}
-    return {}
 
 
 class _LinearCritic(torch.nn.Module):
@@ -191,7 +194,7 @@ def _assert_on_segment(
 def test_dlog_matches_directional_derivative(
     penalty_fn: PenaltyFn, non_contiguous: bool
 ) -> None:
-    """`dlog["grad_norm_fd"]` and its max equal the exact directional slope."""
+    """`dlog["grad_fd_norm"]` equals the exact directional slope."""
     torch.manual_seed(0)
     if non_contiguous:
         channels, length = 2, 3
@@ -212,69 +215,92 @@ def test_dlog_matches_directional_derivative(
     expected_q = (u @ d_net.w).squeeze(1).abs()
 
     torch.testing.assert_close(
-        torch.tensor(dlog["grad_norm_fd"]), expected_q.mean(), rtol=1e-5, atol=1e-8
+        torch.tensor(dlog["grad_fd_norm"]), expected_q.mean(), rtol=1e-5, atol=1e-8
     )
 
 
 @pytest.mark.parametrize("penalty_fn", LINEAR_EXACT_PENALTY_FNS)
 def test_penalty_zero_below_target(penalty_fn: PenaltyFn) -> None:
-    """The one-sided penalty is exactly 0 when `‖w‖ <= lip`."""
+    """The one-sided `relu` penalty is exactly 0 when `‖w‖ <= lip`."""
     torch.manual_seed(0)
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
 
-    penalty = penalty_fn(d_net, x_gen, x_data, None, lip=(w.norm() + 1.0).item())
+    penalty = penalty_fn(
+        d_net, x_gen, x_data, None, lip=(w.norm() + 1.0).item(), **ONE_SIDED_RELU_KWARGS
+    )
     torch.testing.assert_close(penalty, torch.zeros_like(penalty))
 
 
 @pytest.mark.parametrize("penalty_fn", LINEAR_EXACT_PENALTY_FNS)
 def test_penalty_positive_above_target(penalty_fn: PenaltyFn) -> None:
-    """The one-sided penalty equals `(‖w‖ - lip)^2` when `‖w‖ > lip`."""
+    """The one-sided `relu` penalty equals `‖w‖^2 - lip^2` when `‖w‖ > lip`."""
     torch.manual_seed(0)
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
 
     lip = (w.norm() - 0.5).item()
-    penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip)
-    expected = (w.norm() - lip) ** 2
+    penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, **ONE_SIDED_RELU_KWARGS)
+    expected = w.norm() ** 2 - lip**2
     torch.testing.assert_close(penalty, expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("penalty_fn", LINEAR_EXACT_PENALTY_FNS)
+def test_penalty_default_one_sided_is_small_below_target(
+    penalty_fn: PenaltyFn,
+) -> None:
+    """The default one-sided penalty, a sharp softplus, is tiny well below the target."""
+    torch.manual_seed(0)
+    d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
+
+    lip = (w.norm() + 1.0).item()
+    penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip)
+    expected = F.softplus(w.norm() ** 2 + EPS - lip**2, beta=10.0)
+    assert 0.0 < penalty.item() < 1e-10
+    torch.testing.assert_close(penalty, expected, rtol=1e-4, atol=0.0)
 
 
 @pytest.mark.parametrize("penalty_fn", SEGMENT_PENALTY_FNS)
 def test_penalty_two_sided_below_target(penalty_fn: PenaltyFn) -> None:
-    """`one_sided=False` also penalizes `‖w‖ < lip`, as `(lip - ‖w‖)^2`."""
+    """`one_sided=False` also penalizes `‖w‖ < lip`, as `(sqrt(‖w‖^2 + eps) - lip)^2`."""
     torch.manual_seed(0)
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
 
     lip = (w.norm() + 0.5).item()
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, one_sided=False)
-    expected = (lip - w.norm()) ** 2
+    expected = (torch.sqrt(w.norm() ** 2 + EPS) - lip) ** 2
     torch.testing.assert_close(penalty, expected, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("penalty_fn", SEGMENT_PENALTY_FNS)
 def test_gradient_matches_analytic_value(penalty_fn: PenaltyFn) -> None:
-    """The parameter gradient equals `2 (q - lip) w / ‖w‖` at the aligned pairs."""
+    """The parameter gradient matches the analytic value at the aligned pairs.
+
+    With `q = ‖w‖` at every aligned pair, `grad_w q^2 = 2 w`, so the one-sided
+    `relu` penalty has gradient `2 w`, and the two-sided penalty, with
+    `s = sqrt(‖w‖^2 + eps)`, has gradient `2 (s - lip) w / s`.
+    """
     torch.manual_seed(0)
 
     # one-sided, ‖w‖ > lip: the relu is active
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
     lip = (w.norm() - 0.5).item()
-    penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip)
+    penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, **ONE_SIDED_RELU_KWARGS)
     penalty.backward()
-    expected_grad = 2 * (w.norm() - lip) * w / w.norm()
+    expected_grad = 2 * w
     assert d_net.w.grad is not None
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 
-    # two-sided, ‖w‖ < lip: the same formula, with a negative factor
+    # two-sided, ‖w‖ < lip: a negative factor
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
     lip = (w.norm() + 0.5).item()
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, one_sided=False)
     penalty.backward()
-    expected_grad = 2 * (w.norm() - lip) * w / w.norm()
+    s = torch.sqrt(w.norm() ** 2 + EPS)
+    expected_grad = 2 * (s - lip) * w / s
     assert d_net.w.grad is not None
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 
 
-@pytest.mark.parametrize("penalty_fn", [gradient_penalty_lip_fd_segment])
+@pytest.mark.parametrize("penalty_fn", [gradient_penalty_fd_segment])
 def test_pairs_lie_on_segment_with_matching_dtype(penalty_fn: PenaltyFn) -> None:
     """Both points lie on the segment, at a bounded, per-sample `t`, in `x_data`'s dtype.
 
@@ -297,11 +323,11 @@ def test_pairs_lie_on_segment_with_matching_dtype(penalty_fn: PenaltyFn) -> None
 
 
 def test_endpoint_quotient_matches_formula() -> None:
-    """`dlog["grad_norm_fd"]` match the B.2 formula, including the `min_dist` clamp.
+    """`dlog["grad_fd_norm"]` matches the B.2 formula, including the `min_dist` clamp.
 
-    Calls `gradient_penalty_lip_fd_endpoint` directly on hand-made tensors
-    (no critic), so the pair is exactly `(x_data, x_gen)`, unlike the
-    interpolated segment pair.
+    Calls `gradient_penalty_fd_endpoint` directly on hand-made critic outputs,
+    so the pair is exactly `(x_data, x_gen)`, unlike the interpolated segment
+    pair. The critic passed as `d_net` is unused.
     """
     torch.manual_seed(0)
     x_gen = torch.randn(BATCH_SIZE, X_SIZE)
@@ -312,8 +338,15 @@ def test_endpoint_quotient_matches_formula() -> None:
     min_dist = 1e-6
 
     dlog: dict[str, float] = {}
-    gradient_penalty_lip_fd_endpoint(
-        x_gen, x_data, d_outputs_gen, d_outputs_data, min_dist=min_dist, dlog=dlog
+    gradient_penalty_fd_endpoint(
+        _LinearCritic(X_SIZE),
+        x_gen,
+        x_data,
+        None,
+        min_dist=min_dist,
+        d_outputs_gen=d_outputs_gen,
+        d_outputs_data=d_outputs_data,
+        dlog=dlog,
     )
 
     x_diff = torch.linalg.vector_norm((x_data - x_gen).flatten(1), dim=1)
@@ -323,8 +356,37 @@ def test_endpoint_quotient_matches_formula() -> None:
     expected_q = d_diff / x_diff.clamp(min=min_dist)
 
     torch.testing.assert_close(
-        torch.tensor(dlog["grad_norm_fd"]), expected_q.mean(), rtol=1e-5, atol=1e-8
+        torch.tensor(dlog["grad_fd_norm"]), expected_q.mean(), rtol=1e-5, atol=1e-8
     )
+
+
+def test_endpoint_requires_critic_outputs() -> None:
+    """The endpoint variant raises without `d_outputs_gen` and `d_outputs_data`."""
+    d_net = _LinearCritic(X_SIZE)
+    x = torch.randn(BATCH_SIZE, X_SIZE)
+    with pytest.raises(ValueError, match="requires `d_outputs_gen`"):
+        gradient_penalty_fd_endpoint(d_net, x, x, None)
+
+
+@pytest.mark.parametrize(
+    ("penalty_kwargs", "match"),
+    [
+        ({"eps": -1e-6}, "eps must be >= 0"),
+        ({"eps": 0.0, "one_sided": False}, "eps must be > 0"),
+        ({"min_dist": 0.0}, "min_dist must be > 0"),
+    ],
+)
+@pytest.mark.parametrize("penalty_fn", FD_PENALTY_FNS)
+def test_invalid_eps_or_min_dist_raises(
+    penalty_fn: PenaltyFn, penalty_kwargs: dict[str, Any], match: str
+) -> None:
+    """`eps < 0`, `eps == 0` for the two-sided penalty, and `min_dist <= 0` raise."""
+    torch.manual_seed(0)
+    d_net = _LinearCritic(X_SIZE)
+    x_gen = torch.randn(BATCH_SIZE, X_SIZE)
+    x_data = torch.randn(BATCH_SIZE, X_SIZE)
+    with pytest.raises(ValueError, match=match):
+        penalty_fn(d_net, x_gen, x_data, None, **penalty_kwargs)
 
 
 # Excludes the endpoint variant: with `x_gen = x_data.clone()`, its pair is
@@ -334,9 +396,9 @@ def test_endpoint_quotient_matches_formula() -> None:
 @pytest.mark.parametrize(
     "penalty_fn",
     [
-        gradient_penalty_lip_fd_segment,
-        gradient_penalty_lip_fd_random,
-        gradient_penalty_lip_fd_adversarial,
+        gradient_penalty_fd_segment,
+        gradient_penalty_fd_random,
+        gradient_penalty_fd_adversarial,
     ],
 )
 def test_identical_pairs_finite_gradients(penalty_fn: PenaltyFn) -> None:
@@ -347,13 +409,9 @@ def test_identical_pairs_finite_gradients(penalty_fn: PenaltyFn) -> None:
     x_gen = x_data.clone()
     y_data = torch.randn(BATCH_SIZE, Y_SIZE)
 
-    # Segment: two-sided, nonzero lip, forces a nonzero gradient through the
-    # (exactly zero) zero-difference norm. Random and adversarial: lip=0.0
-    # already gives a generically nonzero `q`, since each pair is always
-    # `radius` apart.
-    two_sided_kwargs = _two_sided_kwargs(penalty_fn)
-    lip = 1.0 if two_sided_kwargs else 0.0
-    penalty = penalty_fn(d_net, x_gen, x_data, y_data, lip=lip, **two_sided_kwargs)
+    # two-sided with a nonzero lip, so the gradient passes through the square
+    # root at a (near) zero quotient, which `eps` keeps finite
+    penalty = penalty_fn(d_net, x_gen, x_data, y_data, lip=1.0, one_sided=False)
     assert torch.isfinite(penalty)
 
     penalty.backward()
@@ -366,7 +424,10 @@ def test_identical_pairs_finite_gradients(penalty_fn: PenaltyFn) -> None:
 
 
 def test_endpoint_identical_pairs_give_exactly_zero_gradient() -> None:
-    """Identical `x_gen`/`x_data` give an exactly zero penalty and gradient (7(b): finite gradients)."""
+    """Identical `x_gen`/`x_data` give a penalty of exactly `eps` and a zero gradient (7(b): finite gradients).
+
+    With `q = 0` and `lip=0`, the two-sided penalty is `(sqrt(eps) - 0)^2 = eps`.
+    """
     torch.manual_seed(0)
     d_net = _MLPCritic()
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
@@ -376,7 +437,7 @@ def test_endpoint_identical_pairs_give_exactly_zero_gradient() -> None:
     penalty = _endpoint_from_critic(
         d_net, x_gen, x_data, y_data, lip=0.0, one_sided=False
     )
-    torch.testing.assert_close(penalty, torch.zeros_like(penalty))
+    torch.testing.assert_close(penalty, torch.full_like(penalty, EPS))
 
     penalty.backward()
     for p in d_net.parameters():
@@ -433,7 +494,7 @@ def test_compiled_critic_trains_without_recompile(
     d_net = _MLPCritic()
     counter = compile_aot_eager(d_net)
     opt = torch.optim.SGD(d_net.parameters(), lr=0.1)
-    expected_frame_count = 2 if penalty_fn is gradient_penalty_lip_fd_adversarial else 1
+    expected_frame_count = 2 if penalty_fn is gradient_penalty_fd_adversarial else 1
 
     params_before = [p.detach().clone() for p in d_net.parameters()]
     for _ in range(3):
@@ -444,12 +505,8 @@ def test_compiled_critic_trains_without_recompile(
         d_net(x_data, y_data)  # Loss-term forward pass, as the training loop does.
 
         opt.zero_grad()
-        # `lip=0.0` keeps the penalty active regardless of scale; two-sided
-        # where supported, one-sided otherwise (the random and adversarial
-        # quotients are >= 0).
-        penalty = penalty_fn(
-            d_net, x_gen, x_data, y_data, lip=0.0, **_two_sided_kwargs(penalty_fn)
-        )
+        # `lip=0.0` with the two-sided penalty keeps it active regardless of scale
+        penalty = penalty_fn(d_net, x_gen, x_data, y_data, lip=0.0, one_sided=False)
         penalty.backward()
         opt.step()
 
@@ -467,7 +524,7 @@ def test_compiled_critic_trains_without_recompile(
 
 
 def test_random_quotient_matches_sphere_moment() -> None:
-    """`dlog["grad_norm_fd"]` matches the exact mean `‖w‖ E|u_1|` of a linear critic."""
+    """`dlog["grad_fd_norm"]` matches the exact mean `‖w‖ E|u_1|` of a linear critic."""
     torch.manual_seed(0)
     d = 16
     batch_size = 4096
@@ -483,7 +540,7 @@ def test_random_quotient_matches_sphere_moment() -> None:
     x_data = torch.randn(batch_size, d)
 
     dlog: dict[str, float] = {}
-    gradient_penalty_lip_fd_random(d_net, x_gen, x_data, None, radius=radius, dlog=dlog)
+    gradient_penalty_fd_random(d_net, x_gen, x_data, None, radius=radius, dlog=dlog)
 
     x_hat, x_pert = d_net.inputs
     u = (x_pert - x_hat) / radius
@@ -500,11 +557,11 @@ def test_random_quotient_matches_sphere_moment() -> None:
     # The crude bound `Var(|u_1|) <= E[u_1^2] = 1/d` gives a relative standard
     # error of about 1.9% for this batch size; the exact `Var(|u_1|)` gives
     # about 1.1%. `rel=0.03` covers the looser bound with room to spare.
-    assert dlog["grad_norm_fd"] == pytest.approx(expected_mean_q, rel=0.03)
+    assert dlog["grad_fd_norm"] == pytest.approx(expected_mean_q, rel=0.03)
 
 
 def test_random_penalty_zero_below_target() -> None:
-    """The one-sided penalty is exactly 0 when `‖w‖ <= lip` for a linear critic."""
+    """The one-sided `relu` penalty is exactly 0 when `‖w‖ <= lip` for a linear critic."""
     torch.manual_seed(0)
     d_net = _LinearCritic(X_SIZE)
     w_norm = d_net.w.norm().item()
@@ -512,8 +569,8 @@ def test_random_penalty_zero_below_target() -> None:
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
 
     # `q = |w^T u| <= ‖w‖ <= lip` for every sample, so the relu never fires.
-    penalty = gradient_penalty_lip_fd_random(
-        d_net, x_gen, x_data, None, lip=w_norm + 1.0
+    penalty = gradient_penalty_fd_random(
+        d_net, x_gen, x_data, None, lip=w_norm + 1.0, **ONE_SIDED_RELU_KWARGS
     )
     torch.testing.assert_close(penalty, torch.zeros_like(penalty))
 
@@ -529,7 +586,9 @@ def test_random_penalty_positive_above_target() -> None:
     x_gen = torch.randn(batch_size, d)
     x_data = torch.randn(batch_size, d)
 
-    penalty = gradient_penalty_lip_fd_random(d_net, x_gen, x_data, None, lip=lip)
+    penalty = gradient_penalty_fd_random(
+        d_net, x_gen, x_data, None, lip=lip, **ONE_SIDED_RELU_KWARGS
+    )
     assert penalty.item() > 0.0
 
 
@@ -541,7 +600,7 @@ def test_random_pair_geometry() -> None:
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
     radius = 0.1
 
-    gradient_penalty_lip_fd_random(d_net, x_gen, x_data, None, radius=radius)
+    gradient_penalty_fd_random(d_net, x_gen, x_data, None, radius=radius)
 
     assert len(d_net.inputs) == 2
     x_hat, x_pert = d_net.inputs
@@ -557,7 +616,7 @@ def test_random_pair_geometry() -> None:
 
 
 def test_random_gradient_matches_analytic_value() -> None:
-    """`w.grad` equals `mean 2 relu(|w^T u| - lip) sign(w^T u) u`, from a linear critic."""
+    """`w.grad` equals `mean 1[|w^T u| > lip] 2 (w^T u) u`, from a linear critic."""
     torch.manual_seed(0)
     batch_size = 64
     d = X_SIZE
@@ -569,8 +628,8 @@ def test_random_gradient_matches_analytic_value() -> None:
     x_gen = torch.randn(batch_size, d)
     x_data = torch.randn(batch_size, d)
 
-    penalty = gradient_penalty_lip_fd_random(
-        d_net, x_gen, x_data, None, lip=lip, radius=radius
+    penalty = gradient_penalty_fd_random(
+        d_net, x_gen, x_data, None, lip=lip, radius=radius, **ONE_SIDED_RELU_KWARGS
     )
     penalty.backward()
 
@@ -578,12 +637,13 @@ def test_random_gradient_matches_analytic_value() -> None:
     u = (x_pert - x_hat) / radius  # reconstruct the (already unit-norm) direction
     w = inner.w.detach().squeeze(1)
     w_dot_u = u @ w
-    active = torch.relu(w_dot_u.abs() - lip)
+    # `q^2 = (w^T u)^2`, so the relu is active where `|w^T u| > lip`
+    active = (w_dot_u.abs() > lip).to(w_dot_u.dtype)
     # require some but not all samples active, or the test would not exercise
     # both branches of the relu
-    assert 0 < (active > 0).sum().item() < batch_size
+    assert 0 < active.sum().item() < batch_size
 
-    expected_grad = (2 * active * torch.sign(w_dot_u)).unsqueeze(1) * u
+    expected_grad = (2 * active * w_dot_u).unsqueeze(1) * u
     expected_grad = expected_grad.mean(dim=0, keepdim=True).t()
 
     assert inner.w.grad is not None
@@ -594,7 +654,7 @@ def test_random_gradient_matches_analytic_value() -> None:
 
 
 def test_adversarial_quotient_equals_weight_norm_for_linear_critic() -> None:
-    """`dlog["grad_norm_fd"]` equals `‖w‖` exactly, after one power step."""
+    """`dlog["grad_fd_norm"]` equals `‖w‖` exactly, after one power step."""
     torch.manual_seed(0)
     d_net = _LinearCritic(X_SIZE)
     w_norm = d_net.w.norm().item()
@@ -602,9 +662,9 @@ def test_adversarial_quotient_equals_weight_norm_for_linear_critic() -> None:
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
 
     dlog: dict[str, float] = {}
-    gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None, dlog=dlog)
+    gradient_penalty_fd_adversarial(d_net, x_gen, x_data, None, dlog=dlog)
 
-    assert dlog["grad_norm_fd"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
+    assert dlog["grad_fd_norm"] == pytest.approx(w_norm, rel=1e-5, abs=1e-6)
 
 
 def test_adversarial_pair_geometry() -> None:
@@ -616,9 +676,7 @@ def test_adversarial_pair_geometry() -> None:
     y_data = torch.randn(BATCH_SIZE, Y_SIZE)
     xi, radius = 0.03, 0.2
 
-    gradient_penalty_lip_fd_adversarial(
-        d_net, x_gen, x_data, y_data, xi=xi, radius=radius
-    )
+    gradient_penalty_fd_adversarial(d_net, x_gen, x_data, y_data, xi=xi, radius=radius)
 
     assert len(d_net.inputs) == 3
     x_hat, x_r0, x_adv = d_net.inputs
@@ -641,13 +699,13 @@ def test_adversarial_quotient_approximates_gradient_norm_and_beats_random() -> N
     spy = _SpyCritic(inner)
     torch.manual_seed(seed)
     dlog_adv: dict[str, float] = {}
-    gradient_penalty_lip_fd_adversarial(
+    gradient_penalty_fd_adversarial(
         spy, x_gen, x_data, y_data, xi=small, radius=small, dlog=dlog_adv
     )
 
     torch.manual_seed(seed)
     dlog_random: dict[str, float] = {}
-    gradient_penalty_lip_fd_random(
+    gradient_penalty_fd_random(
         inner, x_gen, x_data, y_data, radius=small, dlog=dlog_random
     )
 
@@ -659,17 +717,17 @@ def test_adversarial_quotient_approximates_gradient_norm_and_beats_random() -> N
     grad_norm_ref = torch.linalg.vector_norm(grad_ref.flatten(1), dim=1)
 
     torch.testing.assert_close(
-        torch.tensor(dlog_adv["grad_norm_fd"], dtype=torch.float64),
+        torch.tensor(dlog_adv["grad_fd_norm"], dtype=torch.float64),
         grad_norm_ref.mean(),
         rtol=2e-2,
         atol=1e-6,
     )
     # the random direction only sees a `1/sqrt(d)`-ish fraction of the slope
-    assert dlog_adv["grad_norm_fd"] >= dlog_random["grad_norm_fd"]
+    assert dlog_adv["grad_fd_norm"] >= dlog_random["grad_fd_norm"]
 
 
 def test_adversarial_gradient_matches_analytic_value() -> None:
-    """`w.grad` equals `2 (‖w‖ - lip) w / ‖w‖`; fails if `d_hat`/`d_adv` were detached."""
+    """`w.grad` equals `2 w` for the active `relu`; fails if `d_hat`/`d_adv` were detached."""
     torch.manual_seed(0)
     w_norm = 2.0
     d_net = _linear_critic_with_norm(X_SIZE, w_norm)
@@ -678,10 +736,13 @@ def test_adversarial_gradient_matches_analytic_value() -> None:
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
 
     lip = w_norm - 0.5
-    penalty = gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None, lip=lip)
+    penalty = gradient_penalty_fd_adversarial(
+        d_net, x_gen, x_data, None, lip=lip, **ONE_SIDED_RELU_KWARGS
+    )
     penalty.backward()
 
-    expected_grad = 2 * (w_norm - lip) * w / w_norm
+    # `q^2 = ‖w‖^2`, whose gradient in `w` is `2 w`
+    expected_grad = 2 * w
     assert d_net.w.grad is not None
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 
@@ -694,7 +755,7 @@ def test_adversarial_search_does_not_touch_parameter_gradients() -> None:
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
     y_data = torch.randn(BATCH_SIZE, Y_SIZE)
 
-    gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, y_data)
+    gradient_penalty_fd_adversarial(d_net, x_gen, x_data, y_data)
 
     for p in d_net.parameters():
         assert p.grad is None
@@ -721,7 +782,7 @@ def test_adversarial_direction_search_uses_unwrap_net(
 
     monkeypatch.setattr("dlk.opt.distributed.unwrap_net", fake_unwrap_net)
 
-    gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, y_data)
+    gradient_penalty_fd_adversarial(d_net, x_gen, x_data, y_data)
 
     assert calls == [d_net]
     assert len(spies) == 1
@@ -736,6 +797,8 @@ def test_adversarial_flat_critic_direction_fallback_is_finite() -> None:
     x_gen = torch.randn(BATCH_SIZE, X_SIZE)
     x_data = torch.randn(BATCH_SIZE, X_SIZE)
 
-    penalty = gradient_penalty_lip_fd_adversarial(d_net, x_gen, x_data, None)
+    penalty = gradient_penalty_fd_adversarial(
+        d_net, x_gen, x_data, None, **ONE_SIDED_RELU_KWARGS
+    )
     assert torch.isfinite(penalty)
     torch.testing.assert_close(penalty, torch.zeros_like(penalty))
