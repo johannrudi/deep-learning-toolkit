@@ -233,13 +233,13 @@ def test_penalty_zero_below_target(penalty_fn: PenaltyFn) -> None:
 
 @pytest.mark.parametrize("penalty_fn", LINEAR_EXACT_PENALTY_FNS)
 def test_penalty_positive_above_target(penalty_fn: PenaltyFn) -> None:
-    """The one-sided `relu` penalty equals `‖w‖^2 - lip^2` when `‖w‖ > lip`."""
+    """The one-sided `relu` penalty equals `(‖w‖^2 - lip^2) / 2` when `‖w‖ > lip`."""
     torch.manual_seed(0)
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
 
     lip = (w.norm() - 0.5).item()
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, **ONE_SIDED_RELU_KWARGS)
-    expected = w.norm() ** 2 - lip**2
+    expected = 0.5 * (w.norm() ** 2 - lip**2)
     torch.testing.assert_close(penalty, expected, rtol=1e-5, atol=1e-6)
 
 
@@ -253,20 +253,20 @@ def test_penalty_default_one_sided_is_small_below_target(
 
     lip = (w.norm() + 1.0).item()
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip)
-    expected = F.softplus(w.norm() ** 2 + EPS - lip**2, beta=10.0)
+    expected = 0.5 * F.softplus(w.norm() ** 2 + EPS - lip**2, beta=10.0)
     assert 0.0 < penalty.item() < 1e-10
     torch.testing.assert_close(penalty, expected, rtol=1e-4, atol=0.0)
 
 
 @pytest.mark.parametrize("penalty_fn", SEGMENT_PENALTY_FNS)
 def test_penalty_two_sided_below_target(penalty_fn: PenaltyFn) -> None:
-    """`one_sided=False` also penalizes `‖w‖ < lip`, as `(sqrt(‖w‖^2 + eps) - lip)^2`."""
+    """`one_sided=False` also penalizes `‖w‖ < lip`, as `(sqrt(‖w‖^2 + eps) - lip)^2 / 2`."""
     torch.manual_seed(0)
     d_net, w, x_gen, x_data = _aligned_linear_critic(w_norm=1.0)
 
     lip = (w.norm() + 0.5).item()
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, one_sided=False)
-    expected = (torch.sqrt(w.norm() ** 2 + EPS) - lip) ** 2
+    expected = 0.5 * (torch.sqrt(w.norm() ** 2 + EPS) - lip) ** 2
     torch.testing.assert_close(penalty, expected, rtol=1e-5, atol=1e-6)
 
 
@@ -275,8 +275,8 @@ def test_gradient_matches_analytic_value(penalty_fn: PenaltyFn) -> None:
     """The parameter gradient matches the analytic value at the aligned pairs.
 
     With `q = ‖w‖` at every aligned pair, `grad_w q^2 = 2 w`, so the one-sided
-    `relu` penalty has gradient `2 w`, and the two-sided penalty, with
-    `s = sqrt(‖w‖^2 + eps)`, has gradient `2 (s - lip) w / s`.
+    `relu` penalty has gradient `w`, and the two-sided penalty, with
+    `s = sqrt(‖w‖^2 + eps)`, has gradient `(s - lip) w / s`.
     """
     torch.manual_seed(0)
 
@@ -285,7 +285,7 @@ def test_gradient_matches_analytic_value(penalty_fn: PenaltyFn) -> None:
     lip = (w.norm() - 0.5).item()
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, **ONE_SIDED_RELU_KWARGS)
     penalty.backward()
-    expected_grad = 2 * w
+    expected_grad = w
     assert d_net.w.grad is not None
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 
@@ -295,7 +295,7 @@ def test_gradient_matches_analytic_value(penalty_fn: PenaltyFn) -> None:
     penalty = penalty_fn(d_net, x_gen, x_data, None, lip=lip, one_sided=False)
     penalty.backward()
     s = torch.sqrt(w.norm() ** 2 + EPS)
-    expected_grad = 2 * (s - lip) * w / s
+    expected_grad = (s - lip) * w / s
     assert d_net.w.grad is not None
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 
@@ -616,7 +616,7 @@ def test_random_pair_geometry() -> None:
 
 
 def test_random_gradient_matches_analytic_value() -> None:
-    """`w.grad` equals `mean 1[|w^T u| > lip] 2 (w^T u) u`, from a linear critic."""
+    """`w.grad` equals `mean 1[|w^T u| > lip] (w^T u) u`, from a linear critic."""
     torch.manual_seed(0)
     batch_size = 64
     d = X_SIZE
@@ -643,7 +643,7 @@ def test_random_gradient_matches_analytic_value() -> None:
     # both branches of the relu
     assert 0 < active.sum().item() < batch_size
 
-    expected_grad = (2 * active * w_dot_u).unsqueeze(1) * u
+    expected_grad = (active * w_dot_u).unsqueeze(1) * u
     expected_grad = expected_grad.mean(dim=0, keepdim=True).t()
 
     assert inner.w.grad is not None
@@ -727,7 +727,7 @@ def test_adversarial_quotient_approximates_gradient_norm_and_beats_random() -> N
 
 
 def test_adversarial_gradient_matches_analytic_value() -> None:
-    """`w.grad` equals `2 w` for the active `relu`; fails if `d_hat`/`d_adv` were detached."""
+    """`w.grad` equals `w` for the active `relu`; fails if `d_hat`/`d_adv` were detached."""
     torch.manual_seed(0)
     w_norm = 2.0
     d_net = _linear_critic_with_norm(X_SIZE, w_norm)
@@ -741,8 +741,8 @@ def test_adversarial_gradient_matches_analytic_value() -> None:
     )
     penalty.backward()
 
-    # `q^2 = ‖w‖^2`, whose gradient in `w` is `2 w`
-    expected_grad = 2 * w
+    # `q^2 = ‖w‖^2`, whose gradient in `w` is `2 w`, halved by the penalty
+    expected_grad = w
     assert d_net.w.grad is not None
     torch.testing.assert_close(d_net.w.grad, expected_grad, rtol=1e-4, atol=1e-6)
 

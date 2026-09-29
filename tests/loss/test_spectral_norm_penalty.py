@@ -1,4 +1,4 @@
-"""Unit tests for `SpectralNormRegularizer` in `dlk.loss.spectral_penalty`."""
+"""Unit tests for `SpectralNormPenalty` in `dlk.loss.spectral_penalty`."""
 
 from collections.abc import Callable
 from typing import cast
@@ -6,10 +6,11 @@ from typing import cast
 import pytest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch._dynamo.testing import CompileCounterWithBackend
 from torch.nn.utils.parametrizations import spectral_norm, weight_norm
 
-from dlk.loss.spectral_penalty import SpectralNormRegularizer
+from dlk.loss.spectral_penalty import SpectralNormPenalty
 from dlk.opt import distributed
 from dlk.opt.train_gan import train_epochs
 
@@ -34,7 +35,7 @@ def _matrix_with_gap(
 
 
 def _expected_reshape(layer: nn.Module) -> torch.Tensor:
-    """Reshape `layer.weight` the way `SpectralNormRegularizer` does, for the expected `matrix_norm`."""
+    """Reshape `layer.weight` the way `SpectralNormPenalty` does, for the expected `matrix_norm`."""
     weight = cast(torch.Tensor, layer.weight).detach()
     if isinstance(layer, nn.ConvTranspose2d):
         weight = weight.transpose(0, 1)
@@ -58,7 +59,7 @@ def test_sigma_matches_matrix_norm_after_warmup(
     torch.manual_seed(20)
     layer = make_layer()
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(n_warmup_iterations=300)
+    reg = SpectralNormPenalty(n_warmup_iterations=300)
     dlog: dict[str, float] = {}
 
     reg(net, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)
@@ -72,8 +73,15 @@ def test_sigma_matches_matrix_norm_after_warmup(
 # --------------------------------------
 
 
-@pytest.mark.parametrize("max_norm", [None, 1.0], ids=["published", "hinge"])
-def test_gradient_matches_rank_one_svd_formula(max_norm: float | None) -> None:
+@pytest.mark.parametrize(
+    ("max_norm", "max_norm_nonlinearity"),
+    [(None, None), (1.0, None), (1.0, F.relu)],
+    ids=["published", "hinge_softplus", "hinge_relu"],
+)
+def test_gradient_matches_rank_one_svd_formula(
+    max_norm: float | None,
+    max_norm_nonlinearity: Callable[[torch.Tensor], torch.Tensor] | None,
+) -> None:
     """The parameter gradient equals the rank-one formula built from SVD's top singular vectors."""
     torch.manual_seed(10)
     weight = _matrix_with_gap(4, 5, [3.0, 1.0, 0.4])
@@ -81,8 +89,10 @@ def test_gradient_matches_rank_one_svd_formula(max_norm: float | None) -> None:
     with torch.no_grad():
         layer.weight.copy_(weight)
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(
-        penalty_weight=2.0, max_norm=max_norm, n_warmup_iterations=200
+    reg = SpectralNormPenalty(
+        max_norm=max_norm,
+        max_norm_nonlinearity=max_norm_nonlinearity,
+        n_warmup_iterations=200,
     )
 
     penalty = reg.penalty(net)
@@ -90,17 +100,22 @@ def test_gradient_matches_rank_one_svd_formula(max_norm: float | None) -> None:
 
     u_svd, s_svd, vh_svd = torch.linalg.svd(weight, full_matrices=False)
     sigma = s_svd[0]
-    excess = (
-        sigma if max_norm is None else sigma - max_norm
-    )  # sigma (3.0) exceeds k (1.0)
-    expected_grad = 2.0 * excess * torch.outer(u_svd[:, 0], vh_svd[0, :])
+    if max_norm is None:
+        factor = sigma
+    elif max_norm_nonlinearity is None:
+        # `phi(z) phi'(z)` of the default `softplus(10 z) / 10`
+        z = sigma - max_norm
+        factor = F.softplus(z, beta=10.0) * torch.sigmoid(10.0 * z)
+    else:
+        factor = sigma - max_norm  # sigma (3.0) exceeds k (1.0)
+    expected_grad = factor * torch.outer(u_svd[:, 0], vh_svd[0, :])
 
     assert layer.weight.grad is not None
     torch.testing.assert_close(layer.weight.grad, expected_grad, atol=1e-3, rtol=1e-3)
 
 
 def test_gradient_is_rank_one_with_single_non_converged_power_step() -> None:
-    """A single power step still gives an exactly rank-one gradient with Frobenius norm `lambda * sigma`.
+    """A single power step still gives an exactly rank-one gradient with Frobenius norm `sigma`.
 
     Guards against running the power iteration with grad enabled on the
     non-detached weight, which would leak extra gradient terms into the
@@ -109,7 +124,7 @@ def test_gradient_is_rank_one_with_single_non_converged_power_step() -> None:
     torch.manual_seed(40)
     layer = nn.Linear(6, 5, bias=False)
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(penalty_weight=3.0, n_warmup_iterations=1)
+    reg = SpectralNormPenalty(n_warmup_iterations=1)
 
     penalty = reg.penalty(net)
     penalty.backward()
@@ -118,22 +133,23 @@ def test_gradient_is_rank_one_with_single_non_converged_power_step() -> None:
     grad_svdvals = torch.linalg.svdvals(layer.weight.grad)
     assert grad_svdvals[1] < 1e-5 * grad_svdvals[0]
 
-    sigma = torch.sqrt(2.0 * penalty / reg.penalty_weight)
-    expected_frobenius_norm = reg.penalty_weight * sigma
+    sigma = torch.sqrt(2.0 * penalty)
     torch.testing.assert_close(
         torch.linalg.matrix_norm(layer.weight.grad, ord="fro"),
-        expected_frobenius_norm,
+        sigma,
         atol=1e-4,
         rtol=1e-4,
     )
 
 
-def test_hinge_form_zero_penalty_and_zero_grad_when_sigma_below_target() -> None:
-    """The hinge form gives 0 and zero gradients when sigma is below the target."""
+def test_relu_hinge_form_zero_penalty_and_zero_grad_when_sigma_below_target() -> None:
+    """The `relu` hinge form gives 0 and zero gradients when sigma is below the target."""
     torch.manual_seed(12)
     layer = nn.Linear(4, 3, bias=False)
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(max_norm=10.0, n_warmup_iterations=50)
+    reg = SpectralNormPenalty(
+        max_norm=1.5, max_norm_nonlinearity=F.relu, n_warmup_iterations=50
+    )
 
     penalty = reg.penalty(net)
     penalty.backward()
@@ -141,6 +157,35 @@ def test_hinge_form_zero_penalty_and_zero_grad_when_sigma_below_target() -> None
     assert penalty.item() == 0.0
     assert layer.weight.grad is not None
     torch.testing.assert_close(layer.weight.grad, torch.zeros_like(layer.weight))
+
+
+def test_default_hinge_form_is_sharp_softplus() -> None:
+    """The default hinge form is `softplus(10 z) / 10`, slightly positive below the target."""
+    torch.manual_seed(13)
+    layer = nn.Linear(4, 3, bias=False)
+    net = nn.Sequential(layer)
+    max_norm = 1.5
+    reg = SpectralNormPenalty(max_norm=max_norm, n_warmup_iterations=300)
+    dlog: dict[str, float] = {}
+
+    penalty = reg(net, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)
+
+    sigma = dlog["spectral_norm"]
+    assert sigma < max_norm
+    expected = 0.5 * F.softplus(torch.tensor(sigma - max_norm), beta=10.0) ** 2
+    assert penalty.item() > 0.0
+    torch.testing.assert_close(penalty, expected, rtol=1e-4, atol=0.0)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"max_norm": -1.0}, {"n_power_iterations": 0}, {"n_warmup_iterations": 0}],
+    ids=["max_norm", "n_power_iterations", "n_warmup_iterations"],
+)
+def test_invalid_arguments_raise(kwargs: dict[str, float]) -> None:
+    """Invalid constructor arguments raise `ValueError`."""
+    with pytest.raises(ValueError, match="must be"):
+        SpectralNormPenalty(**kwargs)  # type: ignore[arg-type]
 
 
 # --------------------------------------
@@ -153,7 +198,7 @@ def test_spectral_norm_wrapped_layer_is_skipped() -> None:
     torch.manual_seed(24)
     layer = spectral_norm(nn.Linear(5, 4, bias=False))
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(n_warmup_iterations=50)
+    reg = SpectralNormPenalty(n_warmup_iterations=50)
     dlog: dict[str, float] = {}
 
     penalty = reg(net, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)
@@ -170,7 +215,7 @@ def test_ddp_wrapped_network_is_unwrapped(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(
         distributed, "unwrap_net", lambda net: inner if net is wrapper else net
     )
-    reg = SpectralNormRegularizer(n_warmup_iterations=50)
+    reg = SpectralNormPenalty(n_warmup_iterations=50)
     dlog: dict[str, float] = {}
 
     penalty = reg(wrapper, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)  # type: ignore[arg-type]
@@ -182,7 +227,7 @@ def test_ddp_wrapped_network_is_unwrapped(monkeypatch: pytest.MonkeyPatch) -> No
 def test_no_qualifying_layer_returns_zero_and_no_dlog_keys() -> None:
     """A network with no qualifying layer returns a 0-dim zero tensor and logs nothing."""
     net = nn.Sequential(nn.ReLU())
-    reg = SpectralNormRegularizer()
+    reg = SpectralNormPenalty()
     dlog: dict[str, float] = {}
 
     penalty = reg(net, _UNUSED_BATCH, _UNUSED_BATCH, _UNUSED_BATCH, dlog=dlog)
@@ -201,7 +246,7 @@ def test_state_recreated_after_dtype_change() -> None:
     torch.manual_seed(26)
     layer = nn.Linear(5, 4, bias=False)
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(n_warmup_iterations=200)
+    reg = SpectralNormPenalty(n_warmup_iterations=200)
 
     reg.penalty(net)  # warm up in float32
     penalty = reg.penalty(net.double())
@@ -218,13 +263,13 @@ def test_two_single_steps_equal_one_two_step_warmup() -> None:
     layer = nn.Linear(5, 4, bias=False)
     net = nn.Sequential(layer)
 
-    reg_two_calls = SpectralNormRegularizer(
+    reg_two_calls = SpectralNormPenalty(
         seed=3, n_warmup_iterations=1, n_power_iterations=1
     )
     reg_two_calls.penalty(net)
     penalty_two_calls = reg_two_calls.penalty(net)
 
-    reg_one_call = SpectralNormRegularizer(seed=3, n_warmup_iterations=2)
+    reg_one_call = SpectralNormPenalty(seed=3, n_warmup_iterations=2)
     penalty_one_call = reg_one_call.penalty(net)
 
     torch.testing.assert_close(penalty_two_calls, penalty_one_call)
@@ -235,7 +280,7 @@ def test_pruned_layer_reconverges_to_the_same_penalty() -> None:
     torch.manual_seed(42)
     layer = nn.Linear(5, 4, bias=False)
     net = nn.Sequential(layer)
-    reg = SpectralNormRegularizer(n_warmup_iterations=1)
+    reg = SpectralNormPenalty(n_warmup_iterations=1)
 
     first = reg.penalty(net)
     reg.penalty(nn.Sequential(nn.ReLU()))
@@ -249,8 +294,8 @@ def test_same_seed_gives_identical_penalty_and_gradient_after_warmup() -> None:
     torch.manual_seed(30)
     layer = nn.Linear(5, 4, bias=False)
     net = nn.Sequential(layer)
-    reg_a = SpectralNormRegularizer(seed=7, n_warmup_iterations=50)
-    reg_b = SpectralNormRegularizer(seed=7, n_warmup_iterations=50)
+    reg_a = SpectralNormPenalty(seed=7, n_warmup_iterations=50)
+    reg_b = SpectralNormPenalty(seed=7, n_warmup_iterations=50)
 
     penalty_a = reg_a.penalty(net)
     penalty_a.backward()
@@ -272,8 +317,8 @@ def test_different_seeds_give_different_penalty_after_single_call() -> None:
     torch.manual_seed(31)
     layer = nn.Linear(5, 4, bias=False)
     net = nn.Sequential(layer)
-    reg_a = SpectralNormRegularizer(seed=1, n_warmup_iterations=1)
-    reg_b = SpectralNormRegularizer(seed=2, n_warmup_iterations=1)
+    reg_a = SpectralNormPenalty(seed=1, n_warmup_iterations=1)
+    reg_b = SpectralNormPenalty(seed=2, n_warmup_iterations=1)
 
     penalty_a = reg_a.penalty(net)
     penalty_b = reg_b.penalty(net)
@@ -352,7 +397,7 @@ def _loss_fn(
 def test_compiled_critic_trains_and_logs_spectral_norm(
     compile_aot_eager: Callable[[torch.nn.Module], CompileCounterWithBackend],
 ) -> None:
-    """`SpectralNormRegularizer` as `d_reg_fn` trains a compiled critic and logs
+    """`SpectralNormPenalty` as `d_reg_fn` trains a compiled critic and logs
     `spectral_norm`."""
     torch.manual_seed(0)
     g_net = _Generator()
@@ -372,7 +417,7 @@ def test_compiled_critic_trains_and_logs_spectral_norm(
         g_optimizer=g_optimizer,
         d_optimizer=d_optimizer,
         loss_fn=_loss_fn,
-        d_reg_fn=SpectralNormRegularizer(max_norm=0.5),
+        d_reg_fn=SpectralNormPenalty(max_norm=0.5),
     )
 
     assert (epoch_dlog["d_pre_spectral_norm_mean"] > 0.0).all()

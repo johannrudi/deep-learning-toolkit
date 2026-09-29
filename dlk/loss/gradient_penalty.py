@@ -18,8 +18,8 @@ def _critic(
     return d_net(x, y) if y is not None else d_net(x)
 
 
-def _sharp_softplus(z: torch.Tensor) -> torch.Tensor:
-    """Approximate `relu` by a softplus with `beta=10`, the default one-sided nonlinearity."""
+def _default_one_sided_nonlinearity(z: torch.Tensor) -> torch.Tensor:
+    """Approximate `relu` by a softplus with `beta=10`."""
     return F.softplus(z, beta=10.0)
 
 
@@ -111,6 +111,7 @@ def gradient_penalty(
     x_gen: torch.Tensor,
     x_data: torch.Tensor,
     y_data: torch.Tensor | None,
+    *,
     lip: float = 1.0,
     eps: float = 1e-6,
     one_sided: bool = True,
@@ -138,9 +139,11 @@ def gradient_penalty(
     and penalizes its norm with the one- and two-sided penalties
 
     .. math::
-        \mathcal{R}_\mathrm{one} = E[\phi(\|g\|^2 + \varepsilon - k^2)] \quad (\texttt{one\_sided=True}),
+        \mathcal{R}_\mathrm{one} = \frac{1}{2} E[\phi(\|g\|^2 + \varepsilon - k^2)]
+            \quad (\texttt{one\_sided=True}),
         \qquad
-        \mathcal{R}_\mathrm{two} = E[(\sqrt{\|g\|^2 + \varepsilon} - k)^2] \quad (\texttt{one\_sided=False}),
+        \mathcal{R}_\mathrm{two} = \frac{1}{2} E[(\sqrt{\|g\|^2 + \varepsilon} - k)^2]
+            \quad (\texttt{one\_sided=False}),
 
     with the target Lipschitz constant :math:`k` (argument `lip`), a small
     :math:`\varepsilon` (argument `eps`), and a nonlinearity :math:`\phi`
@@ -208,10 +211,10 @@ def gradient_penalty(
 
     # compute the penalty
     if one_sided:
-        nl = one_sided_nonlinearity or _sharp_softplus
-        grad_penalty = nl(grad_norm_sq + eps - lip * lip).mean()
+        nl = one_sided_nonlinearity or _default_one_sided_nonlinearity
+        grad_penalty = 0.5 * nl(grad_norm_sq + eps - lip * lip).mean()
     else:
-        grad_penalty = ((torch.sqrt(grad_norm_sq + eps) - lip) ** 2).mean()
+        grad_penalty = 0.5 * ((torch.sqrt(grad_norm_sq + eps) - lip) ** 2).mean()
 
     # log the gradient norm
     if dlog is not None:
@@ -275,9 +278,11 @@ def _gradient_fd_penalty(
     norm,
 
     .. math::
-        \mathcal{R}_\mathrm{one} = E[\phi(q^2 + \varepsilon - k^2)] \quad (\texttt{one\_sided=True}),
+        \mathcal{R}_\mathrm{one} = \frac{1}{2} E[\phi(q^2 + \varepsilon - k^2)]
+            \quad (\texttt{one\_sided=True}),
         \qquad
-        \mathcal{R}_\mathrm{two} = E[(\sqrt{q^2 + \varepsilon} - k)^2] \quad (\texttt{one\_sided=False}).
+        \mathcal{R}_\mathrm{two} = \frac{1}{2} E[(\sqrt{q^2 + \varepsilon} - k)^2]
+            \quad (\texttt{one\_sided=False}).
 
     Args:
         d_a: Critic outputs at the first point of each pair.
@@ -311,10 +316,10 @@ def _gradient_fd_penalty(
 
     # compute the penalty
     if one_sided:
-        nl = one_sided_nonlinearity or _sharp_softplus
-        penalty = nl(grad_fd_norm_sq + eps - lip * lip).mean()
+        nl = one_sided_nonlinearity or _default_one_sided_nonlinearity
+        penalty = 0.5 * nl(grad_fd_norm_sq + eps - lip * lip).mean()
     else:
-        penalty = ((torch.sqrt(grad_fd_norm_sq + eps) - lip) ** 2).mean()
+        penalty = 0.5 * ((torch.sqrt(grad_fd_norm_sq + eps) - lip) ** 2).mean()
 
     # log the FD-gradient norm
     if dlog is not None:
@@ -339,6 +344,7 @@ def gradient_penalty_fd_segment(
     x_gen: torch.Tensor,
     x_data: torch.Tensor,
     y_data: torch.Tensor | None,
+    *,
     lip: float = 1.0,
     eps: float = 1e-6,
     min_dist: float = 1e-6,
@@ -365,7 +371,14 @@ def gradient_penalty_fd_segment(
 
     with a small :math:`\delta` (argument `min_dist`) that guards against
     division by zero, with the one- or two-sided penalty of
-    `gradient_penalty`, :math:`q` in place of :math:`\|g\|`.
+    `gradient_penalty`, :math:`q` in place of :math:`\|g\|`,
+
+    .. math::
+        \mathcal{R}_\mathrm{one} = \frac{1}{2} E[\phi(q^2 + \varepsilon - k^2)]
+            \quad (\texttt{one\_sided=True}),
+        \qquad
+        \mathcal{R}_\mathrm{two} = \frac{1}{2} E[(\sqrt{q^2 + \varepsilon} - k)^2]
+            \quad (\texttt{one\_sided=False}).
 
     By the mean value theorem, :math:`q` is a lower bound on the local
     Lipschitz constant along the segment, and constrains the slope of `D` in
@@ -446,6 +459,7 @@ def gradient_penalty_fd_adversarial(
     x_gen: torch.Tensor,
     x_data: torch.Tensor,
     y_data: torch.Tensor | None,
+    *,
     lip: float = 1.0,
     eps: float = 1e-6,
     xi: float = 1e-2,
@@ -484,7 +498,14 @@ def gradient_penalty_fd_adversarial(
     with :math:`\rho` (argument `radius`), and penalizes the difference
     quotient :math:`q(\hat{x}, x')` at :math:`x' = \hat{x} + r_\mathrm{adv}`
     (see `gradient_penalty_fd_segment`) with the one- or two-sided penalty
-    of `gradient_penalty`, :math:`q` in place of :math:`\|g\|`.
+    of `gradient_penalty`, :math:`q` in place of :math:`\|g\|`,
+
+    .. math::
+        \mathcal{R}_\mathrm{one} = \frac{1}{2} E[\phi(q^2 + \varepsilon - k^2)]
+            \quad (\texttt{one\_sided=True}),
+        \qquad
+        \mathcal{R}_\mathrm{two} = \frac{1}{2} E[(\sqrt{q^2 + \varepsilon} - k)^2]
+            \quad (\texttt{one\_sided=False}).
 
     For small `xi`, `g` is parallel to :math:`\nabla_x D(\hat{x})`, so
     :math:`q(\hat{x}, x') \approx \|\nabla_x D(\hat{x})\|`. For a linear
@@ -598,6 +619,7 @@ def gradient_penalty_fd_endpoint(
     x_gen: torch.Tensor,
     x_data: torch.Tensor,
     y_data: torch.Tensor | None,
+    *,
     lip: float = 1.0,
     eps: float = 1e-6,
     min_dist: float = 1e-6,
@@ -617,7 +639,14 @@ def gradient_penalty_fd_endpoint(
 
     with a small :math:`\delta` (argument `min_dist`) that guards against
     division by zero, with the one- or two-sided penalty of
-    `gradient_penalty`, :math:`q` in place of :math:`\|g\|`.
+    `gradient_penalty`, :math:`q` in place of :math:`\|g\|`,
+
+    .. math::
+        \mathcal{R}_\mathrm{one} = \frac{1}{2} E[\phi(q^2 + \varepsilon - k^2)]
+            \quad (\texttt{one\_sided=True}),
+        \qquad
+        \mathcal{R}_\mathrm{two} = \frac{1}{2} E[(\sqrt{q^2 + \varepsilon} - k)^2]
+            \quad (\texttt{one\_sided=False}).
 
     :math:`q` is the average slope of `D` over the *whole* segment, the
     loosest of the segment-based bounds. The numerator reuses the critic
@@ -711,6 +740,7 @@ def gradient_penalty_fd_random(
     x_gen: torch.Tensor,
     x_data: torch.Tensor,
     y_data: torch.Tensor | None,
+    *,
     lip: float = 1.0,
     eps: float = 1e-6,
     radius: float = 1e-1,
@@ -741,7 +771,14 @@ def gradient_penalty_fd_random(
 
     and penalizes the difference quotient :math:`q(\hat{x}, x')` (see
     `gradient_penalty_fd_segment`) with the one- or two-sided penalty of
-    `gradient_penalty`, :math:`q` in place of :math:`\|g\|`.
+    `gradient_penalty`, :math:`q` in place of :math:`\|g\|`,
+
+    .. math::
+        \mathcal{R}_\mathrm{one} = \frac{1}{2} E[\phi(q^2 + \varepsilon - k^2)]
+            \quad (\texttt{one\_sided=True}),
+        \qquad
+        \mathcal{R}_\mathrm{two} = \frac{1}{2} E[(\sqrt{q^2 + \varepsilon} - k)^2]
+            \quad (\texttt{one\_sided=False}).
 
     The penalty sees only about a :math:`1 / \sqrt{d}` fraction of the slope,
     so it barely constrains the critic in high dimension. Call it in full

@@ -3,10 +3,10 @@
 The expected values below were generated with this file's `__main__` entry point
 (`python tests/loss/test_gradient_penalty_regression.py`) before the Lipschitz
 regularization work of plan `2026.008`, from the former `gradient_penalty_lip`
-and `gradient_penalty_opt`. `gradient_penalty` reproduces them exactly with the
-arguments in `CASES`: a `relu` nonlinearity and `eps=0` for the one-sided
-penalty, and `eps=1e-12` (the former square-root guard) for the two-sided one.
-Regenerate on torch version bumps.
+and `gradient_penalty_opt`. `gradient_penalty` reproduces them, up to its factor
+`PENALTY_SCALE = 1/2`, with the arguments in `CASES`: a `relu` nonlinearity and
+`eps=0` for the one-sided penalty, and `eps=1e-12` (the former square-root
+guard) for the two-sided one. Regenerate on torch version bumps.
 
 Frozen per case: the scalar penalty value and, for each critic parameter, its
 full flattened `.grad`. `_single_threaded_torch` removes intra-op
@@ -35,6 +35,9 @@ X_SIZE = 3
 Y_SIZE = 2
 LIP = 0.3  # small enough that the relu is active for some samples
 SEED = 0
+
+# `gradient_penalty` scales by 1/2; the frozen values below predate that factor
+PENALTY_SCALE = 0.5
 
 
 @contextlib.contextmanager
@@ -554,27 +557,30 @@ def test_gradient_penalty_regression(case_name: str) -> None:
 
     torch.testing.assert_close(
         torch.tensor(value),
-        torch.tensor(EXPECTED_VALUE[case_name]),
+        PENALTY_SCALE * torch.tensor(EXPECTED_VALUE[case_name]),
         rtol=REGRESSION_RTOL,
         atol=REGRESSION_ATOL,
     )
     for grad, expected_grad in zip(grads, EXPECTED_GRADS[case_name], strict=True):
         torch.testing.assert_close(
             torch.tensor(grad),
-            torch.tensor(expected_grad),
+            PENALTY_SCALE * torch.tensor(expected_grad),
             rtol=REGRESSION_RTOL,
             atol=REGRESSION_ATOL,
         )
 
 
 if __name__ == "__main__":
-    # regenerate the expected values, then print them as paste-ready dict literals
+    # regenerate the expected values, then print them as paste-ready dict
+    # literals; undo `PENALTY_SCALE` to keep the frozen values' convention
     print("torch version:", torch.__version__, "| device:", torch.empty(0).device)
     expected_value_ = {}
     expected_grads_ = {}
     for case_name_, (conditional_, penalty_kwargs_) in CASES.items():
         value_, grads_ = _run_case(conditional_, penalty_kwargs_)
-        expected_value_[case_name_] = value_
-        expected_grads_[case_name_] = grads_
+        expected_value_[case_name_] = value_ / PENALTY_SCALE
+        expected_grads_[case_name_] = [
+            [g / PENALTY_SCALE for g in grad_] for grad_ in grads_
+        ]
     print(f"EXPECTED_VALUE = {expected_value_!r}")
     print(f"EXPECTED_GRADS = {expected_grads_!r}")

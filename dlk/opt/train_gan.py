@@ -92,9 +92,9 @@ class DiscriminatorRegularizerFn(Protocol):
         x_data: torch.Tensor,
         y_data: torch.Tensor,
         *,
-        dlog: dict[str, float] | None = None,
         d_outputs_gen: torch.Tensor | None = None,
         d_outputs_data: torch.Tensor | None = None,
+        dlog: dict[str, float] | None = None,
     ) -> torch.Tensor:
         """Return a scalar regularization penalty for discriminator updates."""
         ...
