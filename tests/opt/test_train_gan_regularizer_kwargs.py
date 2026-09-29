@@ -1,4 +1,4 @@
-"""Tests for the mandatory `d_outputs_gen`/`d_outputs_data` keywords and `d_reg_autocast` in `dlk.opt.train_gan`."""
+"""Tests for the mandatory `d_outputs_gen`/`d_outputs_data` keywords and `autocast_d_reg_fn` in `dlk.opt.train_gan`."""
 
 import functools
 from collections.abc import Callable
@@ -99,7 +99,7 @@ def _train(
     """Seed, build a tiny GAN and dataloader, and run `train_epochs` with shared defaults.
 
     `overrides` merges into the `train_epochs` keyword arguments (`loss_fn`,
-    `n_epochs`, `d_opt_pre`, `d_opt_post`, `autocast_dtype`, `d_reg_autocast`,
+    `n_epochs`, `d_opt_pre`, `d_opt_post`, `autocast_dtype`, `autocast_d_reg_fn`,
     ...). Returns the epoch-level dlog and the trained `d_net`.
     """
     torch.manual_seed(0)
@@ -193,7 +193,7 @@ def _both_keywords_regularizer() -> (
 def test_regularizer_receives_matching_full_batch_float32_by_default(
     autocast_dtype: torch.dtype | None,
 ) -> None:
-    """With `d_reg_autocast=False` (default), both keywords carry `float32` copies of the loss's outputs."""
+    """With `autocast_d_reg_fn=False` (default), both keywords carry `float32` copies of the loss's outputs."""
     loss_fn, loss_calls = _make_recording_loss_fn()
     d_reg_fn, reg_calls = _both_keywords_regularizer()
 
@@ -220,7 +220,7 @@ def test_regularizer_receives_matching_full_batch_float32_by_default(
 
 
 def test_autocast_d_reg_fn_skips_the_float32_cast() -> None:
-    """With `d_reg_autocast=True` under `bfloat16` autocast, the keywords keep the autocast dtype."""
+    """With `autocast_d_reg_fn=True` under `bfloat16` autocast, the keywords keep the autocast dtype."""
     d_reg_fn, reg_calls = _both_keywords_regularizer()
 
     _train(
