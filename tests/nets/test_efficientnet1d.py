@@ -250,6 +250,16 @@ def test_efficientnet_v2_s_uses_fused_blocks_in_early_stages_and_mbconv_in_late_
     assert first_block.config.se_ratio is None
 
 
+def test_efficientnet_state_dict_keys_unchanged() -> None:
+    """Keep parameter names of the unwrapped network, so existing checkpoints load."""
+    net = EfficientNetV2B0Minimal(input_length=32, num_classes=3)
+
+    keys = list(net.state_dict())
+
+    assert "stem.0.weight" in keys
+    assert not any("parametrizations" in key for key in keys)
+
+
 @pytest.mark.parametrize(
     ("model_cls", "expected_blocks"),
     [

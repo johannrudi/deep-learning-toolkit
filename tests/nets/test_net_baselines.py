@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 
 from dlk.nets.conv1d import ConvNet, ConvNeXtBlock, ConvResNet
-from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal
+from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal, EfficientNetV2B0Minimal
 from dlk.nets.mlp import MLPNet, MLPResNet
 from dlk.nets.transformer1d import ChannelWiseTransformerNet, TransformerNet
 from dlk.nets.utils import get_gain, set_init_parameters
@@ -164,12 +164,20 @@ def _build_efficientnet() -> Case:
     return net, (_input(2, 1, 32),)
 
 
+def _build_efficientnet_v2() -> Case:
+    """Build an ``EfficientNetV2B0Minimal`` stem-to-head network and its input."""
+    torch.manual_seed(0)
+    net = EfficientNetV2B0Minimal(input_channels=1, input_length=32, num_classes=3)
+    return net, (_input(2, 1, 32),)
+
+
 BUILDERS: dict[str, Callable[[], Case]] = {
     "channel_wise_transformer_net": _build_channel_wise_transformer_net,
     "convnet": _build_convnet,
     "convnext_block": _build_convnext_block,
     "convresnet": _build_convresnet,
     "efficientnet_v1_b0_minimal": _build_efficientnet,
+    "efficientnet_v2_b0_minimal": _build_efficientnet_v2,
     "mlpnet": _build_mlpnet,
     "mlpresnet": _build_mlpresnet,
     "transformer_net": _build_transformer_net,
@@ -196,6 +204,10 @@ BASELINE_OUTPUTS: dict[str, list[list[float]]] = {
     "efficientnet_v1_b0_minimal": [
         [-3.638240264614012e-10, -1.6396646540517423e-10, -2.7084653964060124e-10],
         [-2.2792809306615425e-11, -1.0313081638679833e-10, -7.65879859532248e-11],
+    ],
+    "efficientnet_v2_b0_minimal": [
+        [-1.0591045196406412e-07, -1.0125177141162567e-08, -1.0978830999874845e-07],
+        [-1.6397908098042535e-07, 1.9807063722510065e-07, 1.740789912219043e-08],
     ],
     "mlpnet": [
         [-0.2424575388431549, 0.503169059753418, -0.3081715703010559],
