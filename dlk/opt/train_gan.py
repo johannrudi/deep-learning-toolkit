@@ -137,10 +137,14 @@ def train_epochs(
     Under distributed training (DDP), wrap `g_net` and `d_net` independently;
     `broadcast_buffers=False` is recommended for `d_net` (multiple discriminator
     forwards per batch), and `find_unused_parameters`/`static_graph` must stay
-    False (the graph varies with `g_opt_freq` and `d_reg_fn`). Checkpointing and
-    validation run on the main process only, `validation_fn` receives the
-    unwrapped models, the distributed sampler's epoch is advanced automatically,
-    and loss statistics are reduced exactly across all processes.
+    False (the graph varies with `g_opt_freq` and `d_reg_fn`). Generator steps
+    bypass `d_net`'s DDP wrapper and freeze its parameters, so they neither
+    all-reduce nor compute discriminator gradients; compile before wrapping,
+    `DDP(torch.compile(net))`, since a `torch.compile(DDP(net))` is not
+    unwrapped. Checkpointing and validation run on the main process only,
+    `validation_fn` receives the unwrapped models, the distributed sampler's
+    epoch is advanced automatically, and loss statistics are reduced exactly
+    across all processes.
 
     Host-to-device copies are asynchronous when the dataloader pins its batches
     and `device` is an accelerator; see `train_batches`.
@@ -518,22 +522,34 @@ def _train_step_generator(
     with record_function(RecordFunctionName.G_OPTIMIZER_ZERO):
         g_optimizer.zero_grad()
 
-    with record_function(RecordFunctionName.G_FORWARD):
-        with autocast_context(device, autocast_dtype):
-            # generate outputs with `g_net`
-            x_gen = g_net(y_data, z)
+    # freeze the discriminator through forward and backward
+    # NOTE: calling the unwrapped `d_net` keeps DDP from arming its reducer, so
+    #       the backward neither all-reduces nor computes `d_net` weight gradients;
+    #       freezing a DDP-wrapped `d_net` instead would leave its reducer waiting
+    d_module = distributed.unwrap_net(d_net)
+    d_params = [p for p in d_module.parameters() if p.requires_grad]
+    for p in d_params:
+        p.requires_grad_(False)
+    try:
+        with record_function(RecordFunctionName.G_FORWARD):
+            with autocast_context(device, autocast_dtype):
+                # generate outputs with `g_net`
+                x_gen = g_net(y_data, z)
 
-            # evaluate discriminator
-            d_outputs_gen = d_net(x_gen, y_data)
+                # evaluate discriminator
+                d_outputs_gen = d_module(x_gen, y_data)
 
-            # evaluate discriminator loss
-            # NOTE: pass only generated outputs for generator steps
-            g_loss, _ = loss_fn(d_outputs_gen, None)
-            loss = g_loss
+                # evaluate discriminator loss
+                # NOTE: pass only generated outputs for generator steps
+                g_loss, _ = loss_fn(d_outputs_gen, None)
+                loss = g_loss
 
-    # calculate derivatives (end AD)
-    with record_function(RecordFunctionName.G_BACKWARD):
-        loss.backward()
+        # calculate derivatives (end AD)
+        with record_function(RecordFunctionName.G_BACKWARD):
+            loss.backward()
+    finally:
+        for p in d_params:
+            p.requires_grad_(True)
 
     # update network parameters
     with record_function(RecordFunctionName.G_OPTIMIZER_STEP):

@@ -1,12 +1,15 @@
-"""Tests for `dlk.opt.train_gan.train_epochs` under a 2-process gloo group."""
+"""Tests for `dlk.opt.train_gan` training loops under a 2-process gloo group."""
+
+from typing import Any
 
 import torch
 from ddp_test_utils import init_worker, run_distributed
+from torch.distributed.algorithms.ddp_comm_hooks.default_hooks import allreduce_hook
 
 from dlk.loss.gradient_penalty import gradient_penalty_fd_adversarial
 from dlk.opt import distributed
 from dlk.opt.compile import compile_net_from_params
-from dlk.opt.train_gan import train_epochs
+from dlk.opt.train_gan import train_batches, train_epochs
 
 
 class _Generator(torch.nn.Module):
@@ -237,3 +240,82 @@ def _train_gan_fd_adversarial_compiled_worker(
 def test_gradient_penalty_fd_adversarial_compiled_ddp() -> None:
     """Train a DDP GAN with a compiled critic under the adversarial FD penalty."""
     run_distributed(_train_gan_fd_adversarial_compiled_worker)
+
+
+def _register_counting_comm_hook(net: torch.nn.Module) -> list[int]:
+    """Register an all-reduce comm hook on a DDP model that counts its calls.
+
+    Args:
+        net: DDP-wrapped model.
+
+    Returns:
+        Single-element list holding the number of all-reduced buckets.
+    """
+    assert isinstance(net, torch.nn.parallel.DistributedDataParallel)
+    n_calls = [0]
+
+    # NOTE: DDP checks at runtime that `bucket` is annotated as `GradBucket`
+    def hook(
+        process_group: Any,
+        bucket: torch.distributed.GradBucket,  # pyright: ignore[reportPrivateImportUsage]
+    ) -> torch.futures.Future[torch.Tensor]:
+        n_calls[0] += 1
+        return allreduce_hook(process_group, bucket)
+
+    net.register_comm_hook(None, hook)
+    return n_calls
+
+
+def _generator_step_skips_discriminator_worker(
+    rank: int, world_size: int, port: int
+) -> None:
+    """Run generator-only steps and verify `d_net` stays out of the backward."""
+    ctx = init_worker(rank, world_size, port)
+    distributed.seed_random_generators(42)
+    dataloader = _make_dataloader()
+
+    g_net = distributed.wrap_net(_Generator(), ctx.device)
+    d_net = distributed.wrap_net(_Discriminator(), ctx.device, broadcast_buffers=False)
+    g_n_calls = _register_counting_comm_hook(g_net)
+    d_n_calls = _register_counting_comm_hook(d_net)
+    g_optimizer = torch.optim.SGD(g_net.parameters(), lr=0.05)
+    d_optimizer = torch.optim.SGD(d_net.parameters(), lr=0.05)
+
+    def _train(d_opt_pre: int) -> None:
+        train_batches(
+            epoch_idx=0,
+            g_net=g_net,
+            d_net=d_net,
+            dataloader=dataloader,
+            z_sample_fn=lambda batch_size: torch.randn((batch_size, 2)),
+            g_optimizer=g_optimizer,
+            d_optimizer=d_optimizer,
+            loss_fn=_gan_loss_fn,
+            d_opt_pre=d_opt_pre,
+            d_opt_post=0,
+            device=ctx.device,
+            max_batches=2,
+        )
+
+    # run generator steps only
+    _train(d_opt_pre=0)
+
+    # generator gradients are all-reduced; discriminator ones are neither
+    # all-reduced nor computed, and its parameters are trainable again
+    assert g_n_calls[0] > 0
+    assert d_n_calls[0] == 0
+    for p in d_net.parameters():
+        assert p.grad is None
+        assert p.requires_grad
+
+    # confirm that the DDP-wrapped discriminator still trains afterwards
+    _train(d_opt_pre=1)
+    assert d_n_calls[0] > 0
+    _assert_params_synced([g_net, d_net], world_size)
+
+    distributed.finalize()
+
+
+def test_generator_step_skips_discriminator_gradients() -> None:
+    """Keep the discriminator out of the generator step's backward under DDP."""
+    run_distributed(_generator_step_skips_discriminator_worker)
