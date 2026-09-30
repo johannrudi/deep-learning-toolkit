@@ -827,6 +827,7 @@ class EfficientNetV1B0Minimal(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B0Minimal.
 
@@ -836,6 +837,8 @@ class EfficientNetV1B0Minimal(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -848,6 +851,7 @@ class EfficientNetV1B0Minimal(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -861,6 +865,7 @@ class EfficientNetV1B0(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B0.
 
@@ -870,6 +875,8 @@ class EfficientNetV1B0(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -882,6 +889,7 @@ class EfficientNetV1B0(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -895,6 +903,7 @@ class EfficientNetV1B1(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B1.
 
@@ -904,6 +913,8 @@ class EfficientNetV1B1(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -916,6 +927,7 @@ class EfficientNetV1B1(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -929,6 +941,7 @@ class EfficientNetV1B2(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.3,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B2.
 
@@ -938,6 +951,8 @@ class EfficientNetV1B2(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -950,6 +965,7 @@ class EfficientNetV1B2(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -963,6 +979,7 @@ class EfficientNetV1B3(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.3,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B3.
 
@@ -972,6 +989,8 @@ class EfficientNetV1B3(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -984,6 +1003,7 @@ class EfficientNetV1B3(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -997,6 +1017,7 @@ class EfficientNetV1B4(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.4,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B4.
 
@@ -1006,6 +1027,8 @@ class EfficientNetV1B4(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -1018,6 +1041,7 @@ class EfficientNetV1B4(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1031,6 +1055,7 @@ class EfficientNetV1B5(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.4,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B5.
 
@@ -1040,6 +1065,8 @@ class EfficientNetV1B5(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -1052,6 +1079,7 @@ class EfficientNetV1B5(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1065,6 +1093,7 @@ class EfficientNetV1B6(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.5,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B6.
 
@@ -1074,6 +1103,8 @@ class EfficientNetV1B6(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -1086,6 +1117,7 @@ class EfficientNetV1B6(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1099,6 +1131,7 @@ class EfficientNetV1B7(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.5,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B7.
 
@@ -1108,6 +1141,8 @@ class EfficientNetV1B7(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -1120,6 +1155,7 @@ class EfficientNetV1B7(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1133,6 +1169,7 @@ class EfficientNetV1B8(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.5,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1B8.
 
@@ -1142,6 +1179,8 @@ class EfficientNetV1B8(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -1154,6 +1193,7 @@ class EfficientNetV1B8(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1167,6 +1207,7 @@ class EfficientNetV1L2(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.5,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV1L2.
 
@@ -1176,6 +1217,8 @@ class EfficientNetV1L2(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in MBConv blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v1_b0_config(),
@@ -1188,6 +1231,7 @@ class EfficientNetV1L2(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1292,6 +1336,7 @@ class EfficientNetV2B0Minimal(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2B0Minimal.
 
@@ -1301,6 +1346,8 @@ class EfficientNetV2B0Minimal(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_b_config(),
@@ -1313,6 +1360,7 @@ class EfficientNetV2B0Minimal(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1326,6 +1374,7 @@ class EfficientNetV2B0(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2B0.
 
@@ -1335,6 +1384,8 @@ class EfficientNetV2B0(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_b_config(),
@@ -1347,6 +1398,7 @@ class EfficientNetV2B0(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1360,6 +1412,7 @@ class EfficientNetV2B1(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2B1.
 
@@ -1369,6 +1422,8 @@ class EfficientNetV2B1(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_b_config(),
@@ -1381,6 +1436,7 @@ class EfficientNetV2B1(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1394,6 +1450,7 @@ class EfficientNetV2B2(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.3,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2B2.
 
@@ -1403,6 +1460,8 @@ class EfficientNetV2B2(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_b_config(),
@@ -1415,6 +1474,7 @@ class EfficientNetV2B2(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1428,6 +1488,7 @@ class EfficientNetV2B3(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.3,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2B3.
 
@@ -1437,6 +1498,8 @@ class EfficientNetV2B3(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_b_config(),
@@ -1449,6 +1512,7 @@ class EfficientNetV2B3(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1843,6 +1907,7 @@ class EfficientNetV2S(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.2,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2S.
 
@@ -1852,6 +1917,8 @@ class EfficientNetV2S(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_s_config(),
@@ -1864,6 +1931,7 @@ class EfficientNetV2S(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1877,6 +1945,7 @@ class EfficientNetV2M(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.3,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2M.
 
@@ -1886,6 +1955,8 @@ class EfficientNetV2M(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_m_config(),
@@ -1898,6 +1969,7 @@ class EfficientNetV2M(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1911,6 +1983,7 @@ class EfficientNetV2L(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.4,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2L.
 
@@ -1920,6 +1993,8 @@ class EfficientNetV2L(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_l_config(),
@@ -1932,6 +2007,7 @@ class EfficientNetV2L(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
 
 
@@ -1945,6 +2021,7 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
         num_classes: int = 2,
         dropout_connect: float = 0.2,
         dropout_head: float = 0.4,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize EfficientNetV2XL.
 
@@ -1954,6 +2031,8 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
             num_classes: Number of output classes.
             dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
+            enable_spectral_norm: Whether to wrap every convolution and linear layer
+                with spectral normalization.
         """
         super().__init__(
             stage_specs=get_efficientnet_v2_xl_config(),
@@ -1966,4 +2045,5 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
             num_classes=num_classes,
             dropout_connect=dropout_connect,
             dropout_head=dropout_head,
+            enable_spectral_norm=enable_spectral_norm,
         )
