@@ -6,7 +6,7 @@ from typing import NamedTuple
 import torch
 import torch.nn as nn
 
-from dlk.nets.utils import set_spectral_norm
+from dlk.nets.utils import get_spectral_norm, set_init_parameters, set_spectral_norm
 
 # --------------------------------------
 # Config
@@ -40,7 +40,8 @@ class StageSpec(NamedTuple):
     """Pair a stage config with the block class that implements it.
 
     Attributes:
-        block_cls: Block module class (`MBConv1D` or `FusedMBConv1D`).
+        block_cls: Block module class (`MBConv1D` or `FusedMBConv1D`), called
+            as `block_cls(config, dropout, enable_spectral_norm=...)`.
         config: Stage layout and channel configuration.
     """
 
@@ -464,6 +465,7 @@ class ScalableEfficientNet1D(nn.Module):
         dropout_head: float = 0.2,
         enable_stem: bool = True,
         enable_head: bool = True,
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize ScalableEfficientNet1D.
 
@@ -487,6 +489,10 @@ class ScalableEfficientNet1D(nn.Module):
             enable_head: Whether to build the classification head. When
                 `False`, the head is replaced by `nn.Identity()` and `forward`
                 returns the raw block output instead of class logits.
+            enable_spectral_norm: Whether to wrap every convolution and linear
+                layer, including the stem, squeeze-and-excitation, and head
+                layers, with spectral normalization; see
+                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
         """
         super().__init__()
         assert (
@@ -568,7 +574,13 @@ class ScalableEfficientNet1D(nn.Module):
                 # Stochastic depth (drop connect)
                 dropout_block = dropout_connect * len(self.blocks) / total_blocks
 
-                self.blocks.append(stage_spec.block_cls(block_config, dropout_block))
+                self.blocks.append(
+                    stage_spec.block_cls(
+                        block_config,
+                        dropout_block,
+                        enable_spectral_norm=enable_spectral_norm,
+                    )
+                )
 
         # Head
         self.head: nn.Module
@@ -589,11 +601,21 @@ class ScalableEfficientNet1D(nn.Module):
         else:
             self.head = nn.Identity()
 
+        # wrap stem and head layers in place; the blocks wrap their own
+        if enable_spectral_norm:
+            for module in (*self.stem.modules(), *self.head.modules()):
+                if isinstance(module, (nn.Conv1d, nn.Linear)):
+                    set_spectral_norm(module)
+
         # Initialize weights
         self._initialize_weights()
 
     def _initialize_weights(self) -> None:
-        """Initialize module parameters with standard heuristics."""
+        """Initialize module parameters with standard heuristics.
+
+        Spectrally normalized layers get an orthogonal weight from
+        `set_init_parameters` and a zero bias.
+        """
         # SE projections keep the fan-out scaling of the 1x1 convolutions they replaced
         se_linears = {
             layer
@@ -603,7 +625,11 @@ class ScalableEfficientNet1D(nn.Module):
             if isinstance(layer, nn.Linear)
         }
         for m in self.modules():
-            if isinstance(m, nn.Conv1d) or (
+            if get_spectral_norm(m) is not None:
+                set_init_parameters(m)
+                if isinstance(m.bias, torch.Tensor):
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.Conv1d) or (
                 isinstance(m, nn.Linear) and m in se_linears
             ):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
