@@ -9,15 +9,14 @@ from typing import Any, cast
 import torch
 import torch.nn as nn
 from torch.nn.utils import parametrize
-from torch.nn.utils.parametrizations import spectral_norm
 
 from dlk.nets.mlp import MLPResNet
 from dlk.nets.utils import (
     ModuleFactory,
     NormalizationFactory,
     get_gain,
-    get_spectral_norm,
     set_init_parameters,
+    set_spectral_norm,
     set_zero_parameters,
 )
 
@@ -266,7 +265,7 @@ class ConvResNet(nn.Module):
             in_channels, out_channels, 1, groups=in_channels
         )
         if self.conv_resnet_params["enable_spectral_norm"]:
-            self.input_layer = _spectral_norm(self.input_layer)
+            self.input_layer = set_spectral_norm(self.input_layer)
         in_channels = out_channels
 
         # create convolutional residual blocks
@@ -678,20 +677,6 @@ class UNetResBlock(nn.Module):
 # --------------------------------------
 
 
-def _spectral_norm(layer: nn.Module) -> nn.Module:
-    """Wrap a layer with `parametrizations.spectral_norm`, unless already wrapped.
-
-    Args:
-        layer: Layer whose weight should be spectrally normalized.
-
-    Returns:
-        The wrapped layer, or `layer` itself if it is already wrapped.
-    """
-    if get_spectral_norm(layer) is not None:
-        return layer
-    return spectral_norm(layer)
-
-
 def Normalization(num_channels: int, num_groups: int = 1) -> nn.GroupNorm:
     """Build a group normalization layer for 1D feature maps.
 
@@ -887,7 +872,7 @@ class UniversalMultiLevelBlock(nn.Module):
         if enable_spectral_norm:
             for name in list(block):
                 if name.startswith("conv_"):
-                    block[name] = _spectral_norm(block[name])
+                    block[name] = set_spectral_norm(block[name])
         self.block = nn.Sequential(block)
 
         # create skip branch
@@ -899,7 +884,7 @@ class UniversalMultiLevelBlock(nn.Module):
         else:
             self.skip_connection = conv(input_channels, self.output_channels, 1)
             if enable_spectral_norm:
-                self.skip_connection = _spectral_norm(self.skip_connection)
+                self.skip_connection = set_spectral_norm(self.skip_connection)
 
         # initialize parameters
         self.init_parameters()

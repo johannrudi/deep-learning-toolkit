@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from prettytable import PrettyTable
 from torch.nn.utils import parametrize
-from torch.nn.utils.parametrizations import _SpectralNorm
+from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
 
 # --------------------------------------
 # Types
@@ -146,6 +146,20 @@ def get_spectral_norm(layer: nn.Module) -> tuple[_SpectralNorm, torch.Tensor] | 
         if isinstance(parametrization, _SpectralNorm):
             return parametrization, cast(torch.Tensor, weight_parametrizations.original)
     return None
+
+
+def set_spectral_norm(layer: nn.Module) -> nn.Module:
+    """Wrap a layer with `parametrizations.spectral_norm`, unless already wrapped.
+
+    Args:
+        layer: Layer whose weight should be spectrally normalized.
+
+    Returns:
+        The wrapped layer, or `layer` itself if it is already wrapped.
+    """
+    if get_spectral_norm(layer) is not None:
+        return layer
+    return spectral_norm(layer)
 
 
 def set_init_parameters(

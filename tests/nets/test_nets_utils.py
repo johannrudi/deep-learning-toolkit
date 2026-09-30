@@ -1,11 +1,14 @@
 """Unit tests for the layer initialization in `dlk.nets.utils`."""
 
+from typing import cast
+
 import pytest
 import torch
 import torch.nn as nn
+from torch.nn.utils import parametrize
 from torch.nn.utils.parametrizations import spectral_norm
 
-from dlk.nets.utils import set_init_parameters
+from dlk.nets.utils import set_init_parameters, set_spectral_norm
 
 
 def _weight_orig(layer: nn.Module) -> torch.Tensor:
@@ -60,6 +63,18 @@ def test_set_init_parameters_spectral_norm_syncs_power_iteration() -> None:
     assert isinstance(weight, torch.Tensor)
     sigma = torch.linalg.matrix_norm(weight.detach(), ord=2)
     torch.testing.assert_close(sigma, torch.tensor(1.0))
+
+
+def test_set_spectral_norm_is_idempotent() -> None:
+    """Wrapping twice keeps one parametrization."""
+    layer = set_spectral_norm(nn.Conv1d(4, 8, 3))
+
+    assert set_spectral_norm(layer) is layer
+    parametrizations = cast(nn.ModuleDict, layer.parametrizations)
+    weight_parametrizations = cast(
+        parametrize.ParametrizationList, parametrizations["weight"]
+    )
+    assert len(weight_parametrizations) == 1
 
 
 def test_set_init_parameters_plain_layer_keeps_xavier_scale() -> None:
