@@ -6,6 +6,8 @@ from typing import NamedTuple
 import torch
 import torch.nn as nn
 
+from dlk.nets.utils import set_spectral_norm
+
 # --------------------------------------
 # Config
 # --------------------------------------
@@ -139,12 +141,20 @@ class SqueezeExcitation1DConv(nn.Module):
 class SqueezeExcitation1DLinear(nn.Module):
     """Apply squeeze-and-excitation reweighting for 1D feature maps."""
 
-    def __init__(self, channels: int, squeeze_channels: int) -> None:
+    def __init__(
+        self,
+        channels: int,
+        squeeze_channels: int,
+        enable_spectral_norm: bool = False,
+    ) -> None:
         """Initialize the squeeze-and-excitation block.
 
         Args:
             channels: Number of channels in the input feature map.
             squeeze_channels: Bottleneck width for the squeeze path.
+            enable_spectral_norm: If `True`, wrap both projections with
+                `parametrizations.spectral_norm`; see
+                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
         """
         super().__init__()
         assert channels > 0, f"channels must be positive, got {channels}"
@@ -156,6 +166,10 @@ class SqueezeExcitation1DLinear(nn.Module):
         self.reduce = nn.Linear(channels, squeeze_channels)
         self.activation = nn.SiLU()
         self.expand = nn.Linear(squeeze_channels, channels)
+        if enable_spectral_norm:
+            # wrap in place so both attributes stay typed as nn.Linear
+            set_spectral_norm(self.reduce)
+            set_spectral_norm(self.expand)
         self.gate = nn.Sigmoid()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -179,12 +193,21 @@ class SqueezeExcitation1DLinear(nn.Module):
 class MBConv1D(nn.Module):
     """A Mobile Inverted Bottleneck Convolution block for 1D signals."""
 
-    def __init__(self, config: MBConvConfig, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        config: MBConvConfig,
+        dropout: float = 0.0,
+        enable_spectral_norm: bool = False,
+    ) -> None:
         """Initialize the MBConv block.
 
         Args:
             config: Layer and channel configuration for this block.
             dropout: Dropout probability applied before residual addition.
+            enable_spectral_norm: If `True`, wrap every convolution and both
+                squeeze-and-excitation projections with
+                `parametrizations.spectral_norm`; see
+                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
         """
         super().__init__()
         assert (
@@ -230,13 +253,23 @@ class MBConv1D(nn.Module):
                 config.se_ratio is not None
             ), "se_ratio must be set when has_se is True"
             squeeze_channels = max(1, int(config.input_channels * config.se_ratio))
-            self.se = SqueezeExcitation1DLinear(expanded_channels, squeeze_channels)
+            self.se = SqueezeExcitation1DLinear(
+                expanded_channels,
+                squeeze_channels,
+                enable_spectral_norm=enable_spectral_norm,
+            )
 
         # Output projection
         self.project_conv = nn.Sequential(
             nn.Conv1d(expanded_channels, config.output_channels, 1, bias=False),
             nn.BatchNorm1d(config.output_channels),
         )
+
+        # wrap every convolution in place
+        if enable_spectral_norm:
+            for module in self.modules():
+                if isinstance(module, nn.Conv1d):
+                    set_spectral_norm(module)
 
         # Dropout for residual connection
         self.dropout: nn.Dropout | None
@@ -293,13 +326,21 @@ class FusedMBConv1D(nn.Module):
     Unlike `MBConv1D`, it has no squeeze-and-excitation step.
     """
 
-    def __init__(self, config: MBConvConfig, dropout: float = 0.0) -> None:
+    def __init__(
+        self,
+        config: MBConvConfig,
+        dropout: float = 0.0,
+        enable_spectral_norm: bool = False,
+    ) -> None:
         """Initialize the Fused-MBConv block.
 
         Args:
             config: Layer and channel configuration for this block.
                 `config.se_ratio` must be `None`.
             dropout: Dropout probability applied before residual addition.
+            enable_spectral_norm: If `True`, wrap every convolution with
+                `parametrizations.spectral_norm`; see
+                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
         """
         super().__init__()
         assert (
@@ -349,6 +390,12 @@ class FusedMBConv1D(nn.Module):
                 nn.SiLU(),
             )
             self.project_conv = nn.Identity()
+
+        # wrap every convolution in place
+        if enable_spectral_norm:
+            for module in self.modules():
+                if isinstance(module, nn.Conv1d):
+                    set_spectral_norm(module)
 
         # Dropout for residual connection
         self.dropout: nn.Dropout | None
