@@ -3,6 +3,8 @@ from typing import cast
 
 import pytest
 import torch
+import torch.nn as nn
+from torch.nn.utils import parametrize
 
 from dlk.nets.efficientnet1d import (
     EfficientNetV1B0,
@@ -34,6 +36,7 @@ from dlk.nets.efficientnet1d import (
     round_filters,
     round_repeats,
 )
+from dlk.nets.utils import get_spectral_norm
 
 
 def test_round_filters_rescales_channels_at_a_nontrivial_coefficient() -> None:
@@ -302,6 +305,7 @@ def _small_scalable_net(
     num_classes: int = 5,
     enable_stem: bool = True,
     enable_head: bool = True,
+    enable_spectral_norm: bool = False,
 ) -> ScalableEfficientNet1D:
     """Build a two-stage network whose channel counts survive width scaling.
 
@@ -314,6 +318,8 @@ def _small_scalable_net(
         num_classes: Number of output classes.
         enable_stem: Whether to build the stem.
         enable_head: Whether to build the classification head.
+        enable_spectral_norm: Whether to spectrally normalize every convolution
+            and linear layer.
 
     Returns:
         The configured network.
@@ -353,6 +359,7 @@ def _small_scalable_net(
         num_classes=num_classes,
         enable_stem=enable_stem,
         enable_head=enable_head,
+        enable_spectral_norm=enable_spectral_norm,
     )
 
 
@@ -393,3 +400,105 @@ def test_resolve_input_shape_reports_the_configured_length() -> None:
     assert unconstrained.resolve_input_shape() == (3, None)
     # a None length entry means forward accepts any length
     assert unconstrained(torch.randn(2, 3, 48)).shape == (2, 5)
+
+
+def _weighted_layers(module: nn.Module) -> list[nn.Module]:
+    """Return every convolution and linear layer in `module`."""
+    return [m for m in module.modules() if isinstance(m, (nn.Conv1d, nn.Linear))]
+
+
+def test_efficientnet_spectral_norm_wraps_every_conv_and_linear() -> None:
+    """Wrap, orthogonally initialize, and normalize every conv and linear layer."""
+    net = EfficientNetV2B0Minimal(
+        input_length=64, num_classes=3, enable_spectral_norm=True
+    )
+    plain_net = EfficientNetV2B0Minimal(input_length=64, num_classes=3)
+
+    layers = _weighted_layers(net)
+    assert len(layers) == len(_weighted_layers(plain_net))
+    assert all(parametrize.is_parametrized(m, "weight") for m in layers)
+
+    # every wrapped weight starts with orthonormal rows or columns; biases start at zero
+    for layer in layers:
+        spectral = get_spectral_norm(layer)
+        assert spectral is not None
+        _, original = spectral
+        w = original.detach().flatten(1)
+        # compare the wide orientation, whose rows are orthonormal
+        if w.shape[0] > w.shape[1]:
+            w = w.T
+        torch.testing.assert_close(w @ w.T, torch.eye(w.shape[0]), atol=1e-5, rtol=0)
+        bias = cast(torch.Tensor | None, layer.bias)
+        if bias is not None:
+            assert not bias.detach().any()
+        # scale up so that sigma is 1 only if the normalization acts
+        with torch.no_grad():
+            original.mul_(3.0)
+
+    # five training forwards let the power iteration converge sigma to 1
+    x = torch.randn(2, 64)
+    net.train()
+    for _ in range(5):
+        net(x)
+    net.eval()
+    y = net(x)
+
+    assert y.shape == (2, 3)
+    for layer in layers:
+        weight = cast(torch.Tensor, layer.weight).detach()
+        sigma = torch.linalg.matrix_norm(weight.flatten(1), ord=2)
+        torch.testing.assert_close(sigma, torch.tensor(1.0), rtol=1e-3, atol=1e-3)
+
+
+@pytest.mark.parametrize("enable_spectral_norm", [True, False])
+@pytest.mark.parametrize(
+    "block_cls, expand_ratio, se_ratio",
+    [
+        pytest.param(MBConv1D, 4, 0.25, id="mbconv-expand-se"),
+        pytest.param(MBConv1D, 1, None, id="mbconv-no-expand-no-se"),
+        pytest.param(FusedMBConv1D, 1, None, id="fused-expand-1"),
+        pytest.param(FusedMBConv1D, 4, None, id="fused-expand-4"),
+    ],
+)
+def test_blocks_spectral_norm_wraps_every_weighted_layer(
+    block_cls: type[MBConv1D] | type[FusedMBConv1D],
+    expand_ratio: int,
+    se_ratio: float | None,
+    enable_spectral_norm: bool,
+) -> None:
+    """Wrap every weighted layer of a block exactly when the flag is on."""
+    config = MBConvConfig(
+        kernel_size=3,
+        stride=1,
+        expand_ratio=expand_ratio,
+        input_channels=16,
+        output_channels=16,
+        num_layers=1,
+        se_ratio=se_ratio,
+    )
+    block = block_cls(config, enable_spectral_norm=enable_spectral_norm)
+
+    layers = _weighted_layers(block)
+    assert layers
+    wrapped = [parametrize.is_parametrized(m, "weight") for m in layers]
+    assert all(w == enable_spectral_norm for w in wrapped)
+
+
+@pytest.mark.parametrize("enable_stem, enable_head", [(False, True), (True, False)])
+def test_efficientnet_spectral_norm_without_stem_or_head(
+    enable_stem: bool, enable_head: bool
+) -> None:
+    """Wrap the remaining layers when the stem or the head is disabled."""
+    net = _small_scalable_net(
+        enable_stem=enable_stem, enable_head=enable_head, enable_spectral_norm=True
+    )
+    input_channels, input_length = net.resolve_input_shape()
+    assert input_channels is not None and input_length is not None
+    x = torch.randn(2, input_channels, input_length)
+
+    y = net(x)
+
+    layers = _weighted_layers(net)
+    assert layers
+    assert all(parametrize.is_parametrized(m, "weight") for m in layers)
+    assert y.shape[:2] == (2, net.resolve_output_shape()[0])
