@@ -23,7 +23,6 @@ initialized, so single-process runs need no code changes.
 import contextlib
 import datetime
 import inspect
-import logging
 import os
 import random
 import re
@@ -297,7 +296,6 @@ def _select_device(local_rank: int) -> torch.device:
 def initialize(
     backend: str | None = None,
     timeout_seconds: float = 1800.0,
-    logger: logging.Logger | None = None,
 ) -> DistributedContext:
     """Initialize distributed training from launcher environment variables.
 
@@ -313,7 +311,6 @@ def initialize(
         backend: Process group backend; `None` selects the default backend for
             the device (cuda -> nccl, xpu -> xccl, cpu/mps -> gloo).
         timeout_seconds: Timeout for collective operations.
-        logger: Logger used for initialization reporting.
 
     Returns:
         Context describing this process's rank, device, and distributed state.
@@ -322,9 +319,6 @@ def initialize(
         RuntimeError: If fewer accelerators are visible than the local rank
             requires.
     """
-    if logger is None:
-        logger = logging.getLogger("dlk.opt.distributed.initialize")
-
     # get the multi-process context
     launcher_env = _read_launcher_environment()
     if launcher_env is not None:
@@ -340,7 +334,6 @@ def initialize(
 
     # exit with a new single-process context
     if launcher_env is None:
-        logger.info(f"single-process run, device {device}, num_threads {num_threads}")
         return DistributedContext(
             rank=0,
             local_rank=0,
@@ -366,18 +359,6 @@ def initialize(
         timeout=datetime.timedelta(seconds=timeout_seconds),
         device_id=device if device.type in _COMMUNICATOR_DEVICE_TYPES else None,
     )
-    if world_size <= 8:
-        logger.info(
-            f"distributed run, "
-            f"rank {rank}/{world_size}, local_rank {local_rank}/{local_world_size}, "
-            f"device {device}, backend {backend}, num_threads {num_threads}"
-        )
-    elif is_main_process():
-        logger.info(
-            f"distributed run, "
-            f"world_size {world_size}, local_world_size {local_world_size}, "
-            f"device {device}, backend {backend}, num_threads {num_threads}"
-        )
 
     # create the multi-process context
     return DistributedContext(
@@ -415,7 +396,6 @@ def finalize(synchronize: bool = True) -> None:
 def session(
     backend: str | None = None,
     timeout_seconds: float = 1800.0,
-    logger: logging.Logger | None = None,
 ) -> Generator[DistributedContext]:
     """Initialize distributed training and tear it down on exit.
 
@@ -432,16 +412,11 @@ def session(
     Args:
         backend: Process group backend; see `initialize`.
         timeout_seconds: Timeout for collective operations.
-        logger: Logger used for initialization reporting.
 
     Yields:
         Context describing this process's rank, device, and distributed state.
     """
-    ctx = initialize(
-        backend=backend,
-        timeout_seconds=timeout_seconds,
-        logger=logger,
-    )
+    ctx = initialize(backend=backend, timeout_seconds=timeout_seconds)
     try:
         yield ctx
     except BaseException:
@@ -454,6 +429,7 @@ def session(
 def wrap_net(
     net: torch.nn.Module,
     device: torch.device,
+    bucket_cap_mb: float | None = None,
     find_unused_parameters: bool = False,
     broadcast_buffers: bool = True,
     static_graph: bool = False,
@@ -470,6 +446,7 @@ def wrap_net(
     Args:
         net: Model to wrap; must be on `device` already.
         device: Device assigned to this process.
+        bucket_cap_mb: ...TODO...
         find_unused_parameters: Whether DDP tracks parameters unused in the
             forward pass; keep False when all parameters contribute.
         broadcast_buffers: Whether buffers are synchronized from rank 0 at
@@ -494,6 +471,7 @@ def wrap_net(
         return DistributedDataParallel(
             net,
             device_ids=device_ids,
+            bucket_cap_mb=bucket_cap_mb,
             find_unused_parameters=find_unused_parameters,
             static_graph=static_graph,
             forward_sync_buffers=broadcast_buffers,
@@ -501,6 +479,7 @@ def wrap_net(
     return DistributedDataParallel(
         net,
         device_ids=device_ids,
+        bucket_cap_mb=bucket_cap_mb,
         find_unused_parameters=find_unused_parameters,
         static_graph=static_graph,
         broadcast_buffers=broadcast_buffers,
