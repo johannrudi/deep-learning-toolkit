@@ -11,12 +11,12 @@ import torch.nn as nn
 from torch.nn.utils import parametrize
 
 from dlk.nets.mlp import MLPResNet
+from dlk.nets.spectral_norm import set_spectral_norm
 from dlk.nets.utils import (
     ModuleFactory,
     NormalizationFactory,
     get_gain,
     set_init_parameters,
-    set_spectral_norm,
     set_zero_parameters,
 )
 

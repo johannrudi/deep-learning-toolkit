@@ -63,7 +63,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from dlk.nets.utils import WEIGHTED_LAYER_COMPATIBLE_TYPES, get_spectral_norm
+from dlk.nets.spectral_norm import get_spectral_norm
+from dlk.nets.utils import WEIGHTED_LAYER_COMPATIBLE_TYPES
 from dlk.opt import distributed
 
 

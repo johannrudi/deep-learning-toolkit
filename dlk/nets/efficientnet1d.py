@@ -15,7 +15,8 @@ from typing import NamedTuple
 import torch
 import torch.nn as nn
 
-from dlk.nets.utils import get_spectral_norm, set_init_parameters, set_spectral_norm
+from dlk.nets.spectral_norm import get_spectral_norm, set_spectral_norm
+from dlk.nets.utils import set_init_parameters
 
 # --------------------------------------
 # Config

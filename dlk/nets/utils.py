@@ -7,8 +7,8 @@ from typing import Any, Literal, Protocol, cast
 import torch
 import torch.nn as nn
 from prettytable import PrettyTable
-from torch.nn.utils import parametrize
-from torch.nn.utils.parametrizations import _SpectralNorm, spectral_norm
+
+from dlk.nets.spectral_norm import get_spectral_norm
 
 # --------------------------------------
 # Types
@@ -124,42 +124,6 @@ def _resolve_layer(module: Any, *, name: str = "module") -> WeightedLayer:
         raise TypeError(f"{name}.bias must be torch.Tensor | None")
 
     return cast(WeightedLayer, module)
-
-
-def get_spectral_norm(layer: nn.Module) -> tuple[_SpectralNorm, torch.Tensor] | None:
-    """Return the spectral norm of `layer.weight` and the weight it normalizes.
-
-    Args:
-        layer: Layer that may be wrapped with `parametrizations.spectral_norm`.
-
-    Returns:
-        The spectral-norm parametrization and the trainable weight, or ``None``
-        if `layer.weight` is not spectrally normalized.
-    """
-    if not parametrize.is_parametrized(layer, "weight"):
-        return None
-    parametrizations = cast(nn.ModuleDict, layer.parametrizations)
-    weight_parametrizations = cast(
-        parametrize.ParametrizationList, parametrizations["weight"]
-    )
-    for parametrization in weight_parametrizations:
-        if isinstance(parametrization, _SpectralNorm):
-            return parametrization, cast(torch.Tensor, weight_parametrizations.original)
-    return None
-
-
-def set_spectral_norm(layer: nn.Module) -> nn.Module:
-    """Wrap a layer with `parametrizations.spectral_norm`, unless already wrapped.
-
-    Args:
-        layer: Layer whose weight should be spectrally normalized.
-
-    Returns:
-        The wrapped layer, or `layer` itself if it is already wrapped.
-    """
-    if get_spectral_norm(layer) is not None:
-        return layer
-    return spectral_norm(layer)
 
 
 def set_init_parameters(
