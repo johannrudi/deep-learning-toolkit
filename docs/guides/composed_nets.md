@@ -181,7 +181,7 @@ A shape is a tuple with one entry per dimension after the batch dimension, and `
 
 Optional: read this when an application draws several latent samples per observation and evaluates a generator once per replica with `torch.vmap`.
 
-Vmapping the whole graph is both wrong and wasteful when a stem does not depend on the latent at all. `MLPResNet` and `ConvResNet` tolerate `vmap` because their normalization is `nn.LayerNorm`, which holds no running state, but every `ScalableEfficientNet1D` block carries `nn.BatchNorm1d`, whose running-statistics update writes into an unbatched buffer and raises under `vmap` in training mode. Evaluating that stem inside the vmapped region also recomputes the same tensor once per replica, since it never uses the latent.
+Vmapping the whole graph is both wrong and wasteful when a stem does not depend on the latent at all. `MLPResNet` and `ConvResNet` tolerate `vmap` because their normalization is `nn.LayerNorm`, which holds no running state, but a `ScalableEfficientNet1D` with the default style, `BASELINE`, carries `nn.BatchNorm1d` in every block, whose running-statistics update writes into an unbatched buffer and raises under `vmap` in training mode. The GroupNorm presets (`BASELINE_GN` and the `SN_*` presets of `dlk.nets.efficientnet1d`) hold no running state and are `vmap`-safe. Evaluating that stem inside the vmapped region also recomputes the same tensor once per replica, since it never uses the latent.
 
 `ComposedNet.dependents_of` reports which nodes a name reaches, and `modules_with_running_stats` reports which of those carry batch normalization, so the mismatch is checked at setup instead of surfacing as a `vmap` error at the first step:
 
