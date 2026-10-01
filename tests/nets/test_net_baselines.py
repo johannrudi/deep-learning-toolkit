@@ -31,7 +31,7 @@ import torch
 import torch.nn as nn
 
 from dlk.nets.conv1d import ConvNet, ConvNeXtBlock, ConvResNet
-from dlk.nets.efficientnet1d import EfficientNetV1BB0, EfficientNetV2BB0
+from dlk.nets.efficientnet1d import EfficientNetV1BB0, EfficientNetV2BB0, HeadConfig
 from dlk.nets.mlp import MLPNet, MLPResNet
 from dlk.nets.transformer1d import ChannelWiseTransformerNet, TransformerNet
 from dlk.nets.utils import get_gain, set_init_parameters
@@ -181,7 +181,7 @@ def _build_efficientnet(
         input_length=32,
         num_classes=3,
         dropout_connect=0,
-        dropout_head=0,
+        head=HeadConfig(dropout=0),
     )
     return net, (_input(4, 1, 32),)
 

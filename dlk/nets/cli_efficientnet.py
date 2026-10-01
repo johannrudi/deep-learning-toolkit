@@ -18,7 +18,12 @@ from rich.table import Table
 from rich.tree import Tree
 
 from dlk.nets import efficientnet1d
-from dlk.nets.efficientnet1d import StageSpec
+from dlk.nets.efficientnet1d import (
+    HeadConfig,
+    ScalableEfficientNet1D,
+    StageConfig,
+    StemConfig,
+)
 
 app = typer.Typer(
     help="Inspect EfficientNet1D stage configurations and parameter counts."
@@ -47,11 +52,11 @@ def _family_of(name: str) -> Family:
     raise ValueError(f"cannot determine architecture family for {name!r}")
 
 
-def _discover_config_builders() -> list[tuple[str, Callable[[], list[StageSpec]]]]:
+def _discover_config_builders() -> list[tuple[str, Callable[[], list[StageConfig]]]]:
     """Find zero-argument `get_efficientnet_*` stage config builders in `efficientnet1d`.
 
     Returns:
-        list[tuple[str, Callable[[], list[StageSpec]]]]: Name and builder pairs,
+        list[tuple[str, Callable[[], list[StageConfig]]]]: Name and builder pairs,
         sorted alphabetically.
     """
     return sorted(
@@ -124,17 +129,17 @@ def _count_model_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 
-def _render_stage_table(name: str, stages: list[StageSpec]) -> Table:
+def _render_stage_table(name: str, stages: list[StageConfig]) -> Table:
     """Render one stage config builder's stages as a rich table.
 
     Args:
         name: Builder function name, used as the table title.
-        stages: Ordered stage specifications returned by the builder.
+        stages: Ordered stage configs returned by the builder.
 
     Returns:
         Table: One row per stage.
     """
-    total_blocks = sum(spec.config.num_layers for spec in stages)
+    total_blocks = sum(stage.num_blocks for stage in stages)
     table = Table(
         title=f"{name}()  [{len(stages)} stages, {total_blocks} blocks]",
         title_justify="left",
@@ -159,46 +164,40 @@ def _render_stage_table(name: str, stages: list[StageSpec]) -> Table:
             str(config.expand_ratio),
             str(config.input_channels),
             str(config.output_channels),
-            str(config.num_layers),
+            str(stage.num_blocks),
             se,
         )
     return table
 
 
-def _render_stage_tree(name: str, stages: list[StageSpec]) -> Tree:
+def _render_stage_tree(name: str, stages: list[StageConfig]) -> Tree:
     """Render one stage config builder's per-block expansion as a rich tree.
 
     Unlike the table view (one row per stage), this expands each stage into
-    its actual per-block channel transitions, mirroring the block-construction
-    loop in `ScalableEfficientNet1D.__init__`: only the first block in a stage
-    uses the stage's stride and input channels, later blocks use stride 1 and
-    carry the stage's output channels through unchanged.
+    its actual per-block channel transitions from `StageConfig.block_configs`.
 
     Args:
         name: Builder function name, used as the tree root label.
-        stages: Ordered stage specifications returned by the builder.
+        stages: Ordered stage configs returned by the builder.
 
     Returns:
         Tree: One branch per stage, one leaf per block.
     """
-    total_blocks = sum(spec.config.num_layers for spec in stages)
+    total_blocks = sum(stage.num_blocks for stage in stages)
     tree = Tree(f"[bold]{name}()[/bold]  [{len(stages)} stages, {total_blocks} blocks]")
     for stage_num, stage in enumerate(stages, start=1):
         config = stage.config
         se = f"se{config.se_ratio:g}" if config.se_ratio is not None else "se—"
-        num_blocks = config.num_layers
+        num_blocks = stage.num_blocks
         branch = tree.add(
             f"Stage {stage_num:02d}  {stage.block_cls.__name__}  "
             f"k{config.kernel_size} e{config.expand_ratio} {se}  "
             f"({num_blocks} block{'s' if num_blocks != 1 else ''})"
         )
-        for block_num in range(1, num_blocks + 1):
-            if block_num == 1:
-                stride, input_channels = config.stride, config.input_channels
-            else:
-                stride, input_channels = 1, config.output_channels
+        for block_num, block_config in enumerate(stage.block_configs(), start=1):
             branch.add(
-                f"block {block_num}  s{stride}  {input_channels}→{config.output_channels}"
+                f"block {block_num}  s{block_config.stride}  "
+                f"{block_config.input_channels}→{block_config.output_channels}"
             )
     return tree
 
@@ -250,37 +249,32 @@ def _scaling_cell(base_value: int, scaled_value: int) -> str:
     return f"[bold cyan]{base_value} → {scaled_value}[/bold cyan]"
 
 
-def _resolve_scaled_channels(module: nn.Module | None, fallback: int) -> int:
-    """Read the actual scaled channel count built into a stem or head submodule.
-
-    `ScalableEfficientNet1D` builds `stem` and `head` as an `nn.Sequential` whose
-    first layer is the width-scaled `nn.Conv1d`; reading it directly avoids
-    recomputing `round_filters` with the (unstored) `depth_divisor`/`min_depth`.
+def _part_cell(
+    base: StemConfig | HeadConfig | None, scaled: StemConfig | HeadConfig | None
+) -> str:
+    """Format the stem or head channels with their compound-scaled result.
 
     Args:
-        module: A model's `stem` or `head` submodule, or `None`.
-        fallback: Unscaled channel count to report if the module has no such
-            conv layer to inspect (e.g. the stem or head is disabled).
+        base: Config before width scaling, or `None` if the part is disabled.
+        scaled: Config after width scaling, or `None` if the part is disabled.
 
     Returns:
-        int: The scaled channel count.
+        str: A `_scaling_cell`, or `"disabled"`.
     """
-    if isinstance(module, nn.Sequential):
-        first_layer = module[0]
-        if isinstance(first_layer, nn.Conv1d):
-            return first_layer.out_channels
-    return fallback
+    if base is None or scaled is None:
+        return "disabled"
+    return _scaling_cell(base.channels, scaled.channels)
 
 
 def _render_scaling_table(
-    base_stages: list[StageSpec], scaled_stages: list[StageSpec]
+    base_stages: list[StageConfig], scaled_stages: list[StageConfig]
 ) -> Table:
     """Render a model's stages with base-to-scaled compound-scaling deltas.
 
     Args:
-        base_stages: Unscaled stage specs, as returned by the matching
+        base_stages: Unscaled stage configs, as returned by the matching
             `get_efficientnet_*` builder.
-        scaled_stages: The model's actual (width/depth-scaled) stage specs.
+        scaled_stages: The model's actual (width/depth-scaled) stage configs.
 
     Returns:
         Table: One row per stage; `Cin`/`Cout`/`Rep` show `base → scaled` where
@@ -307,7 +301,7 @@ def _render_scaling_table(
             str(scaled_cfg.expand_ratio),
             _scaling_cell(base_cfg.input_channels, scaled_cfg.input_channels),
             _scaling_cell(base_cfg.output_channels, scaled_cfg.output_channels),
-            _scaling_cell(base_cfg.num_layers, scaled_cfg.num_layers),
+            _scaling_cell(base.num_blocks, scaled.num_blocks),
             se,
         )
     return table
@@ -316,9 +310,9 @@ def _render_scaling_table(
 def _print_model_scaling(model_name: str) -> None:
     """Print one concrete model's stage configs with compound-scaling detail.
 
-    Compares the model's actual (width/depth-scaled) `stage_specs`, `stem`, and
-    `head` against the unscaled base values `ScalableEfficientNet1D.__init__`
-    stores on the instance.
+    Compares the model's actual (width/depth-scaled) `stage_configs`,
+    `stem_config`, and `head_config` against the unscaled base values
+    `ScalableEfficientNet1D.__init__` stores on the instance.
 
     Args:
         model_name: A concrete `EfficientNet*` class name.
@@ -334,34 +328,20 @@ def _print_model_scaling(model_name: str) -> None:
         raise typer.Exit(code=1)
 
     instance = model_classes[model_name](input_length=None)
-    width_coefficient = getattr(instance, "width_coefficient", None)
-    depth_coefficient = getattr(instance, "depth_coefficient", None)
-    base_stem_channels = getattr(instance, "base_stem_channels", None)
-    base_head_channels = getattr(instance, "base_head_channels", None)
-    base_stage_specs = getattr(instance, "base_stage_specs", None)
-    scaled_stage_specs = getattr(instance, "stage_specs", None)
-    stem_module = getattr(instance, "stem", None)
-    head_module = getattr(instance, "head", None)
-    assert isinstance(width_coefficient, float)
-    assert isinstance(depth_coefficient, float)
-    assert isinstance(base_stem_channels, int)
-    assert isinstance(base_head_channels, int)
-    assert isinstance(base_stage_specs, list)
-    assert isinstance(scaled_stage_specs, list)
-
-    stem_scaled = _resolve_scaled_channels(stem_module, base_stem_channels)
-    head_scaled = _resolve_scaled_channels(head_module, base_head_channels)
+    assert isinstance(instance, ScalableEfficientNet1D)
 
     console.print(
         f"[bold]{model_name}[/bold]  "
-        f"(width={width_coefficient:g}, depth={depth_coefficient:g})"
+        f"(width={instance.width_coefficient:g}, depth={instance.depth_coefficient:g})"
     )
     console.print(
-        f"stem   {_scaling_cell(base_stem_channels, stem_scaled)}"
-        f"      head  {_scaling_cell(base_head_channels, head_scaled)}"
+        f"stem   {_part_cell(instance.base_stem, instance.stem_config)}"
+        f"      head  {_part_cell(instance.base_head, instance.head_config)}"
     )
     console.print()
-    console.print(_render_scaling_table(base_stage_specs, scaled_stage_specs))
+    console.print(
+        _render_scaling_table(instance.base_stage_configs, instance.stage_configs)
+    )
 
 
 @app.command()
