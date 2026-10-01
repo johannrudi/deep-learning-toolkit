@@ -11,7 +11,12 @@ from torch.nn.utils import parametrize
 
 from dlk.nets.efficientnet1d import (
     BASELINE,
+    BASELINE_GN,
     NO_NORM,
+    SN_EXACT_DW_FLOORED_PRE_GN,
+    SN_EXACT_DW_PRE_GN,
+    SN_FLOORED_PRE_GN,
+    SN_PRE_GN,
     EfficientNetV1B0,
     EfficientNetV1B1,
     EfficientNetV1B2,
@@ -1073,6 +1078,110 @@ def test_exact_depthwise_spectral_norm_wraps_and_initializes_depthwise_convs() -
         normalized.append(original.flatten() / math.sqrt(2.0 / original[:, 0].numel()))
     assert torch.cat(normalized).std().item() == pytest.approx(1.0, rel=0.1)
     assert net(torch.randn(2, 64)).shape == (2, 2)
+
+
+PRESETS = {
+    "BASELINE": BASELINE,
+    "BASELINE_GN": BASELINE_GN,
+    "SN_PRE_GN": SN_PRE_GN,
+    "SN_FLOORED_PRE_GN": SN_FLOORED_PRE_GN,
+    "SN_EXACT_DW_PRE_GN": SN_EXACT_DW_PRE_GN,
+    "SN_EXACT_DW_FLOORED_PRE_GN": SN_EXACT_DW_FLOORED_PRE_GN,
+}
+BATCH_INDEPENDENT_PRESETS = [name for name in PRESETS if name != "BASELINE"]
+# SN presets with their depthwise spectral norm and GroupNorm eps.
+SN_PRESETS = [
+    ("SN_PRE_GN", False, 1e-5),
+    ("SN_FLOORED_PRE_GN", False, 1e-4),
+    ("SN_EXACT_DW_PRE_GN", True, 1e-5),
+    ("SN_EXACT_DW_FLOORED_PRE_GN", True, 1e-4),
+]
+BB0_VARIANTS = pytest.mark.parametrize(
+    "net_cls", [EfficientNetV1BB0, EfficientNetV2BB0]
+)
+
+
+def _build_preset_net(net_cls: BB0Variant, preset: str) -> ScalableEfficientNet1D:
+    """Build a deterministic BB0 variant with a named preset, as a critic would."""
+    torch.manual_seed(0)
+    return net_cls(
+        input_length=32,
+        num_classes=3,
+        dropout_connect=0.0,
+        head=HeadConfig(dropout=0.0),
+        style=PRESETS[preset],
+    )
+
+
+@BB0_VARIANTS
+@pytest.mark.parametrize("preset", PRESETS)
+def test_preset_forward_shape_and_batch_norm(net_cls: BB0Variant, preset: str) -> None:
+    """Build every preset with the right output shape and BatchNorm only in BASELINE."""
+    net = _build_preset_net(net_cls, preset)
+
+    assert net(torch.randn(2, 32)).shape == (2, 3)
+    has_batch_norm = any(isinstance(m, nn.BatchNorm1d) for m in net.modules())
+    assert has_batch_norm == (preset == "BASELINE")
+
+
+@BB0_VARIANTS
+@pytest.mark.parametrize("preset", BATCH_INDEPENDENT_PRESETS)
+def test_preset_is_batch_independent_in_train_mode(
+    net_cls: BB0Variant, preset: str
+) -> None:
+    """Keep a sample's train-mode output when the other samples change."""
+    net = _build_preset_net(net_cls, preset).train()
+    x = torch.randn(4, 32)
+    x_other = torch.cat([x[:1], torch.randn(3, 32)])
+
+    # cache the weights so that both forwards share one power iteration step
+    with torch.no_grad(), parametrize.cached():
+        y, y_other = net(x), net(x_other)
+    torch.testing.assert_close(y[0], y_other[0])
+
+
+@BB0_VARIANTS
+@pytest.mark.parametrize(
+    "preset, exact_depthwise, eps", SN_PRESETS, ids=[case[0] for case in SN_PRESETS]
+)
+def test_sn_preset_normalizes_every_layer_and_sets_eps(
+    net_cls: BB0Variant, preset: str, exact_depthwise: bool, eps: float
+) -> None:
+    """Normalize every layer with C0, or the depthwise ones with C2, and floor GroupNorm."""
+    net = _build_preset_net(net_cls, preset)
+
+    depthwise = {
+        cast(nn.Sequential, block.depthwise_conv)[0]
+        for block in net.blocks
+        if isinstance(block, MBConv1D)
+    }
+    for layer in _weighted_layers(net):
+        is_exact = exact_depthwise and layer in depthwise
+        assert (get_depthwise_spectral_norm(layer) is not None) == is_exact
+        assert (get_spectral_norm(layer) is not None) != is_exact
+
+    group_norms = [m for m in net.modules() if isinstance(m, nn.GroupNorm)]
+    assert group_norms
+    assert all(m.num_groups == 1 and m.eps == eps for m in group_norms)
+
+
+@BB0_VARIANTS
+@pytest.mark.parametrize("preset", BATCH_INDEPENDENT_PRESETS)
+def test_preset_output_depends_on_input_amplitude(
+    net_cls: BB0Variant, preset: str
+) -> None:
+    """Change the eval-mode output when the input doubles (explore doc, Section 1.3)."""
+    net = _build_preset_net(net_cls, preset).eval()
+    # stand in for a trained stem bias, since all biases start at zero
+    stem_conv = cast(nn.Sequential, net.stem)[0]
+    assert isinstance(stem_conv, nn.Conv1d) and stem_conv.bias is not None
+    with torch.no_grad():
+        nn.init.normal_(stem_conv.bias)
+        x = torch.randn(4, 32)
+        y, y_doubled = net(x), net(2 * x)
+
+    # compare relatively, since the output scale differs across presets
+    assert (y_doubled - y).abs().max() > 0.1 * y.abs().max()
 
 
 def _print_state_dict_summaries() -> None:

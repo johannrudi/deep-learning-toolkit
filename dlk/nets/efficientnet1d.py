@@ -12,6 +12,7 @@ For implementation and usage details, see:
 
 import math
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Literal, Self, cast
 
 import torch
@@ -377,7 +378,73 @@ class NetStyle:
         )
 
 
+# --------------------------------------
+# Presets
+# --------------------------------------
+
+# GroupNorm with one group: normalize each sample over channels and length.
+GN = partial(nn.GroupNorm, 1)
+
+
+def sn_pre_gn_style(
+    eps: float = 1e-5,
+    depthwise_spectral_norm: Literal["matrix", "exact"] = "matrix",
+) -> NetStyle:
+    r"""Build a spectrally normalized style with a GroupNorm pre-norm only.
+
+    Every block and the head normalize their input with one-group GroupNorm;
+    no convolution is followed by a normalization, so spectral normalization
+    binds in every branch. Blocks average their residual sum
+    (`skip_scale=0.5`). A larger `eps` $= \tau^2$ floors the normalization,
+    whose gain is then at most $\max\lvert\gamma\rvert / \tau$. See
+    ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decision 14.
+
+    Args:
+        eps: GroupNorm's `eps`; `1e-5` is GroupNorm's default, and `1e-4`
+            ($\tau = 0.01$) floors it in the floored presets.
+        depthwise_spectral_norm: Spectral normalization of the depthwise
+            convolutions: `"matrix"` (C0) or `"exact"` (C2).
+
+    Returns:
+        NetStyle: The style.
+    """
+    pre_norm = partial(nn.GroupNorm, 1, eps=eps)
+    return NetStyle(
+        mbconv=MBConvStyle(
+            pre_normalization=pre_norm,
+            expand=NO_NORM,
+            depthwise=NO_NORM,
+            project=NO_NORM,
+            skip_scale=0.5,
+            depthwise_spectral_norm=depthwise_spectral_norm,
+        ),
+        fused=FusedMBConvStyle(
+            pre_normalization=pre_norm,
+            fused=NO_NORM,
+            project=NO_NORM,
+            skip_scale=0.5,
+        ),
+        stem=StemStyle(conv=NO_NORM),
+        head=HeadStyle(pre_normalization=pre_norm, conv=NO_NORM),
+        enable_spectral_norm=True,
+    )
+
+
+# Presets of plan 2026.010, decision 14.
 BASELINE = NetStyle()
+BASELINE_GN = NetStyle(
+    mbconv=MBConvStyle(
+        expand=ConvNorm(GN), depthwise=ConvNorm(GN), project=ConvNorm(GN)
+    ),
+    fused=FusedMBConvStyle(fused=ConvNorm(GN), project=ConvNorm(GN)),
+    stem=StemStyle(conv=ConvNorm(GN, bias=True)),
+    head=HeadStyle(conv=ConvNorm(GN)),
+)
+SN_PRE_GN = sn_pre_gn_style()
+# Floor tau = 0.01 at or below the branch gain at init (0.01 to 0.02), so the stream keeps its scale.
+SN_FLOORED_PRE_GN = sn_pre_gn_style(eps=1e-4)
+SN_EXACT_DW_PRE_GN = sn_pre_gn_style(depthwise_spectral_norm="exact")
+SN_EXACT_DW_FLOORED_PRE_GN = sn_pre_gn_style(eps=1e-4, depthwise_spectral_norm="exact")
 
 
 def _conv_norm_activation(
