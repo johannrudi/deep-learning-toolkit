@@ -62,13 +62,13 @@ The modules themselves are not part of the config, so build them separately. Key
 
 ```python
 from dlk.nets.compose import create_composed_net
-from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal
+from dlk.nets.efficientnet1d import EfficientNetV1BB0
 from dlk.nets.mlp import MLPResNet
 
 g_net = create_composed_net(
     **config.to_kwargs(),
     modules={
-        "stem_y": EfficientNetV1B0Minimal(input_channels=3, input_length=32, num_classes=8),
+        "stem_y": EfficientNetV1BB0(input_channels=3, input_length=32, num_classes=8),
         "stem_z": MLPResNet(4, 4, residual_blocks_sizes=((4, 4, 8, 4),)),
         "trunk": MLPResNet(12, 3, residual_blocks_sizes=((16, 16, 32, 16), (16, 16, 32, 16))),
     },
@@ -79,7 +79,7 @@ Above, `trunk` takes 12 elements because `stem_y` returns 8 and `stem_z` returns
 
 ```text
 composed net over 3 nodes, inputs ['features', 'latent'], output 'trunk'
-  node 'stem_y': EfficientNetV1B0Minimal, in (3, 32) from ['features'], out (8,)
+  node 'stem_y': EfficientNetV1BB0, in (3, 32) from ['features'], out (8,)
   node 'stem_z': MLPResNet, in (4,) from ['latent'], out (4,)
   node 'trunk': MLPResNet, in (12,) from ['stem_y', 'stem_z'], out (3,)
 ```

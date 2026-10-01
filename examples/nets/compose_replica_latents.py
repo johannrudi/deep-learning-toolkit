@@ -34,7 +34,7 @@ from dlk.nets.compose import (
     create_composed_net,
     modules_with_running_stats,
 )
-from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal
+from dlk.nets.efficientnet1d import EfficientNetV1BB0
 from dlk.nets.mlp import MLPResNet
 
 INPUT_CHANNELS = 3
@@ -62,7 +62,7 @@ def build_generator(logger: logging.Logger | None = None) -> ComposedNet:
         external_inputs=("features", "latent"),
         output="trunk",
         modules={
-            "stem_y": EfficientNetV1B0Minimal(
+            "stem_y": EfficientNetV1BB0(
                 input_channels=INPUT_CHANNELS,
                 input_length=INPUT_LENGTH,
                 num_classes=STEM_OUTPUT_SIZE,

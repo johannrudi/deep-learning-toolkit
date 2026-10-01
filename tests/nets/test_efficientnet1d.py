@@ -8,7 +8,6 @@ from torch.nn.utils import parametrize
 
 from dlk.nets.efficientnet1d import (
     EfficientNetV1B0,
-    EfficientNetV1B0Minimal,
     EfficientNetV1B1,
     EfficientNetV1B2,
     EfficientNetV1B3,
@@ -17,12 +16,13 @@ from dlk.nets.efficientnet1d import (
     EfficientNetV1B6,
     EfficientNetV1B7,
     EfficientNetV1B8,
+    EfficientNetV1BB0,
     EfficientNetV1L2,
     EfficientNetV2B0,
-    EfficientNetV2B0Minimal,
     EfficientNetV2B1,
     EfficientNetV2B2,
     EfficientNetV2B3,
+    EfficientNetV2BB0,
     EfficientNetV2L,
     EfficientNetV2M,
     EfficientNetV2S,
@@ -255,7 +255,7 @@ def test_efficientnet_v2_s_uses_fused_blocks_in_early_stages_and_mbconv_in_late_
 
 def test_efficientnet_state_dict_keys_unchanged() -> None:
     """Keep parameter names of the unwrapped network, so existing checkpoints load."""
-    net = EfficientNetV2B0Minimal(input_length=32, num_classes=3)
+    net = EfficientNetV2BB0(input_length=32, num_classes=3)
 
     keys = list(net.state_dict())
 
@@ -266,7 +266,7 @@ def test_efficientnet_state_dict_keys_unchanged() -> None:
 @pytest.mark.parametrize(
     ("model_cls", "expected_blocks"),
     [
-        (EfficientNetV1B0Minimal, 10),
+        (EfficientNetV1BB0, 10),
         (EfficientNetV1B1, 23),
         (EfficientNetV1B2, 23),
         (EfficientNetV1B3, 26),
@@ -277,7 +277,7 @@ def test_efficientnet_state_dict_keys_unchanged() -> None:
         (EfficientNetV1B8, 61),
         (EfficientNetV1L2, 88),
         (EfficientNetV2B0, 21),
-        (EfficientNetV2B0Minimal, 12),
+        (EfficientNetV2BB0, 12),
         (EfficientNetV2B1, 27),
         (EfficientNetV2B2, 28),
         (EfficientNetV2B3, 32),
@@ -409,10 +409,8 @@ def _weighted_layers(module: nn.Module) -> list[nn.Module]:
 
 def test_efficientnet_spectral_norm_wraps_every_conv_and_linear() -> None:
     """Wrap, orthogonally initialize, and normalize every conv and linear layer."""
-    net = EfficientNetV2B0Minimal(
-        input_length=64, num_classes=3, enable_spectral_norm=True
-    )
-    plain_net = EfficientNetV2B0Minimal(input_length=64, num_classes=3)
+    net = EfficientNetV2BB0(input_length=64, num_classes=3, enable_spectral_norm=True)
+    plain_net = EfficientNetV2BB0(input_length=64, num_classes=3)
 
     layers = _weighted_layers(net)
     assert len(layers) == len(_weighted_layers(plain_net))

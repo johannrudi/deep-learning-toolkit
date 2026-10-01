@@ -34,7 +34,7 @@ from dlk.nets.compose import (
     NodeConfig,
     create_composed_net,
 )
-from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal
+from dlk.nets.efficientnet1d import EfficientNetV1BB0
 from dlk.nets.mlp import MLPResNet
 from dlk.opt import train_gan
 from dlk.opt.utils import checkpoint_load
@@ -82,7 +82,7 @@ def build_generator(logger: logging.Logger | None = None) -> ComposedNet:
     return create_composed_net(
         **generator_config().to_kwargs(),
         modules={
-            "stem_y": EfficientNetV1B0Minimal(
+            "stem_y": EfficientNetV1BB0(
                 input_channels=INPUT_CHANNELS,
                 input_length=INPUT_LENGTH,
                 num_classes=STEM_OUTPUT_SIZE,

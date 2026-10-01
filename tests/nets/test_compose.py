@@ -21,7 +21,7 @@ from dlk.nets.compose import (
     resolve_shape,
 )
 from dlk.nets.conv1d import ConvNet, ConvResNet
-from dlk.nets.efficientnet1d import EfficientNetV1B0Minimal
+from dlk.nets.efficientnet1d import EfficientNetV1BB0
 from dlk.nets.mlp import MLPResNet
 
 
@@ -925,7 +925,7 @@ def test_partial_forward_evaluates_latent_independent_nodes_once() -> None:
         external_inputs=("features", "latent"),
         output="trunk",
         modules={
-            "stem_y": EfficientNetV1B0Minimal(
+            "stem_y": EfficientNetV1BB0(
                 input_channels=3, input_length=32, num_classes=6
             ),
             "stem_z": _mlp_resnet(4, 4),

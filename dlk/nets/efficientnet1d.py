@@ -1,4 +1,13 @@
-"""EfficientNet-inspired 1D convolutional network for time-series classification."""
+"""EfficientNet-inspired 1D convolutional network for time-series classification.
+
+TODO: write a meaningful overview about efficient net.
+
+For implementation and usage details, see:
+- docs/features/2026.004__efficient_net__1-explore.md
+- docs/features/2026.004__efficient_net__2-plan.md
+- docs/features/2026.009__efficientnet_spectral_norm__1-plan.md
+- docs/features/2026.009__efficientnet_spectral_norm__2-usage.md
+"""
 
 import math
 from typing import NamedTuple
@@ -154,8 +163,7 @@ class SqueezeExcitation1DLinear(nn.Module):
             channels: Number of channels in the input feature map.
             squeeze_channels: Bottleneck width for the squeeze path.
             enable_spectral_norm: If `True`, wrap both projections with
-                `parametrizations.spectral_norm`; see
-                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
+                `parametrizations.spectral_norm`.
         """
         super().__init__()
         assert channels > 0, f"channels must be positive, got {channels}"
@@ -168,7 +176,7 @@ class SqueezeExcitation1DLinear(nn.Module):
         self.activation = nn.SiLU()
         self.expand = nn.Linear(squeeze_channels, channels)
         if enable_spectral_norm:
-            # wrap in place so both attributes stay typed as nn.Linear
+            # wrap with spectral norm in place so both attributes stay typed as nn.Linear
             set_spectral_norm(self.reduce)
             set_spectral_norm(self.expand)
         self.gate = nn.Sigmoid()
@@ -207,8 +215,7 @@ class MBConv1D(nn.Module):
             dropout: Dropout probability applied before residual addition.
             enable_spectral_norm: If `True`, wrap every convolution and both
                 squeeze-and-excitation projections with
-                `parametrizations.spectral_norm`; see
-                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
+                `parametrizations.spectral_norm`.
         """
         super().__init__()
         assert (
@@ -266,7 +273,7 @@ class MBConv1D(nn.Module):
             nn.BatchNorm1d(config.output_channels),
         )
 
-        # wrap every convolution in place
+        # wrap every convolution with spectral norm in place
         if enable_spectral_norm:
             for module in self.modules():
                 if isinstance(module, nn.Conv1d):
@@ -340,8 +347,7 @@ class FusedMBConv1D(nn.Module):
                 `config.se_ratio` must be `None`.
             dropout: Dropout probability applied before residual addition.
             enable_spectral_norm: If `True`, wrap every convolution with
-                `parametrizations.spectral_norm`; see
-                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
+                `parametrizations.spectral_norm`.
         """
         super().__init__()
         assert (
@@ -392,7 +398,7 @@ class FusedMBConv1D(nn.Module):
             )
             self.project_conv = nn.Identity()
 
-        # wrap every convolution in place
+        # wrap every convolution with spectral norm in place
         if enable_spectral_norm:
             for module in self.modules():
                 if isinstance(module, nn.Conv1d):
@@ -491,8 +497,7 @@ class ScalableEfficientNet1D(nn.Module):
                 returns the raw block output instead of class logits.
             enable_spectral_norm: Whether to wrap every convolution and linear
                 layer, including the stem, squeeze-and-excitation, and head
-                layers, with spectral normalization; see
-                docs/features/2026.009__efficientnet_spectral_norm__1-plan.md.
+                layers, with spectral normalization.
         """
         super().__init__()
         assert (
@@ -504,10 +509,10 @@ class ScalableEfficientNet1D(nn.Module):
         assert num_classes > 0, f"num_classes must be positive, got {num_classes}"
         assert (
             0.0 <= dropout_connect < 1.0
-        ), f"dropout_connect must be in [0, 1], got {dropout_connect}"
+        ), f"dropout_connect must be in [0, 1), got {dropout_connect}"
         assert (
             0.0 <= dropout_head < 1.0
-        ), f"dropout_head must be in [0, 1], got {dropout_head}"
+        ), f"dropout_head must be in [0, 1), got {dropout_head}"
         assert stem_channels > 0, f"stem_channels must be positive, got {stem_channels}"
         assert head_channels > 0, f"head_channels must be positive, got {head_channels}"
         assert (
@@ -601,7 +606,7 @@ class ScalableEfficientNet1D(nn.Module):
         else:
             self.head = nn.Identity()
 
-        # wrap stem and head layers in place; the blocks wrap their own
+        # wrap stem and head layers with spectral norm in place
         if enable_spectral_norm:
             for module in (*self.stem.modules(), *self.head.modules()):
                 if isinstance(module, (nn.Conv1d, nn.Linear)):
@@ -817,8 +822,8 @@ def get_efficientnet_v1_b0_config() -> list[StageSpec]:
     ]
 
 
-class EfficientNetV1B0Minimal(ScalableEfficientNet1D):
-    """Minimal 1D EfficientNetV1-B0 classifier under a ~100k-parameter budget."""
+class EfficientNetV1BB0(ScalableEfficientNet1D):
+    """Below the baseline 1D EfficientNetV1-B0 with under a ~100k-parameter budget."""
 
     def __init__(
         self,
@@ -829,13 +834,13 @@ class EfficientNetV1B0Minimal(ScalableEfficientNet1D):
         dropout_head: float = 0.2,
         enable_spectral_norm: bool = False,
     ) -> None:
-        """Initialize EfficientNetV1B0Minimal.
+        """Initialize EfficientNetV1BB00.
 
         Args:
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Residual-branch dropout probability in MBConv blocks.
+            dropout_connect: Residual-branch dropout probability in blocks.
             dropout_head: Dropout probability before the final classifier.
             enable_spectral_norm: Whether to wrap every convolution and linear layer
                 with spectral normalization.
@@ -1326,8 +1331,8 @@ def get_efficientnet_v2_b_config() -> list[StageSpec]:
     ]
 
 
-class EfficientNetV2B0Minimal(ScalableEfficientNet1D):
-    """Minimal 1D EfficientNetV2-B0 classifier under a ~100k-parameter budget."""
+class EfficientNetV2BB0(ScalableEfficientNet1D):
+    """Below the baseline 1D EfficientNetV2-B0 with under a ~150k-parameter budget."""
 
     def __init__(
         self,
@@ -1338,7 +1343,7 @@ class EfficientNetV2B0Minimal(ScalableEfficientNet1D):
         dropout_head: float = 0.2,
         enable_spectral_norm: bool = False,
     ) -> None:
-        """Initialize EfficientNetV2B0Minimal.
+        """Initialize EfficientNetV2BB0.
 
         Args:
             input_channels: Number of channels in each input sample.
