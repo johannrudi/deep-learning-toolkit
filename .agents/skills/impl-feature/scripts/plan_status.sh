@@ -21,7 +21,8 @@
 #
 # Drift is every commit since the base that touches a referenced file and is not
 # a step of this plan. Step commits end in "(plan <id> step N)." where <id> is
-# the plan's file name prefix, e.g. 2026.008. No drift means the plan's line
+# the plan's file name prefix, e.g. 2026.008; a commit that bundles several
+# steps ends in "(plan <id> steps N-M).". No drift means the plan's line
 # numbers are valid as written.
 #
 # Example, "plan_status.sh docs/features/2026.008__gradient_penalties__1-plan.md":
@@ -97,8 +98,11 @@ else
     base="$(git log -1 --format=%H --before="$date 23:59:59" HEAD)"
 fi
 
-steps="$(git log --format=%s --fixed-strings --grep="(plan $id step " HEAD \
-    | sed -nE 's/.*\(plan [^ ]+ step ([0-9]+)\)\.?$/\1/p' | sort -nu | paste -sd ' ')"
+# expand "step N" and "steps N-M" (hyphen or en dash) into step numbers
+steps="$(git log --format=%s --fixed-strings --grep="(plan $id step" HEAD \
+    | sed -nE 's/.*\(plan [^ ]+ steps? ([0-9]+)((-|–)([0-9]+))?\)\.?$/\1 \4/p' \
+    | awk '{ last = ($2 == "") ? $1 : $2; for (n = $1; n <= last; n++) print n }' \
+    | sort -nu | paste -sd ' ')"
 
 # a token names a file if it is a blob at HEAD or at the base
 is_file() {
@@ -143,7 +147,7 @@ fi
 
 # list each foreign commit, then the referenced files it changed, indented
 drift="$(git log --format='commit %h %s' --name-only --invert-grep --fixed-strings \
-    --grep="(plan $id step " "$base..HEAD" -- "${referenced[@]}" \
+    --grep="(plan $id step" "$base..HEAD" -- "${referenced[@]}" \
     | awk 'NF == 0 { next } sub(/^commit /, "") { print; next } { print "  " $0 }')"
 if [ -z "$drift" ]; then
     echo "drift:       none, line numbers valid as written"
