@@ -180,7 +180,7 @@ def _build_efficientnet(
         input_channels=1,
         input_length=32,
         num_classes=3,
-        dropout_connect=0,
+        block_dropout=0,
         head=HeadConfig(dropout=0),
     )
     return net, (_input(4, 1, 32),)

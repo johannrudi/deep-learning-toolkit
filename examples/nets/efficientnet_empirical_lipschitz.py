@@ -19,7 +19,7 @@ unfloored $\tau \approx 0.003$, and the SE gate make it uninformative or void.
 SE is compared on and off (`se_ratio=None` in every stage config).
 
 The networks run in eval mode, so that the Jacobian is per sample, and in
-double precision. Dropout is off. In eval mode, `BASELINE`'s `BatchNorm1d` uses
+double precision. Dropout is off. In eval mode, `NET_BASELINE`'s `BatchNorm1d` uses
 untrained running statistics that hardly normalize, so its outputs (about
 $10^{-10}$) and whole-network estimates are tiny and say nothing about a
 trained network.
@@ -47,12 +47,12 @@ import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
 from dlk.nets.efficientnet1d import (  # noqa: E402
-    BASELINE,
-    BASELINE_GN,
-    SN_EXACT_DW_FLOORED_PRE_GN,
-    SN_EXACT_DW_PRE_GN,
-    SN_FLOORED_PRE_GN,
-    SN_PRE_GN,
+    NET_BASELINE,
+    NET_BASELINE_GN,
+    NET_EXACT_DW_SN_FLOORED_PRE_GN,
+    NET_EXACT_DW_SN_PRE_GN,
+    NET_SN_FLOORED_PRE_GN,
+    NET_SN_PRE_GN,
     EfficientNetV1BB0,
     EfficientNetV2BB0,
     FusedMBConv1D,
@@ -64,12 +64,12 @@ from dlk.nets.efficientnet1d import (  # noqa: E402
 from dlk.nets.spectral_norm import get_depthwise_spectral_norm  # noqa: E402
 
 PRESETS: dict[str, NetStyle] = {
-    "BASELINE": BASELINE,
-    "BASELINE_GN": BASELINE_GN,
-    "SN_PRE_GN": SN_PRE_GN,
-    "SN_FLOORED_PRE_GN": SN_FLOORED_PRE_GN,
-    "SN_EXACT_DW_PRE_GN": SN_EXACT_DW_PRE_GN,
-    "SN_EXACT_DW_FLOORED_PRE_GN": SN_EXACT_DW_FLOORED_PRE_GN,
+    "NET_BASELINE": NET_BASELINE,
+    "NET_BASELINE_GN": NET_BASELINE_GN,
+    "NET_SN_PRE_GN": NET_SN_PRE_GN,
+    "NET_SN_FLOORED_PRE_GN": NET_SN_FLOORED_PRE_GN,
+    "NET_EXACT_DW_SN_PRE_GN": NET_EXACT_DW_SN_PRE_GN,
+    "NET_EXACT_DW_SN_FLOORED_PRE_GN": NET_EXACT_DW_SN_FLOORED_PRE_GN,
 }
 BB0Variant = type[EfficientNetV1BB0] | type[EfficientNetV2BB0]
 NETWORKS: tuple[BB0Variant, ...] = (EfficientNetV1BB0, EfficientNetV2BB0)
@@ -219,7 +219,7 @@ def build_network(
     net: ScalableEfficientNet1D = net_cls(
         input_length=INPUT_LENGTH,
         num_classes=1,
-        dropout_connect=0.0,
+        block_dropout=0.0,
         head=HeadConfig(dropout=0.0),
         style=style,
     )
@@ -238,7 +238,7 @@ def build_network(
             depth_coefficient=net.depth_coefficient,
             input_length=INPUT_LENGTH,
             num_classes=1,
-            dropout_connect=0.0,
+            block_dropout=0.0,
             style=style,
         )
     return net.to(DTYPE).eval()

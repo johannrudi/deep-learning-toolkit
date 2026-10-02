@@ -10,13 +10,13 @@ import torch.nn as nn
 from torch.nn.utils import parametrize
 
 from dlk.nets.efficientnet1d import (
-    BASELINE,
-    BASELINE_GN,
-    NO_NORM,
-    SN_EXACT_DW_FLOORED_PRE_GN,
-    SN_EXACT_DW_PRE_GN,
-    SN_FLOORED_PRE_GN,
-    SN_PRE_GN,
+    CONV_NORM_NONE,
+    NET_BASELINE,
+    NET_BASELINE_GN,
+    NET_EXACT_DW_SN_FLOORED_PRE_GN,
+    NET_EXACT_DW_SN_PRE_GN,
+    NET_SN_FLOORED_PRE_GN,
+    NET_SN_PRE_GN,
     EfficientNetV1B0,
     EfficientNetV1B1,
     EfficientNetV1B2,
@@ -50,7 +50,7 @@ from dlk.nets.efficientnet1d import (
     StageConfig,
     StemConfig,
     StemStyle,
-    round_filters,
+    round_channels,
     round_repeats,
 )
 from dlk.nets.spectral_norm import (
@@ -60,13 +60,13 @@ from dlk.nets.spectral_norm import (
 )
 
 # Style of the 2026.009 network, with every convolution and linear layer spectrally normalized.
-SPECTRAL_NORM = replace(BASELINE, enable_spectral_norm=True)
+SPECTRAL_NORM = replace(NET_BASELINE, enable_spectral_norm=True)
 
 
-def test_round_filters_rescales_channels_at_a_nontrivial_coefficient() -> None:
+def test_round_channels_rescales_channels_at_a_nontrivial_coefficient() -> None:
     """Round channel counts with EfficientNet-B2's width coefficient."""
-    assert round_filters(40, 1.1) == 48
-    assert round_filters(32, 1.1) == 32
+    assert round_channels(40, 1.1) == 48
+    assert round_channels(32, 1.1) == 32
 
 
 def test_round_repeats_rounds_up_fractional_depth() -> None:
@@ -218,7 +218,7 @@ def test_fusedmbconv1d_raises_for_se_ratio() -> None:
         se_ratio=0.25,
     )
 
-    with pytest.raises(AssertionError, match="squeeze-and-excitation"):
+    with pytest.raises(ValueError, match="squeeze-and-excitation"):
         FusedMBConv1D(config)
 
 
@@ -551,7 +551,7 @@ def _small_scalable_net(
     num_classes: int = 5,
     stem: StemConfig | None = StemConfig(channels=8),
     head: HeadConfig | None = HeadConfig(channels=64),
-    style: NetStyle = BASELINE,
+    style: NetStyle = NET_BASELINE,
 ) -> ScalableEfficientNet1D:
     """Build a two-stage network whose channel counts survive width scaling.
 
@@ -703,8 +703,8 @@ BLOCK_CASES = [
 
 # Style fields that hold a ConvNorm, per block class.
 CONV_NORM_FIELDS: dict[BlockClass, tuple[str, ...]] = {
-    MBConv1D: ("expand", "depthwise", "project"),
-    FusedMBConv1D: ("fused", "project"),
+    MBConv1D: ("expand_conv_norm", "depthwise_conv_norm", "project_conv_norm"),
+    FusedMBConv1D: ("fused_conv_norm", "project_conv_norm"),
 }
 
 
@@ -781,13 +781,13 @@ def test_efficientnet_spectral_norm_without_stem_or_head(
     "width_coefficient, depth_coefficient, depth_divisor, min_depth",
     [(1.1, 1.2, 8, None), (0.15, 0.5, 8, None), (0.5, 3.1, 4, 16)],
 )
-def test_scaled_configs_match_round_filters_and_round_repeats(
+def test_scaled_configs_match_round_channels_and_round_repeats(
     width_coefficient: float,
     depth_coefficient: float,
     depth_divisor: int,
     min_depth: int | None,
 ) -> None:
-    """Scale every config as `round_filters` and `round_repeats` do."""
+    """Scale every config as `round_channels` and `round_repeats` do."""
     config = MBConvConfig(
         kernel_size=5,
         stride=2,
@@ -800,7 +800,7 @@ def test_scaled_configs_match_round_filters_and_round_repeats(
     stage = StageConfig(MBConv1D, config, num_blocks=3)
 
     def filters(channels: int) -> int:
-        return round_filters(channels, width_coefficient, depth_divisor, min_depth)
+        return round_channels(channels, width_coefficient, depth_divisor, min_depth)
 
     scaled = stage.scaled(
         width_coefficient, depth_coefficient, depth_divisor, min_depth
@@ -842,7 +842,7 @@ def test_stage_config_block_configs_follow_the_stage_layout() -> None:
 
 @pytest.mark.parametrize(
     "value, field",
-    [(_block_config(1, None), "stride"), (BASELINE, "enable_spectral_norm")],
+    [(_block_config(1, None), "stride"), (NET_BASELINE, "enable_spectral_norm")],
     ids=["config", "style"],
 )
 def test_configs_and_styles_are_frozen(value: object, field: str) -> None:
@@ -882,7 +882,7 @@ def test_configs_and_styles_are_frozen(value: object, field: str) -> None:
 )
 def test_configs_and_styles_reject_invalid_values(build: Callable[[], object]) -> None:
     """Reject non-positive sizes and scales and out-of-range rates."""
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         build()
 
 
@@ -905,8 +905,8 @@ def test_net_style_for_block_picks_the_style_by_block_class() -> None:
 def test_block_without_normalization_has_conv_biases(
     block_cls: BlockClass, expand_ratio: int, se_ratio: float | None
 ) -> None:
-    """Leave out every normalization and give every convolution a bias with `NO_NORM`."""
-    fields = dict.fromkeys(CONV_NORM_FIELDS[block_cls], NO_NORM)
+    """Leave out every normalization and give every convolution a bias with `CONV_NORM_NONE`."""
+    fields = dict.fromkeys(CONV_NORM_FIELDS[block_cls], CONV_NORM_NONE)
     block = _build_block(block_cls, _block_config(expand_ratio, se_ratio), **fields)
 
     convs = [m for m in block.modules() if isinstance(m, nn.Conv1d)]
@@ -960,7 +960,10 @@ def test_block_skip_scale_scales_the_residual_sum(
 
 @pytest.mark.parametrize(
     "block_cls, style_kwargs",
-    [(MBConv1D, {"expand": NO_NORM}), (FusedMBConv1D, {"project": NO_NORM})],
+    [
+        (MBConv1D, {"expand_conv_norm": CONV_NORM_NONE}),
+        (FusedMBConv1D, {"project_conv_norm": CONV_NORM_NONE}),
+    ],
     ids=["mbconv-expand", "fused-project"],
 )
 def test_block_ignores_missing_convolution_for_expand_ratio_one(
@@ -978,9 +981,11 @@ def test_block_ignores_missing_convolution_for_expand_ratio_one(
 def test_stem_and_head_styles_build_their_layers() -> None:
     """Build the stem and head from their styles and apply the head pre-norm first."""
     style = replace(
-        BASELINE,
-        stem=StemStyle(conv=NO_NORM),
-        head=HeadStyle(pre_normalization=partial(nn.GroupNorm, 1), conv=NO_NORM),
+        NET_BASELINE,
+        stem=StemStyle(conv_norm=CONV_NORM_NONE),
+        head=HeadStyle(
+            pre_normalization=partial(nn.GroupNorm, 1), conv_norm=CONV_NORM_NONE
+        ),
     )
     net = _small_scalable_net(style=style)
     stem = cast(nn.Sequential, net.stem)
@@ -1029,18 +1034,18 @@ def test_block_drop_path_drops_whole_branches_in_training_only(
     torch.testing.assert_close(block(x), reference(x))
 
 
-@pytest.mark.parametrize("dropout_connect_mode", ["dropout", "drop_path"])
-def test_dropout_connect_ramps_over_the_blocks(dropout_connect_mode: str) -> None:
-    """Ramp `dropout_connect` into dropout, or into drop path of residual blocks."""
-    style = replace(BASELINE, dropout_connect_mode=dropout_connect_mode)
-    net = EfficientNetV2BB0(input_length=None, dropout_connect=0.2, style=style)
+@pytest.mark.parametrize("dropout_mode", ["dropout", "drop_path"])
+def test_block_dropout_ramps_over_the_blocks(dropout_mode: str) -> None:
+    """Ramp `block_dropout` into dropout, or into drop path of residual blocks."""
+    style = replace(NET_BASELINE, dropout_mode=dropout_mode)
+    net = EfficientNetV2BB0(input_length=None, block_dropout=0.2, style=style)
     configs = [cast(MBConvConfig, block.config) for block in net.blocks]
     assert any(c.has_residual for c in configs)
     assert not all(c.has_residual for c in configs)
 
     for i, config in enumerate(configs):
         rate = 0.2 * i / len(configs)
-        if dropout_connect_mode == "dropout":
+        if dropout_mode == "dropout":
             assert (config.dropout, config.drop_path) == (rate, 0.0)
         else:
             expected = rate if config.has_residual else 0.0
@@ -1052,7 +1057,7 @@ def test_exact_depthwise_spectral_norm_wraps_and_initializes_depthwise_convs() -
     exact = MBConvStyle(depthwise_spectral_norm="exact")
     net = EfficientNetV2BB0(input_length=64, style=replace(SPECTRAL_NORM, mbconv=exact))
     unnormalized = EfficientNetV2BB0(
-        input_length=64, style=replace(BASELINE, mbconv=exact)
+        input_length=64, style=replace(NET_BASELINE, mbconv=exact)
     )
 
     depthwise = {
@@ -1081,20 +1086,20 @@ def test_exact_depthwise_spectral_norm_wraps_and_initializes_depthwise_convs() -
 
 
 PRESETS = {
-    "BASELINE": BASELINE,
-    "BASELINE_GN": BASELINE_GN,
-    "SN_PRE_GN": SN_PRE_GN,
-    "SN_FLOORED_PRE_GN": SN_FLOORED_PRE_GN,
-    "SN_EXACT_DW_PRE_GN": SN_EXACT_DW_PRE_GN,
-    "SN_EXACT_DW_FLOORED_PRE_GN": SN_EXACT_DW_FLOORED_PRE_GN,
+    "NET_BASELINE": NET_BASELINE,
+    "NET_BASELINE_GN": NET_BASELINE_GN,
+    "NET_SN_PRE_GN": NET_SN_PRE_GN,
+    "NET_SN_FLOORED_PRE_GN": NET_SN_FLOORED_PRE_GN,
+    "NET_EXACT_DW_SN_PRE_GN": NET_EXACT_DW_SN_PRE_GN,
+    "NET_EXACT_DW_SN_FLOORED_PRE_GN": NET_EXACT_DW_SN_FLOORED_PRE_GN,
 }
-BATCH_INDEPENDENT_PRESETS = [name for name in PRESETS if name != "BASELINE"]
+BATCH_INDEPENDENT_PRESETS = [name for name in PRESETS if name != "NET_BASELINE"]
 # SN presets with their depthwise spectral norm and GroupNorm eps.
 SN_PRESETS = [
-    ("SN_PRE_GN", False, 1e-5),
-    ("SN_FLOORED_PRE_GN", False, 1e-4),
-    ("SN_EXACT_DW_PRE_GN", True, 1e-5),
-    ("SN_EXACT_DW_FLOORED_PRE_GN", True, 1e-4),
+    ("NET_SN_PRE_GN", False, 1e-5),
+    ("NET_SN_FLOORED_PRE_GN", False, 1e-4),
+    ("NET_EXACT_DW_SN_PRE_GN", True, 1e-5),
+    ("NET_EXACT_DW_SN_FLOORED_PRE_GN", True, 1e-4),
 ]
 BB0_VARIANTS = pytest.mark.parametrize(
     "net_cls", [EfficientNetV1BB0, EfficientNetV2BB0]
@@ -1107,7 +1112,7 @@ def _build_preset_net(net_cls: BB0Variant, preset: str) -> ScalableEfficientNet1
     return net_cls(
         input_length=32,
         num_classes=3,
-        dropout_connect=0.0,
+        block_dropout=0.0,
         head=HeadConfig(dropout=0.0),
         style=PRESETS[preset],
     )
@@ -1116,12 +1121,12 @@ def _build_preset_net(net_cls: BB0Variant, preset: str) -> ScalableEfficientNet1
 @BB0_VARIANTS
 @pytest.mark.parametrize("preset", PRESETS)
 def test_preset_forward_shape_and_batch_norm(net_cls: BB0Variant, preset: str) -> None:
-    """Build every preset with the right output shape and BatchNorm only in BASELINE."""
+    """Build every preset with the right output shape and BatchNorm only in NET_BASELINE."""
     net = _build_preset_net(net_cls, preset)
 
     assert net(torch.randn(2, 32)).shape == (2, 3)
     has_batch_norm = any(isinstance(m, nn.BatchNorm1d) for m in net.modules())
-    assert has_batch_norm == (preset == "BASELINE")
+    assert has_batch_norm == (preset == "NET_BASELINE")
 
 
 @BB0_VARIANTS

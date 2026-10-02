@@ -9,12 +9,12 @@ blocks rescale the stream.
 
 The example compares the six `NetStyle` presets of plan 2026.010 on
 `EfficientNetV1BB0` and `EfficientNetV2BB0`. It shows how `skip_scale = 0.5`
-and the GroupNorm pre-norm of the `SN_*` presets shape the stream: a residual
+and the GroupNorm pre-norm of the `NET_*SN*` presets shape the stream: a residual
 block averages its input with its branch, and a block without residual (stride
 2 or a channel change) replaces the stream by its branch output.
 
 The networks run in train mode, as at the start of training: `BatchNorm1d` in
-`BASELINE` normalizes with the batch statistics. In eval mode it would use its
+`NET_BASELINE` normalizes with the batch statistics. In eval mode it would use its
 untrained running statistics (mean 0, variance 1) and hardly normalize at all.
 GroupNorm computes the same in both modes. Dropout is off.
 
@@ -40,12 +40,12 @@ import torch  # noqa: E402
 import torch.nn as nn  # noqa: E402
 
 from dlk.nets.efficientnet1d import (  # noqa: E402
-    BASELINE,
-    BASELINE_GN,
-    SN_EXACT_DW_FLOORED_PRE_GN,
-    SN_EXACT_DW_PRE_GN,
-    SN_FLOORED_PRE_GN,
-    SN_PRE_GN,
+    NET_BASELINE,
+    NET_BASELINE_GN,
+    NET_EXACT_DW_SN_FLOORED_PRE_GN,
+    NET_EXACT_DW_SN_PRE_GN,
+    NET_SN_FLOORED_PRE_GN,
+    NET_SN_PRE_GN,
     EfficientNetV1BB0,
     EfficientNetV2BB0,
     FusedMBConv1D,
@@ -56,21 +56,21 @@ from dlk.nets.efficientnet1d import (  # noqa: E402
 )
 
 PRESETS: dict[str, NetStyle] = {
-    "BASELINE": BASELINE,
-    "BASELINE_GN": BASELINE_GN,
-    "SN_PRE_GN": SN_PRE_GN,
-    "SN_FLOORED_PRE_GN": SN_FLOORED_PRE_GN,
-    "SN_EXACT_DW_PRE_GN": SN_EXACT_DW_PRE_GN,
-    "SN_EXACT_DW_FLOORED_PRE_GN": SN_EXACT_DW_FLOORED_PRE_GN,
+    "NET_BASELINE": NET_BASELINE,
+    "NET_BASELINE_GN": NET_BASELINE_GN,
+    "NET_SN_PRE_GN": NET_SN_PRE_GN,
+    "NET_SN_FLOORED_PRE_GN": NET_SN_FLOORED_PRE_GN,
+    "NET_EXACT_DW_SN_PRE_GN": NET_EXACT_DW_SN_PRE_GN,
+    "NET_EXACT_DW_SN_FLOORED_PRE_GN": NET_EXACT_DW_SN_FLOORED_PRE_GN,
 }
 # Line style and marker per preset, so that overlapping curves stay visible.
 LINE_STYLES = {
-    "BASELINE": ("--", "s"),
-    "BASELINE_GN": (":", "o"),
-    "SN_PRE_GN": ("-", "^"),
-    "SN_FLOORED_PRE_GN": ("-.", "v"),
-    "SN_EXACT_DW_PRE_GN": ("-", "D"),
-    "SN_EXACT_DW_FLOORED_PRE_GN": ("-.", "x"),
+    "NET_BASELINE": ("--", "s"),
+    "NET_BASELINE_GN": (":", "o"),
+    "NET_SN_PRE_GN": ("-", "^"),
+    "NET_SN_FLOORED_PRE_GN": ("-.", "v"),
+    "NET_EXACT_DW_SN_PRE_GN": ("-", "D"),
+    "NET_EXACT_DW_SN_FLOORED_PRE_GN": ("-.", "x"),
 }
 NETWORKS = (EfficientNetV1BB0, EfficientNetV2BB0)
 BATCH_SIZE = 64
@@ -129,7 +129,7 @@ def plot_network(
         net = net_cls(
             input_length=INPUT_LENGTH,
             num_classes=1,
-            dropout_connect=0.0,
+            block_dropout=0.0,
             head=HeadConfig(dropout=0.0),
             style=style,
         ).train()

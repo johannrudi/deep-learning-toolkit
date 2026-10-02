@@ -1,13 +1,24 @@
 """EfficientNet-inspired 1D convolutional network for time-series classification.
 
-TODO: write a meaningful overview about efficient net.
+EfficientNet stacks inverted-bottleneck blocks into stages between a stem and a
+classification head, and scales depth and width with compound coefficients.
+This module adapts EfficientNet V1 (`MBConv1D`) and V2
+(`MBConv1D` and `FusedMBConv1D`) to 1D signals:
+
+- `MBConvConfig`, `StageConfig`, `StemConfig`, and `HeadConfig` describe sizes.
+- `NetStyle` and its parts describe design choices, such as normalizations,
+  spectral normalization, residual scale, and dropout or drop path; the presets
+  `NET_*` bundle common choices, and `NET_BASELINE` is the original network.
+- `ScalableEfficientNet1D` builds the network from stage configs and applies
+  compound scaling; `EfficientNetV1*` and `EfficientNetV2*` are its named
+  variants.
 
 For implementation and usage details, see:
-- docs/features/2026.004__efficient_net__1-explore.md
-- docs/features/2026.004__efficient_net__2-plan.md
-- docs/features/2026.009__efficientnet_spectral_norm__1-plan.md
-- docs/features/2026.009__efficientnet_spectral_norm__2-usage.md
-- docs/features/2026.010__efficientnet_arch_mod__2-plan.md
+- `docs/features/2026.004__efficient_net__1-explore.md`
+- `docs/features/2026.004__efficient_net__2-plan.md`
+- `docs/features/2026.009__efficientnet_spectral_norm__1-plan.md`
+- `docs/features/2026.009__efficientnet_spectral_norm__2-usage.md`
+- `docs/features/2026.010__efficientnet_arch_mod__2-plan.md`
 """
 
 import math
@@ -36,8 +47,7 @@ from dlk.nets.utils import NormalizationFactory, set_init_parameters
 class MBConvConfig:
     """Store one MBConv or Fused-MBConv block configuration.
 
-    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decisions
-    13 and 17.
+    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``.
 
     Attributes:
         kernel_size: Convolution kernel size for the block's spatial filter.
@@ -62,18 +72,21 @@ class MBConvConfig:
 
     def __post_init__(self) -> None:
         """Validate the dropout and drop path rates."""
-        assert (
-            0.0 <= self.dropout < 1.0
-        ), f"dropout must be in the range [0, 1), got {self.dropout}"
-        assert (
-            0.0 <= self.drop_path < 1.0
-        ), f"drop_path must be in the range [0, 1), got {self.drop_path}"
-        assert not (
-            self.dropout > 0 and self.drop_path > 0
-        ), f"at most one of dropout and drop_path may be positive, got {self.dropout=}, {self.drop_path=}"
-        assert (
-            self.has_residual or self.drop_path == 0
-        ), f"drop_path needs a residual branch, got {self.drop_path=} with {self.stride=}, {self.input_channels=}, {self.output_channels=}"
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError(f"dropout must be in the range [0, 1), got {self.dropout}")
+        if not 0.0 <= self.drop_path < 1.0:
+            raise ValueError(
+                f"drop_path must be in the range [0, 1), got {self.drop_path}"
+            )
+        if 0 < self.dropout and 0 < self.drop_path:
+            raise ValueError(
+                f"at most one of dropout and drop_path may be positive, got {self.dropout=}, {self.drop_path=}"
+            )
+        if 0 < self.drop_path and not self.has_residual:
+            raise ValueError(
+                f"drop_path needs a residual branch, got {self.drop_path=} with "
+                f"{self.stride=}, {self.input_channels=}, {self.output_channels=}"
+            )
 
     @property
     def has_residual(self) -> bool:
@@ -86,13 +99,13 @@ class MBConvConfig:
         depth_divisor: int = 8,
         min_depth: int | None = None,
     ) -> Self:
-        """Return the config with both channel counts scaled by `round_filters`."""
+        """Return the config with both channel counts scaled by `round_channels`."""
         return replace(
             self,
-            input_channels=round_filters(
+            input_channels=round_channels(
                 self.input_channels, width_coefficient, depth_divisor, min_depth
             ),
-            output_channels=round_filters(
+            output_channels=round_channels(
                 self.output_channels, width_coefficient, depth_divisor, min_depth
             ),
         )
@@ -115,9 +128,8 @@ class StageConfig:
 
     def __post_init__(self) -> None:
         """Validate the number of blocks."""
-        assert (
-            self.num_blocks >= 1
-        ), f"num_blocks must be at least 1, got {self.num_blocks}"
+        if self.num_blocks < 1:
+            raise ValueError(f"num_blocks must be at least 1, got {self.num_blocks}")
 
     def scaled(
         self,
@@ -157,7 +169,8 @@ class StemConfig:
 
     def __post_init__(self) -> None:
         """Validate the channel count."""
-        assert self.channels > 0, f"channels must be positive, got {self.channels}"
+        if self.channels <= 0:
+            raise ValueError(f"channels must be positive, got {self.channels}")
 
     def scaled(
         self,
@@ -165,10 +178,10 @@ class StemConfig:
         depth_divisor: int = 8,
         min_depth: int | None = None,
     ) -> Self:
-        """Return the config with `channels` scaled by `round_filters`."""
+        """Return the config with `channels` scaled by `round_channels`."""
         return replace(
             self,
-            channels=round_filters(
+            channels=round_channels(
                 self.channels, width_coefficient, depth_divisor, min_depth
             ),
         )
@@ -188,10 +201,10 @@ class HeadConfig:
 
     def __post_init__(self) -> None:
         """Validate the channel count and the dropout probability."""
-        assert self.channels > 0, f"channels must be positive, got {self.channels}"
-        assert (
-            0.0 <= self.dropout < 1.0
-        ), f"dropout must be in [0, 1), got {self.dropout}"
+        if self.channels <= 0:
+            raise ValueError(f"channels must be positive, got {self.channels}")
+        if not 0.0 <= self.dropout < 1.0:
+            raise ValueError(f"dropout must be in [0, 1), got {self.dropout}")
 
     def scaled(
         self,
@@ -199,13 +212,62 @@ class HeadConfig:
         depth_divisor: int = 8,
         min_depth: int | None = None,
     ) -> Self:
-        """Return the config with `channels` scaled by `round_filters`."""
+        """Return the config with `channels` scaled by `round_channels`."""
         return replace(
             self,
-            channels=round_filters(
+            channels=round_channels(
                 self.channels, width_coefficient, depth_divisor, min_depth
             ),
         )
+
+
+def round_channels(
+    channels: int,
+    width_coefficient: float,
+    depth_divisor: int = 8,
+    min_depth: int | None = None,
+) -> int:
+    """Scale and round a channel count under compound scaling.
+
+    Direct port of upstream ``round_channels`` without the 0.9-safeguard branch.
+
+    Args:
+        channels: Base channel count before width scaling.
+        width_coefficient: Multiplier applied to `channels`.
+        depth_divisor: Rounding unit for the scaled channel count.
+        min_depth: Lower bound on the rounded channel count, or `None` to use
+            `depth_divisor`.
+
+    Returns:
+        int: Scaled channel count rounded to a multiple of `depth_divisor`.
+    """
+    if not width_coefficient:
+        return channels
+
+    channels_scaled = channels * width_coefficient
+    min_depth = min_depth or depth_divisor
+    new_channels = max(
+        min_depth,
+        int(channels_scaled + depth_divisor / 2) // depth_divisor * depth_divisor,
+    )
+    return int(new_channels)
+
+
+def round_repeats(repeats: int, depth_coefficient: float) -> int:
+    """Scale and round a stage repeat count under compound scaling.
+
+    Direct port of upstream ``round_repeats``.
+
+    Args:
+        repeats: Base number of blocks in the stage.
+        depth_coefficient: Multiplier applied to `repeats`.
+
+    Returns:
+        int: Scaled repeat count rounded up to the nearest integer.
+    """
+    if not depth_coefficient:
+        return repeats
+    return int(math.ceil(depth_coefficient * repeats))
 
 
 # --------------------------------------
@@ -217,7 +279,7 @@ class HeadConfig:
 class ConvNorm:
     """Store the bias of one convolution and the normalization after it.
 
-    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decision 4.
+    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``.
 
     Attributes:
         normalization: Normalization factory, or `None` for no normalization.
@@ -228,72 +290,69 @@ class ConvNorm:
     bias: bool = False
 
 
-BATCH_NORM = ConvNorm(nn.BatchNorm1d, bias=False)
-NO_NORM = ConvNorm(None, bias=True)
+# Presets for ConvNorm
+CONV_NORM_NONE = ConvNorm(None, bias=True)
+CONV_NORM_BATCH = ConvNorm(nn.BatchNorm1d, bias=False)
 
 
 @dataclass(frozen=True)
 class MBConvStyle:
     """Store the design choices of every `MBConv1D` block of a network.
 
-    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decisions
-    5, 6, and 11.
+    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``.
 
     Attributes:
         pre_normalization: Normalization of the block input inside the
-            residual branch (P0), or `None`.
-        expand: Expansion convolution (P1); ignored when `expand_ratio == 1`.
-        depthwise: Depthwise convolution (P2).
-        project: Projection convolution (P3).
+            residual branch, or `None`.
+        expand_conv_norm: Expansion convolution; ignored when `expand_ratio == 1`.
+        depthwise_conv_norm: Depthwise convolution.
+        project_conv_norm: Projection convolution.
         skip_scale: Factor on the residual sum.
         depthwise_spectral_norm: Spectral normalization of the depthwise
-            convolution, through the kernel matrix (`"matrix"`, C0) or its
-            exact operator norm (`"exact"`, C2).
+            convolution, through the kernel matrix (`"matrix"`) or its
+            exact operator norm (`"exact"`).
     """
 
     pre_normalization: NormalizationFactory | None = None
-    expand: ConvNorm = BATCH_NORM
-    depthwise: ConvNorm = BATCH_NORM
-    project: ConvNorm = BATCH_NORM
+    expand_conv_norm: ConvNorm = CONV_NORM_BATCH
+    depthwise_conv_norm: ConvNorm = CONV_NORM_BATCH
+    project_conv_norm: ConvNorm = CONV_NORM_BATCH
     skip_scale: float = 1.0
     depthwise_spectral_norm: Literal["matrix", "exact"] = "matrix"
 
     def __post_init__(self) -> None:
         """Validate the residual scale and the depthwise spectral norm."""
-        assert (
-            self.skip_scale > 0
-        ), f"skip_scale must be positive, got {self.skip_scale}"
-        assert self.depthwise_spectral_norm in (
-            "matrix",
-            "exact",
-        ), f"depthwise_spectral_norm must be 'matrix' or 'exact', got {self.depthwise_spectral_norm!r}"
+        if self.skip_scale <= 0:
+            raise ValueError(f"skip_scale must be positive, got {self.skip_scale}")
+        if self.depthwise_spectral_norm not in ("matrix", "exact"):
+            raise ValueError(
+                f"depthwise_spectral_norm must be 'matrix' or 'exact', got {self.depthwise_spectral_norm!r}"
+            )
 
 
 @dataclass(frozen=True)
 class FusedMBConvStyle:
     """Store the design choices of every `FusedMBConv1D` block of a network.
 
-    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decisions
-    5 and 6.
+    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``.
 
     Attributes:
         pre_normalization: Normalization of the block input inside the
-            residual branch (F0), or `None`.
-        fused: Fused convolution (F1).
-        project: Projection convolution (F2); ignored when `expand_ratio == 1`.
+            residual branch, or `None`.
+        fused_conv_norm: Fused convolution.
+        project_conv_norm: Projection convolution; ignored when `expand_ratio == 1`.
         skip_scale: Factor on the residual sum.
     """
 
     pre_normalization: NormalizationFactory | None = None
-    fused: ConvNorm = BATCH_NORM
-    project: ConvNorm = BATCH_NORM
+    fused_conv_norm: ConvNorm = CONV_NORM_BATCH
+    project_conv_norm: ConvNorm = CONV_NORM_BATCH
     skip_scale: float = 1.0
 
     def __post_init__(self) -> None:
         """Validate the residual scale."""
-        assert (
-            self.skip_scale > 0
-        ), f"skip_scale must be positive, got {self.skip_scale}"
+        if self.skip_scale <= 0:
+            raise ValueError(f"skip_scale must be positive, got {self.skip_scale}")
 
 
 @dataclass(frozen=True)
@@ -301,10 +360,10 @@ class StemStyle:
     """Store the design choices of the stem.
 
     Attributes:
-        conv: Stem convolution.
+        conv_norm: Stem convolution.
     """
 
-    conv: ConvNorm = BATCH_NORM
+    conv_norm: ConvNorm = CONV_NORM_BATCH
 
 
 @dataclass(frozen=True)
@@ -317,20 +376,20 @@ class HeadStyle:
     Attributes:
         pre_normalization: Normalization of the last block's output before the
             head convolution, or `None`.
-        conv: Head convolution.
+        conv_norm: Head convolution.
     """
 
     pre_normalization: NormalizationFactory | None = None
-    conv: ConvNorm = BATCH_NORM
+    conv_norm: ConvNorm = CONV_NORM_BATCH
 
 
 @dataclass(frozen=True)
 class NetStyle:
     """Bundle the design choices that apply to the whole network.
 
-    `NetStyle()` builds the paper's EfficientNet. See
-    ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decisions 8,
-    10, and 17.
+    The default `NetStyle()` builds the EfficientNet from the original papers.
+
+    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``.
 
     Attributes:
         mbconv: Style of every `MBConv1D` block.
@@ -339,8 +398,8 @@ class NetStyle:
         head: Style of the head.
         enable_spectral_norm: Whether to spectrally normalize every convolution
             and linear layer.
-        dropout_connect_mode: Whether the network's ramped `dropout_connect`
-            rate sets the blocks' element-wise `dropout` or their `drop_path`.
+        dropout_mode: Whether the network's `block_dropout` rate sets the
+            blocks' element-wise `dropout` or their `drop_path`.
     """
 
     mbconv: MBConvStyle = MBConvStyle()
@@ -348,14 +407,14 @@ class NetStyle:
     stem: StemStyle = StemStyle()
     head: HeadStyle = HeadStyle()
     enable_spectral_norm: bool = False
-    dropout_connect_mode: Literal["dropout", "drop_path"] = "dropout"
+    dropout_mode: Literal["dropout", "drop_path"] = "dropout"
 
     def __post_init__(self) -> None:
-        """Validate the dropout connect mode."""
-        assert self.dropout_connect_mode in (
-            "dropout",
-            "drop_path",
-        ), f"dropout_connect_mode must be 'dropout' or 'drop_path', got {self.dropout_connect_mode!r}"
+        """Validate the dropout mode."""
+        if self.dropout_mode not in ("dropout", "drop_path"):
+            raise ValueError(
+                f"dropout_mode must be 'dropout' or 'drop_path', got {self.dropout_mode!r}"
+            )
 
     def for_block(self, block_cls: type[nn.Module]) -> MBConvStyle | FusedMBConvStyle:
         """Return the style of a block class.
@@ -382,28 +441,49 @@ class NetStyle:
 # Presets
 # --------------------------------------
 
+
 # GroupNorm with one group: normalize each sample over channels and length.
-GN = partial(nn.GroupNorm, 1)
+GROUP_NORM_ONE = partial(nn.GroupNorm, 1)
 
 
-def sn_pre_gn_style(
-    eps: float = 1e-5,
-    depthwise_spectral_norm: Literal["matrix", "exact"] = "matrix",
+# Presets for baseline NetStyles
+NET_BASELINE = NetStyle()
+NET_BASELINE_GN = NetStyle(
+    mbconv=MBConvStyle(
+        expand_conv_norm=ConvNorm(GROUP_NORM_ONE),
+        depthwise_conv_norm=ConvNorm(GROUP_NORM_ONE),
+        project_conv_norm=ConvNorm(GROUP_NORM_ONE),
+    ),
+    fused=FusedMBConvStyle(
+        fused_conv_norm=ConvNorm(GROUP_NORM_ONE),
+        project_conv_norm=ConvNorm(GROUP_NORM_ONE),
+    ),
+    stem=StemStyle(conv_norm=ConvNorm(GROUP_NORM_ONE, bias=True)),
+    head=HeadStyle(conv_norm=ConvNorm(GROUP_NORM_ONE)),
+)
+
+
+def _create_net_style_sn_pre_gn(
+    eps: float,
+    depthwise_spectral_norm: Literal["matrix", "exact"],
 ) -> NetStyle:
-    r"""Build a spectrally normalized style with a GroupNorm pre-norm only.
+    r"""Create a spectrally normalized style with GroupNorm pre-norms.
 
     Every block and the head normalize their input with one-group GroupNorm;
-    no convolution is followed by a normalization, so spectral normalization
-    binds in every branch. Blocks average their residual sum
-    (`skip_scale=0.5`). A larger `eps` $= \tau^2$ floors the normalization,
-    whose gain is then at most $\max\lvert\gamma\rvert / \tau$. See
-    ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``, decision 14.
+    then normalization never follows a convolution, so spectral normalization
+    binds in every block. Blocks average their residual sum (`skip_scale=0.5`)
+    and regularize with drop path (`dropout_mode="drop_path"`). A larger `eps` floors the normalization, whose gain is then at most
+    $\max\lvert\gamma\rvert / \sqrt{\varepsilon}$.
+
+    See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md``.
 
     Args:
-        eps: GroupNorm's `eps`; `1e-5` is GroupNorm's default, and `1e-4`
-            ($\tau = 0.01$) floors it in the floored presets.
+        eps: GroupNorm's `eps`; `1e-5` is GroupNorm's default. The value `1e-4`
+            floors the standard deviation at 0.01, which is at or below the
+            branch gain at initialization (0.01 to 0.02), so the residual
+            stream keeps its scale.
         depthwise_spectral_norm: Spectral normalization of the depthwise
-            convolutions: `"matrix"` (C0) or `"exact"` (C2).
+            convolutions: `"matrix"` or `"exact"`.
 
     Returns:
         NetStyle: The style.
@@ -412,46 +492,56 @@ def sn_pre_gn_style(
     return NetStyle(
         mbconv=MBConvStyle(
             pre_normalization=pre_norm,
-            expand=NO_NORM,
-            depthwise=NO_NORM,
-            project=NO_NORM,
+            expand_conv_norm=CONV_NORM_NONE,
+            depthwise_conv_norm=CONV_NORM_NONE,
+            project_conv_norm=CONV_NORM_NONE,
             skip_scale=0.5,
             depthwise_spectral_norm=depthwise_spectral_norm,
         ),
         fused=FusedMBConvStyle(
             pre_normalization=pre_norm,
-            fused=NO_NORM,
-            project=NO_NORM,
+            fused_conv_norm=CONV_NORM_NONE,
+            project_conv_norm=CONV_NORM_NONE,
             skip_scale=0.5,
         ),
-        stem=StemStyle(conv=NO_NORM),
-        head=HeadStyle(pre_normalization=pre_norm, conv=NO_NORM),
+        stem=StemStyle(conv_norm=CONV_NORM_NONE),
+        head=HeadStyle(pre_normalization=pre_norm, conv_norm=CONV_NORM_NONE),
         enable_spectral_norm=True,
+        dropout_mode="drop_path",
     )
 
 
-# Presets of plan 2026.010, decision 14.
-BASELINE = NetStyle()
-BASELINE_GN = NetStyle(
-    mbconv=MBConvStyle(
-        expand=ConvNorm(GN), depthwise=ConvNorm(GN), project=ConvNorm(GN)
-    ),
-    fused=FusedMBConvStyle(fused=ConvNorm(GN), project=ConvNorm(GN)),
-    stem=StemStyle(conv=ConvNorm(GN, bias=True)),
-    head=HeadStyle(conv=ConvNorm(GN)),
+# Presets for spectrally-normalized NetStyles with pytorch's default "matrix" SN
+NET_SN_PRE_GN = _create_net_style_sn_pre_gn(
+    eps=1e-5,
+    depthwise_spectral_norm="matrix",
 )
-SN_PRE_GN = sn_pre_gn_style()
-# Floor tau = 0.01 at or below the branch gain at init (0.01 to 0.02), so the stream keeps its scale.
-SN_FLOORED_PRE_GN = sn_pre_gn_style(eps=1e-4)
-SN_EXACT_DW_PRE_GN = sn_pre_gn_style(depthwise_spectral_norm="exact")
-SN_EXACT_DW_FLOORED_PRE_GN = sn_pre_gn_style(eps=1e-4, depthwise_spectral_norm="exact")
+NET_SN_FLOORED_PRE_GN = _create_net_style_sn_pre_gn(
+    eps=1e-4,
+    depthwise_spectral_norm="matrix",
+)
+
+# Presets for spectrally-normalized NetStyles with "exact" SN
+NET_EXACT_DW_SN_PRE_GN = _create_net_style_sn_pre_gn(
+    eps=1e-5,
+    depthwise_spectral_norm="exact",
+)
+NET_EXACT_DW_SN_FLOORED_PRE_GN = _create_net_style_sn_pre_gn(
+    eps=1e-4,
+    depthwise_spectral_norm="exact",
+)
 
 
-def _conv_norm_activation(
-    conv_norm: ConvNorm,
+# --------------------------------------
+# Blocks
+# --------------------------------------
+
+
+def _build_conv_norm_activation(
     in_channels: int,
     out_channels: int,
     kernel_size: int,
+    conv_norm: ConvNorm,
     activation: bool,
     stride: int = 1,
     padding: int = 0,
@@ -459,14 +549,11 @@ def _conv_norm_activation(
 ) -> nn.Sequential:
     """Stack a convolution, its normalization if set, and SiLU if requested.
 
-    Keeps the indices of today's layout: conv at 0, normalization at 1, SiLU at
-    2; without normalization, SiLU moves to 1.
-
     Args:
-        conv_norm: Bias of the convolution and the normalization after it.
         in_channels: Number of input channels of the convolution.
         out_channels: Number of output channels of the convolution.
         kernel_size: Kernel size of the convolution.
+        conv_norm: Bias of the convolution and the normalization after it.
         activation: Whether to end with SiLU.
         stride: Stride of the convolution.
         padding: Padding of the convolution.
@@ -494,7 +581,10 @@ def _conv_norm_activation(
     return nn.Sequential(*layers)
 
 
-def _pre_norm(normalization: NormalizationFactory | None, channels: int) -> nn.Module:
+def _build_pre_norm(
+    normalization: NormalizationFactory | None,
+    channels: int,
+) -> nn.Module:
     """Build a pre-norm for `channels` channels, or `nn.Identity()` if unset."""
     return nn.Identity() if normalization is None else normalization(channels)
 
@@ -530,60 +620,6 @@ def _add_residual(
     return skip_scale * (branch + identity)
 
 
-def round_filters(
-    filters: int,
-    width_coefficient: float,
-    depth_divisor: int = 8,
-    min_depth: int | None = None,
-) -> int:
-    """Scale and round a channel count under compound scaling.
-
-    Direct port of upstream ``round_filters`` without the 0.9-safeguard branch.
-
-    Args:
-        filters: Base channel count before width scaling.
-        width_coefficient: Multiplier applied to `filters`.
-        depth_divisor: Rounding unit for the scaled channel count.
-        min_depth: Lower bound on the rounded channel count, or `None` to use
-            `depth_divisor`.
-
-    Returns:
-        int: Scaled channel count rounded to a multiple of `depth_divisor`.
-    """
-    if not width_coefficient:
-        return filters
-
-    filters_scaled = filters * width_coefficient
-    min_depth = min_depth or depth_divisor
-    new_filters = max(
-        min_depth,
-        int(filters_scaled + depth_divisor / 2) // depth_divisor * depth_divisor,
-    )
-    return int(new_filters)
-
-
-def round_repeats(repeats: int, depth_coefficient: float) -> int:
-    """Scale and round a stage repeat count under compound scaling.
-
-    Direct port of upstream ``round_repeats``.
-
-    Args:
-        repeats: Base number of blocks in the stage.
-        depth_coefficient: Multiplier applied to `repeats`.
-
-    Returns:
-        int: Scaled repeat count rounded up to the nearest integer.
-    """
-    if not depth_coefficient:
-        return repeats
-    return int(math.ceil(depth_coefficient * repeats))
-
-
-# --------------------------------------
-# Blocks
-# --------------------------------------
-
-
 class SqueezeExcitation1DConv(nn.Module):
     """Apply squeeze-and-excitation reweighting for 1D feature maps."""
 
@@ -595,10 +631,12 @@ class SqueezeExcitation1DConv(nn.Module):
             squeeze_channels: Bottleneck width for the squeeze path.
         """
         super().__init__()
-        assert channels > 0, f"channels must be positive, got {channels}"
-        assert (
-            squeeze_channels > 0
-        ), f"squeeze_channels must be positive, got {squeeze_channels}"
+        if channels <= 0:
+            raise ValueError(f"channels must be positive, got {channels}")
+        if squeeze_channels <= 0:
+            raise ValueError(
+                f"squeeze_channels must be positive, got {squeeze_channels}"
+            )
 
         self.se = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
@@ -638,10 +676,12 @@ class SqueezeExcitation1DLinear(nn.Module):
                 `parametrizations.spectral_norm`.
         """
         super().__init__()
-        assert channels > 0, f"channels must be positive, got {channels}"
-        assert (
-            squeeze_channels > 0
-        ), f"squeeze_channels must be positive, got {squeeze_channels}"
+        if channels <= 0:
+            raise ValueError(f"channels must be positive, got {channels}")
+        if squeeze_channels <= 0:
+            raise ValueError(
+                f"squeeze_channels must be positive, got {squeeze_channels}"
+            )
 
         # 1x1 convolutions on a length-1 squeeze are plain channel projections
         self.reduce = nn.Linear(channels, squeeze_channels)
@@ -672,52 +712,64 @@ class SqueezeExcitation1DLinear(nn.Module):
 
 
 class MBConv1D(nn.Module):
-    """A Mobile Inverted Bottleneck Convolution block for 1D signals."""
+    """A Mobile Inverted Bottleneck Convolution block for 1D signals.
+
+    Introduced in MobileNetV2 and used by EfficientNet V1 and V2, this block
+    expands the channels with a pointwise convolution, filters along the
+    sequence with a depthwise convolution, optionally reweights channels with
+    squeeze-and-excitation, and projects back with a pointwise convolution.
+    The expansion is skipped for `expand_ratio == 1`. The input is added back
+    when `config.has_residual`, after element-wise dropout or drop path on the
+    branch; the residual sum is scaled by `style.skip_scale`.
+
+    The `config` sets sizes and regularization rates; the `style` sets the
+    normalizations, biases, and residual scale.
+    """
 
     def __init__(
         self,
         config: MBConvConfig,
-        enable_spectral_norm: bool = False,
         style: MBConvStyle = MBConvStyle(),
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize the MBConv block.
 
         Args:
             config: Layer and channel configuration for this block.
+            style: Normalizations, biases, and residual scale of the block.
             enable_spectral_norm: If `True`, wrap every convolution and both
                 squeeze-and-excitation projections with
                 `parametrizations.spectral_norm`, or the depthwise convolution
                 with `DepthwiseSpectralNorm` if `style` asks for it.
-            style: Normalizations, biases, and residual scale of the block.
         """
         super().__init__()
 
         self.config = config
         self.style = style
-        self.has_se = config.se_ratio is not None and config.se_ratio > 0
+        self.has_se = config.se_ratio is not None and 0 < config.se_ratio
 
         # Pre-normalization of the residual branch
-        self.pre_norm = _pre_norm(style.pre_normalization, config.input_channels)
+        self.pre_norm = _build_pre_norm(style.pre_normalization, config.input_channels)
 
         # Expansion phase
         expanded_channels = config.input_channels * config.expand_ratio
         if config.expand_ratio != 1:
-            self.expand_conv = _conv_norm_activation(
-                style.expand,
-                config.input_channels,
-                expanded_channels,
-                1,
+            self.expand_conv = _build_conv_norm_activation(
+                in_channels=config.input_channels,
+                out_channels=expanded_channels,
+                kernel_size=1,
+                conv_norm=style.expand_conv_norm,
                 activation=True,
             )
         else:
             self.expand_conv = nn.Identity()
 
         # Depthwise convolution
-        self.depthwise_conv = _conv_norm_activation(
-            style.depthwise,
-            expanded_channels,
-            expanded_channels,
-            config.kernel_size,
+        self.depthwise_conv = _build_conv_norm_activation(
+            in_channels=expanded_channels,
+            out_channels=expanded_channels,
+            kernel_size=config.kernel_size,
+            conv_norm=style.depthwise_conv_norm,
             activation=True,
             stride=config.stride,
             padding=config.kernel_size // 2,
@@ -738,11 +790,11 @@ class MBConv1D(nn.Module):
             )
 
         # Output projection
-        self.project_conv = _conv_norm_activation(
-            style.project,
-            expanded_channels,
-            config.output_channels,
-            1,
+        self.project_conv = _build_conv_norm_activation(
+            in_channels=expanded_channels,
+            out_channels=config.output_channels,
+            kernel_size=1,
+            conv_norm=style.project_conv_norm,
             activation=False,
         )
 
@@ -817,28 +869,29 @@ class FusedMBConv1D(nn.Module):
     def __init__(
         self,
         config: MBConvConfig,
-        enable_spectral_norm: bool = False,
         style: FusedMBConvStyle = FusedMBConvStyle(),
+        enable_spectral_norm: bool = False,
     ) -> None:
         """Initialize the Fused-MBConv block.
 
         Args:
             config: Layer and channel configuration for this block.
                 `config.se_ratio` must be `None`.
+            style: Normalizations, biases, and residual scale of the block.
             enable_spectral_norm: If `True`, wrap every convolution with
                 `parametrizations.spectral_norm`.
-            style: Normalizations, biases, and residual scale of the block.
         """
         super().__init__()
-        assert (
-            config.se_ratio is None
-        ), f"FusedMBConv1D does not support squeeze-and-excitation, got se_ratio={config.se_ratio}"
+        if config.se_ratio is not None:
+            raise ValueError(
+                f"FusedMBConv1D does not support squeeze-and-excitation, got se_ratio={config.se_ratio}"
+            )
 
         self.config = config
         self.style = style
 
         # Pre-normalization of the residual branch
-        self.pre_norm = _pre_norm(style.pre_normalization, config.input_channels)
+        self.pre_norm = _build_pre_norm(style.pre_normalization, config.input_channels)
 
         # Fused expansion and spatial filter; expansion ratio 1 collapses the
         # block to this single dense conv
@@ -846,11 +899,11 @@ class FusedMBConv1D(nn.Module):
         fused_channels = (
             config.output_channels if config.expand_ratio == 1 else expanded_channels
         )
-        self.fused_conv = _conv_norm_activation(
-            style.fused,
-            config.input_channels,
-            fused_channels,
-            config.kernel_size,
+        self.fused_conv = _build_conv_norm_activation(
+            in_channels=config.input_channels,
+            out_channels=fused_channels,
+            kernel_size=config.kernel_size,
+            conv_norm=style.fused_conv_norm,
             activation=True,
             stride=config.stride,
             padding=config.kernel_size // 2,
@@ -859,11 +912,11 @@ class FusedMBConv1D(nn.Module):
         # Output projection
         self.project_conv: nn.Module
         if config.expand_ratio != 1:
-            self.project_conv = _conv_norm_activation(
-                style.project,
-                expanded_channels,
-                config.output_channels,
-                1,
+            self.project_conv = _build_conv_norm_activation(
+                in_channels=expanded_channels,
+                out_channels=config.output_channels,
+                kernel_size=1,
+                conv_norm=style.project_conv_norm,
                 activation=False,
             )
         else:
@@ -940,7 +993,7 @@ class ScalableEfficientNet1D(nn.Module):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         style: NetStyle = NetStyle(),
     ) -> None:
         """Initialize ScalableEfficientNet1D.
@@ -963,24 +1016,25 @@ class ScalableEfficientNet1D(nn.Module):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             style: Network-wide design choices; see `NetStyle`.
         """
         super().__init__()
-        assert (
-            input_channels > 0
-        ), f"input_channels must be positive, got {input_channels}"
-        assert (
-            input_length is None or input_length > 0
-        ), f"input_length must be positive when provided, got {input_length}"
-        assert num_classes > 0, f"num_classes must be positive, got {num_classes}"
-        assert (
-            0.0 <= dropout_connect < 1.0
-        ), f"dropout_connect must be in [0, 1), got {dropout_connect}"
-        assert (
-            len(stage_configs) > 0
-        ), f"stage_configs must be non-empty, got {repr(stage_configs)}"
+        if input_channels <= 0:
+            raise ValueError(f"input_channels must be positive, got {input_channels}")
+        if input_length is not None and input_length <= 0:
+            raise ValueError(
+                f"input_length must be positive when provided, got {input_length}"
+            )
+        if num_classes <= 0:
+            raise ValueError(f"num_classes must be positive, got {num_classes}")
+        if not 0.0 <= block_dropout < 1.0:
+            raise ValueError(f"block_dropout must be in [0, 1), got {block_dropout}")
+        if len(stage_configs) == 0:
+            raise ValueError(
+                f"stage_configs must be non-empty, got {repr(stage_configs)}"
+            )
 
         self.input_channels = input_channels
         self.input_length = input_length
@@ -1016,11 +1070,11 @@ class ScalableEfficientNet1D(nn.Module):
         # Stem
         self.stem: nn.Module
         if self.stem_config is not None:
-            self.stem = _conv_norm_activation(
-                style.stem.conv,
-                input_channels,
-                self.stem_config.channels,
-                3,
+            self.stem = _build_conv_norm_activation(
+                in_channels=input_channels,
+                out_channels=self.stem_config.channels,
+                kernel_size=3,
+                conv_norm=style.stem.conv_norm,
                 activation=True,
                 stride=2,
                 padding=1,
@@ -1033,8 +1087,8 @@ class ScalableEfficientNet1D(nn.Module):
         for stage in self.stage_configs:
             for block_config in stage.block_configs():
                 # ramp the rate linearly: element-wise dropout or drop path (stochastic depth)
-                rate = dropout_connect * len(self.blocks) / total_blocks
-                if style.dropout_connect_mode == "dropout":
+                rate = block_dropout * len(self.blocks) / total_blocks
+                if style.dropout_mode == "dropout":
                     block_config = replace(block_config, dropout=rate, drop_path=0.0)
                 elif block_config.has_residual:
                     block_config = replace(block_config, dropout=0.0, drop_path=rate)
@@ -1044,8 +1098,8 @@ class ScalableEfficientNet1D(nn.Module):
                 self.blocks.append(
                     stage.block_cls(
                         block_config,
-                        enable_spectral_norm=style.enable_spectral_norm,
                         style=style.for_block(stage.block_cls),
+                        enable_spectral_norm=style.enable_spectral_norm,
                     )
                 )
 
@@ -1054,14 +1108,18 @@ class ScalableEfficientNet1D(nn.Module):
         self.head_pre_norm = (
             nn.Identity()
             if self.head_config is None
-            else _pre_norm(style.head.pre_normalization, out_channels)
+            else _build_pre_norm(style.head.pre_normalization, out_channels)
         )
         self.head: nn.Module
         if self.head_config is not None:
             head_out = self.head_config.channels
             self.head = nn.Sequential(
-                *_conv_norm_activation(
-                    style.head.conv, out_channels, head_out, 1, activation=True
+                *_build_conv_norm_activation(
+                    in_channels=out_channels,
+                    out_channels=head_out,
+                    kernel_size=1,
+                    conv_norm=style.head.conv_norm,
+                    activation=True,
                 ),
                 nn.AdaptiveAvgPool1d(1),
                 nn.Flatten(),
@@ -1086,7 +1144,7 @@ class ScalableEfficientNet1D(nn.Module):
         Spectrally normalized layers get an orthogonal weight from
         `set_init_parameters` and a zero bias. Depthwise spectrally normalized
         layers get the Kaiming weight of the other convolutions in their
-        unnormalized weight (plan 2026.010, decision 12).
+        unnormalized weight.
         """
         # SE projections keep the fan-out scaling of the 1x1 convolutions they replaced
         se_linears = {
@@ -1305,10 +1363,10 @@ class EfficientNetV1BB0(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1BB0.
 
@@ -1316,7 +1374,7 @@ class EfficientNetV1BB0(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1331,7 +1389,7 @@ class EfficientNetV1BB0(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1344,10 +1402,10 @@ class EfficientNetV1B0(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B0.
 
@@ -1355,7 +1413,7 @@ class EfficientNetV1B0(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1370,7 +1428,7 @@ class EfficientNetV1B0(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1383,10 +1441,10 @@ class EfficientNetV1B1(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B1.
 
@@ -1394,7 +1452,7 @@ class EfficientNetV1B1(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1409,7 +1467,7 @@ class EfficientNetV1B1(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1422,10 +1480,10 @@ class EfficientNetV1B2(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.3),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B2.
 
@@ -1433,7 +1491,7 @@ class EfficientNetV1B2(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1448,7 +1506,7 @@ class EfficientNetV1B2(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1461,10 +1519,10 @@ class EfficientNetV1B3(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.3),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B3.
 
@@ -1472,7 +1530,7 @@ class EfficientNetV1B3(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1487,7 +1545,7 @@ class EfficientNetV1B3(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1500,10 +1558,10 @@ class EfficientNetV1B4(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.4),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B4.
 
@@ -1511,7 +1569,7 @@ class EfficientNetV1B4(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1526,7 +1584,7 @@ class EfficientNetV1B4(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1539,10 +1597,10 @@ class EfficientNetV1B5(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.4),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B5.
 
@@ -1550,7 +1608,7 @@ class EfficientNetV1B5(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1565,7 +1623,7 @@ class EfficientNetV1B5(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1578,10 +1636,10 @@ class EfficientNetV1B6(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.5),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B6.
 
@@ -1589,7 +1647,7 @@ class EfficientNetV1B6(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1604,7 +1662,7 @@ class EfficientNetV1B6(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1617,10 +1675,10 @@ class EfficientNetV1B7(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.5),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B7.
 
@@ -1628,7 +1686,7 @@ class EfficientNetV1B7(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1643,7 +1701,7 @@ class EfficientNetV1B7(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1656,10 +1714,10 @@ class EfficientNetV1B8(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.5),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1B8.
 
@@ -1667,7 +1725,7 @@ class EfficientNetV1B8(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1682,7 +1740,7 @@ class EfficientNetV1B8(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1695,10 +1753,10 @@ class EfficientNetV1L2(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.5),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV1L2.
 
@@ -1706,7 +1764,7 @@ class EfficientNetV1L2(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1721,7 +1779,7 @@ class EfficientNetV1L2(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1825,10 +1883,10 @@ class EfficientNetV2BB0(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2BB0.
 
@@ -1836,7 +1894,7 @@ class EfficientNetV2BB0(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1851,7 +1909,7 @@ class EfficientNetV2BB0(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1864,10 +1922,10 @@ class EfficientNetV2B0(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2B0.
 
@@ -1875,7 +1933,7 @@ class EfficientNetV2B0(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1890,7 +1948,7 @@ class EfficientNetV2B0(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1903,10 +1961,10 @@ class EfficientNetV2B1(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2B1.
 
@@ -1914,7 +1972,7 @@ class EfficientNetV2B1(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1929,7 +1987,7 @@ class EfficientNetV2B1(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1942,10 +2000,10 @@ class EfficientNetV2B2(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.3),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2B2.
 
@@ -1953,7 +2011,7 @@ class EfficientNetV2B2(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -1968,7 +2026,7 @@ class EfficientNetV2B2(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -1981,10 +2039,10 @@ class EfficientNetV2B3(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.3),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2B3.
 
@@ -1992,7 +2050,7 @@ class EfficientNetV2B3(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -2007,7 +2065,7 @@ class EfficientNetV2B3(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -2401,10 +2459,10 @@ class EfficientNetV2S(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=24),
         head: HeadConfig | None = HeadConfig(dropout=0.2),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2S.
 
@@ -2412,7 +2470,7 @@ class EfficientNetV2S(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -2427,7 +2485,7 @@ class EfficientNetV2S(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -2440,10 +2498,10 @@ class EfficientNetV2M(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=24),
         head: HeadConfig | None = HeadConfig(dropout=0.3),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2M.
 
@@ -2451,7 +2509,7 @@ class EfficientNetV2M(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -2466,7 +2524,7 @@ class EfficientNetV2M(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -2479,10 +2537,10 @@ class EfficientNetV2L(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.4),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2L.
 
@@ -2490,7 +2548,7 @@ class EfficientNetV2L(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -2505,7 +2563,7 @@ class EfficientNetV2L(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
 
@@ -2518,10 +2576,10 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
         input_channels: int = 1,
         input_length: int | None = 1000,
         num_classes: int = 2,
-        dropout_connect: float = 0.2,
+        block_dropout: float = 0.2,
         stem: StemConfig | None = StemConfig(channels=32),
         head: HeadConfig | None = HeadConfig(dropout=0.4),
-        style: NetStyle = BASELINE,
+        style: NetStyle = NET_BASELINE,
     ) -> None:
         """Initialize EfficientNetV2XL.
 
@@ -2529,7 +2587,7 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
             input_channels: Number of channels in each input sample.
             input_length: Expected sequence length, or `None` to disable checks.
             num_classes: Number of output classes.
-            dropout_connect: Largest residual-branch dropout or drop path rate,
+            block_dropout: Largest residual-branch dropout or drop path rate,
                 ramped linearly over the blocks.
             stem: Stem config before width scaling, or `None` to disable the stem.
             head: Head config before width scaling, or `None` to disable the head.
@@ -2544,6 +2602,6 @@ class EfficientNetV2XL(ScalableEfficientNet1D):
             input_channels=input_channels,
             input_length=input_length,
             num_classes=num_classes,
-            dropout_connect=dropout_connect,
+            block_dropout=block_dropout,
             style=style,
         )
