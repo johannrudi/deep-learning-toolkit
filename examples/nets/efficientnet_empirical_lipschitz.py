@@ -48,9 +48,9 @@ import torch.nn as nn  # noqa: E402
 
 from dlk.nets.efficientnet1d import (  # noqa: E402
     NET_BASELINE,
-    NET_BASELINE_GN,
-    NET_EXACT_DW_SN_FLOORED_PRE_GN,
-    NET_EXACT_DW_SN_PRE_GN,
+    NET_EFBN_SHGN,
+    NET_EXACT_SN_FLOORED_PRE_GN,
+    NET_EXACT_SN_PRE_GN,
     NET_SN_FLOORED_PRE_GN,
     NET_SN_PRE_GN,
     EfficientNetV1BB0,
@@ -65,11 +65,11 @@ from dlk.nets.spectral_norm import get_depthwise_spectral_norm  # noqa: E402
 
 PRESETS: dict[str, NetStyle] = {
     "NET_BASELINE": NET_BASELINE,
-    "NET_BASELINE_GN": NET_BASELINE_GN,
+    "NET_EFBN_SHGN": NET_EFBN_SHGN,
     "NET_SN_PRE_GN": NET_SN_PRE_GN,
     "NET_SN_FLOORED_PRE_GN": NET_SN_FLOORED_PRE_GN,
-    "NET_EXACT_DW_SN_PRE_GN": NET_EXACT_DW_SN_PRE_GN,
-    "NET_EXACT_DW_SN_FLOORED_PRE_GN": NET_EXACT_DW_SN_FLOORED_PRE_GN,
+    "NET_EXACT_SN_PRE_GN": NET_EXACT_SN_PRE_GN,
+    "NET_EXACT_SN_FLOORED_PRE_GN": NET_EXACT_SN_FLOORED_PRE_GN,
 }
 BB0Variant = type[EfficientNetV1BB0] | type[EfficientNetV2BB0]
 NETWORKS: tuple[BB0Variant, ...] = (EfficientNetV1BB0, EfficientNetV2BB0)

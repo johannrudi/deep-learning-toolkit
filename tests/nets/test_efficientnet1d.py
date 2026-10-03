@@ -12,9 +12,8 @@ from torch.nn.utils import parametrize
 from dlk.nets.efficientnet1d import (
     CONV_NORM_NONE,
     NET_BASELINE,
-    NET_BASELINE_GN,
-    NET_EXACT_DW_SN_FLOORED_PRE_GN,
-    NET_EXACT_DW_SN_PRE_GN,
+    NET_EXACT_SN_FLOORED_PRE_GN,
+    NET_EXACT_SN_PRE_GN,
     NET_SN_FLOORED_PRE_GN,
     NET_SN_PRE_GN,
     EfficientNetV1B0,
@@ -1087,19 +1086,18 @@ def test_exact_depthwise_spectral_norm_wraps_and_initializes_depthwise_convs() -
 
 PRESETS = {
     "NET_BASELINE": NET_BASELINE,
-    "NET_BASELINE_GN": NET_BASELINE_GN,
     "NET_SN_PRE_GN": NET_SN_PRE_GN,
     "NET_SN_FLOORED_PRE_GN": NET_SN_FLOORED_PRE_GN,
-    "NET_EXACT_DW_SN_PRE_GN": NET_EXACT_DW_SN_PRE_GN,
-    "NET_EXACT_DW_SN_FLOORED_PRE_GN": NET_EXACT_DW_SN_FLOORED_PRE_GN,
+    "NET_EXACT_SN_PRE_GN": NET_EXACT_SN_PRE_GN,
+    "NET_EXACT_SN_FLOORED_PRE_GN": NET_EXACT_SN_FLOORED_PRE_GN,
 }
 BATCH_INDEPENDENT_PRESETS = [name for name in PRESETS if name != "NET_BASELINE"]
 # SN presets with their depthwise spectral norm and GroupNorm eps.
 SN_PRESETS = [
     ("NET_SN_PRE_GN", False, 1e-5),
     ("NET_SN_FLOORED_PRE_GN", False, 1e-4),
-    ("NET_EXACT_DW_SN_PRE_GN", True, 1e-5),
-    ("NET_EXACT_DW_SN_FLOORED_PRE_GN", True, 1e-4),
+    ("NET_EXACT_SN_PRE_GN", True, 1e-5),
+    ("NET_EXACT_SN_FLOORED_PRE_GN", True, 1e-4),
 ]
 BB0_VARIANTS = pytest.mark.parametrize(
     "net_cls", [EfficientNetV1BB0, EfficientNetV2BB0]

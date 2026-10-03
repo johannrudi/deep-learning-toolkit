@@ -41,9 +41,9 @@ import torch.nn as nn  # noqa: E402
 
 from dlk.nets.efficientnet1d import (  # noqa: E402
     NET_BASELINE,
-    NET_BASELINE_GN,
-    NET_EXACT_DW_SN_FLOORED_PRE_GN,
-    NET_EXACT_DW_SN_PRE_GN,
+    NET_EFBN_SHGN,
+    NET_EXACT_SN_FLOORED_PRE_GN,
+    NET_EXACT_SN_PRE_GN,
     NET_SN_FLOORED_PRE_GN,
     NET_SN_PRE_GN,
     EfficientNetV1BB0,
@@ -57,20 +57,20 @@ from dlk.nets.efficientnet1d import (  # noqa: E402
 
 PRESETS: dict[str, NetStyle] = {
     "NET_BASELINE": NET_BASELINE,
-    "NET_BASELINE_GN": NET_BASELINE_GN,
+    "NET_EFBN_SHGN": NET_EFBN_SHGN,
     "NET_SN_PRE_GN": NET_SN_PRE_GN,
     "NET_SN_FLOORED_PRE_GN": NET_SN_FLOORED_PRE_GN,
-    "NET_EXACT_DW_SN_PRE_GN": NET_EXACT_DW_SN_PRE_GN,
-    "NET_EXACT_DW_SN_FLOORED_PRE_GN": NET_EXACT_DW_SN_FLOORED_PRE_GN,
+    "NET_EXACT_SN_PRE_GN": NET_EXACT_SN_PRE_GN,
+    "NET_EXACT_SN_FLOORED_PRE_GN": NET_EXACT_SN_FLOORED_PRE_GN,
 }
 # Line style and marker per preset, so that overlapping curves stay visible.
 LINE_STYLES = {
     "NET_BASELINE": ("--", "s"),
-    "NET_BASELINE_GN": (":", "o"),
+    "NET_EFBN_SHGN": (":", "o"),
     "NET_SN_PRE_GN": ("-", "^"),
     "NET_SN_FLOORED_PRE_GN": ("-.", "v"),
-    "NET_EXACT_DW_SN_PRE_GN": ("-", "D"),
-    "NET_EXACT_DW_SN_FLOORED_PRE_GN": ("-.", "x"),
+    "NET_EXACT_SN_PRE_GN": ("-", "D"),
+    "NET_EXACT_SN_FLOORED_PRE_GN": ("-.", "x"),
 }
 NETWORKS = (EfficientNetV1BB0, EfficientNetV2BB0)
 BATCH_SIZE = 64
@@ -94,6 +94,7 @@ def stream_statistics(
     channel_mean_squares: list[float] = []
 
     def record(module: nn.Module, inputs: object, output: torch.Tensor) -> None:
+        del module, inputs  # unused
         # average over the batch and positions per channel, then over channels
         mean_squares.append(output.pow(2).mean().item())
         channel_mean_squares.append(output.mean(dim=(0, 2)).pow(2).mean().item())

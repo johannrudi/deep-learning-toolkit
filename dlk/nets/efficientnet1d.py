@@ -21,9 +21,9 @@ For implementation and usage details, see:
 - `docs/features/2026.010__efficientnet_arch_mod__2-plan.md`
 """
 
+import functools
 import math
 from dataclasses import dataclass, replace
-from functools import partial
 from typing import Literal, Self, cast
 
 import torch
@@ -293,6 +293,8 @@ class ConvNorm:
 # Presets for ConvNorm
 CONV_NORM_NONE = ConvNorm(None, bias=True)
 CONV_NORM_BATCH = ConvNorm(nn.BatchNorm1d, bias=False)
+CONV_NORM_GROUP = ConvNorm(functools.partial(nn.GroupNorm, 1), bias=False)
+CONV_NORM_GROUP_BIAS = ConvNorm(functools.partial(nn.GroupNorm, 1), bias=True)
 
 
 @dataclass(frozen=True)
@@ -442,24 +444,84 @@ class NetStyle:
 # --------------------------------------
 
 
-# GroupNorm with one group: normalize each sample over channels and length.
-GROUP_NORM_ONE = partial(nn.GroupNorm, 1)
-
-
-# Presets for baseline NetStyles
+# Preset for baseline NetStyle
 NET_BASELINE = NetStyle()
-NET_BASELINE_GN = NetStyle(
+
+# Preset for NetStyle with fewer BatchNorms
+NET_EFBN_SHBN = NetStyle(
     mbconv=MBConvStyle(
-        expand_conv_norm=ConvNorm(GROUP_NORM_ONE),
-        depthwise_conv_norm=ConvNorm(GROUP_NORM_ONE),
-        project_conv_norm=ConvNorm(GROUP_NORM_ONE),
+        expand_conv_norm=CONV_NORM_BATCH,
+        depthwise_conv_norm=CONV_NORM_NONE,
+        project_conv_norm=CONV_NORM_NONE,
     ),
     fused=FusedMBConvStyle(
-        fused_conv_norm=ConvNorm(GROUP_NORM_ONE),
-        project_conv_norm=ConvNorm(GROUP_NORM_ONE),
+        fused_conv_norm=CONV_NORM_BATCH,
+        project_conv_norm=CONV_NORM_NONE,
     ),
-    stem=StemStyle(conv_norm=ConvNorm(GROUP_NORM_ONE, bias=True)),
-    head=HeadStyle(conv_norm=ConvNorm(GROUP_NORM_ONE)),
+    stem=StemStyle(conv_norm=CONV_NORM_BATCH),
+    head=HeadStyle(conv_norm=CONV_NORM_BATCH),
+)
+
+# Preset for NetStyle with fewer BatchNorms and GroupNorms for stem and head
+NET_EFBN_SHGN = NetStyle(
+    mbconv=MBConvStyle(
+        expand_conv_norm=CONV_NORM_BATCH,
+        depthwise_conv_norm=CONV_NORM_NONE,
+        project_conv_norm=CONV_NORM_NONE,
+    ),
+    fused=FusedMBConvStyle(
+        fused_conv_norm=CONV_NORM_BATCH,
+        project_conv_norm=CONV_NORM_NONE,
+    ),
+    stem=StemStyle(conv_norm=CONV_NORM_GROUP_BIAS),
+    head=HeadStyle(conv_norm=CONV_NORM_GROUP_BIAS),
+)
+
+
+def _create_net_style_sn_efbn_shgn(
+    depthwise_spectral_norm: Literal["matrix", "exact"],
+) -> NetStyle:
+    r"""Create a spectrally normalized style with fewer BatchNorms and GroupNorms.
+
+    Every block, the stem and the head normalize with BatchNorm at all positions
+    as the baseline network; Spectral normalization does not automatically
+    bind, and additional gradient penalties are required to bound inpu-output
+    gradients. Blocks average their residual sum (`skip_scale=0.5`)
+    and regularize with drop path (`dropout_mode="drop_path"`).
+
+    Args:
+        depthwise_spectral_norm: Spectral normalization of the depthwise
+            convolutions: `"matrix"` or `"exact"`.
+
+    Returns:
+        NetStyle: The style.
+    """
+    return NetStyle(
+        mbconv=MBConvStyle(
+            expand_conv_norm=CONV_NORM_BATCH,
+            depthwise_conv_norm=CONV_NORM_NONE,
+            project_conv_norm=CONV_NORM_NONE,
+            skip_scale=0.5,
+            depthwise_spectral_norm=depthwise_spectral_norm,
+        ),
+        fused=FusedMBConvStyle(
+            fused_conv_norm=CONV_NORM_BATCH,
+            project_conv_norm=CONV_NORM_NONE,
+            skip_scale=0.5,
+        ),
+        stem=StemStyle(conv_norm=CONV_NORM_GROUP_BIAS),
+        head=HeadStyle(conv_norm=CONV_NORM_GROUP_BIAS),
+        enable_spectral_norm=True,
+        dropout_mode="drop_path",
+    )
+
+
+# Presets for spectrally normalized NetStyles with BatchNorms and GroupNorms
+NET_SN_EFBN_SHGN = _create_net_style_sn_efbn_shgn(
+    depthwise_spectral_norm="matrix",
+)
+NET_EXACT_SN_EFBN_SHGN = _create_net_style_sn_efbn_shgn(
+    depthwise_spectral_norm="exact",
 )
 
 
@@ -488,7 +550,7 @@ def _create_net_style_sn_pre_gn(
     Returns:
         NetStyle: The style.
     """
-    pre_norm = partial(nn.GroupNorm, 1, eps=eps)
+    pre_norm = functools.partial(nn.GroupNorm, 1, eps=eps)
     return NetStyle(
         mbconv=MBConvStyle(
             pre_normalization=pre_norm,
@@ -511,7 +573,7 @@ def _create_net_style_sn_pre_gn(
     )
 
 
-# Presets for spectrally-normalized NetStyles with pytorch's default "matrix" SN
+# Presets for spectrally normalized NetStyles with "matrix" SN (torch build-in)
 NET_SN_PRE_GN = _create_net_style_sn_pre_gn(
     eps=1e-5,
     depthwise_spectral_norm="matrix",
@@ -521,12 +583,12 @@ NET_SN_FLOORED_PRE_GN = _create_net_style_sn_pre_gn(
     depthwise_spectral_norm="matrix",
 )
 
-# Presets for spectrally-normalized NetStyles with "exact" SN
-NET_EXACT_DW_SN_PRE_GN = _create_net_style_sn_pre_gn(
+# Presets for spectrally normalized NetStyles with "exact" SN
+NET_EXACT_SN_PRE_GN = _create_net_style_sn_pre_gn(
     eps=1e-5,
     depthwise_spectral_norm="exact",
 )
-NET_EXACT_DW_SN_FLOORED_PRE_GN = _create_net_style_sn_pre_gn(
+NET_EXACT_SN_FLOORED_PRE_GN = _create_net_style_sn_pre_gn(
     eps=1e-4,
     depthwise_spectral_norm="exact",
 )
