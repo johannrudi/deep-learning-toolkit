@@ -63,7 +63,7 @@
 
 Developer documents:
 
-- file names are `YEAR.NN__<topic>__X-<tag>.md` with `NN` an integer starting at `01` incremented per document, `X` a counter for tags starting at `1`
+- file names are `YEAR.NNN__<topic>__X-<tag>.md` with `NNN` a three-digit integer starting at `001` incremented per topic, `X` a counter for tags starting at `1`
 - `docs/features` has documents about new features
 - `docs/migrations` has documents about migrations (e.g., build systems, docs generator, ...)
 - `docs/surveys` has literature surveys

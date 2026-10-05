@@ -5,7 +5,7 @@ description: Plan a new feature for this codebase and write the plan as a dated 
 
 # Feature planning workflow
 
-Produce a concise, executable plan document in `docs/features/`, following the process that worked for the DDP feature (`2026.002__ddp__1-plan.md`, whose Section 14 addendum records what this skill's improvements come from).
+Produce a concise, executable plan document in `docs/features/`.
 
 ## Target model tier
 
@@ -18,33 +18,33 @@ Nothing checks the result at the time it is written. The plan's `Base-Commit` le
 ## 1. Gather (do this in parallel, before designing anything)
 
 - **Base commit**: run `.agents/skills/plan-feature/scripts/plan_base.sh <files the plan edits>` once the inventory names them. It fails if those files have uncommitted changes; ask the user to commit them first. Record its `Base-Commit` in the frontmatter. If `published` is empty, tell the user that a rebase of the branch would drop the commit. If the code changes during planning and you refresh the anchors, rerun it and update the field. The rule: the plan's line numbers are valid at `Base-Commit`.
-- **Code to be extended**: build a file-by-file inventory with `file:line` touch points. Look specifically for: shared utilities vs duplicated scaffolds (duplication means changes must be mirrored), Protocols or signatures that mirror other functions (lockstep invariants), and *gaps* — missing inverse operations (e.g. save without load), missing tests, unused hooks. Gaps become plan items.
-- **With a user-provided consuming application** (e.g. `../neural_nets/mops_gan/`): find every call site into the toolkit and the arguments passed. This defines the migration contract — the plan must show what "small and obvious changes" look like on the caller's side.
+- **Code to be extended**: build a file-by-file inventory with `file:line` touch points. Look specifically for: shared utilities vs duplicated scaffolds (duplication means changes must be mirrored), Protocols or signatures that mirror other functions (lockstep invariants), and *gaps*: missing inverse operations (e.g. save without load), missing tests, unused hooks. Gaps become plan items.
+- **With a user-provided consuming application** (e.g. `../neural_nets/mops_gan/`): find every call site into the toolkit and the arguments passed. This defines the migration contract: the plan must show what "small and obvious changes" look like on the caller's side.
 - **External research** when a technology choice exists: prefer the option upstream actively maintains; capture the conclusion and why in the plan's Context (one short paragraph, not a survey).
 - **Repo conventions**: docs frontmatter (`Title/Author/Co-Authored-By/Date/Base-Commit`), test style in `tests/`, the quality gate (`make format`, `make lint`, `make test`, and `make test TESTS="<files>"` for specific tests), dependency version ranges in `pyproject.toml`, and `uv run` only for commands without a `make` target (e.g. the smoke run).
 
 ## 2. Decide
 
-- Separate decisions that are genuinely the user's (scope, tradeoffs, supported platforms) from ones derivable from the code. Ask the user's decisions early with, 2–4 questions, each with a recommended default marked "(Recommended)". Record the answers in the plan as "Settled design decisions".
+- Separate decisions that are genuinely the user's (scope, tradeoffs, supported platforms) from ones derivable from the code. Ask the user's decisions early, with around five questions, each with a recommended default marked "(Recommended)". Record the answers in the plan as "Settled design decisions".
 - Find and state a **core principle** that collapses many small decisions into one, for example, "zero signature changes; behavior auto-detected; existing usage provably unchanged". Derive its consequences explicitly (what therefore needs *no* changes).
 - Mid-session scope additions from the user are normal; fold them into the plan as first-class sections, not footnotes.
 
 ## 3. Write the plan document
 
-**Target file**: use the exact filename the user gives, verbatim — even if the date part looks inconsistent. Otherwise follow `docs/features/YYYY.ZZ__topic__N-kind.md` (example kinds relevant to this skill are plan and usage). Reserve `N+1` for a companion usage doc.
+**Target file**: use the exact filename the user gives, verbatim, even if the date part looks inconsistent. Otherwise follow `docs/features/YYYY.NNN__topic__N-kind.md` (example kinds relevant to this skill are plan and usage). Reserve `N+1` for a companion usage doc.
 
 **Structure**: (keep it scannable; only the recommended approach, no alternative surveys)
 
 1. Frontmatter: `Title/Author/Co-Authored-By/Date/Base-Commit` (full hash). `impl-feature` adds `Branch` later.
-2. **Context** — why the change, current state including gaps, research conclusion, settled design decisions, core principle.
-3. **Terminology** — short explanations of every piece of jargon the plan introduces. Write for a reader who has not used the technology.
-4. **Numbered per-file sections** — for edits to existing files, use a table of pre-change `file:line` targets (label them "pre-change lines"; they shift during implementation). Call out required correctness fixes separately from mechanical changes.
-5. **Application migration sketch** — a short code diff showing the consumer-side changes.
-6. **Tests** — always include: (a) *baseline regression tests written and green before any edits*, freezing current numeric behavior with fixed seeds; give them a `__main__` entry point that regenerates the frozen constants, and note the dependency version they were generated with; (b) a dedicated test for the single riskiest path, named as the ship gate.
-7. **Documentation** — the plan itself plus the `N+1` usage doc.
-8. **Unrelated improvements observed** — report-only list of cleanups noticed during exploration; never apply them silently.
-9. **Ordered implementation steps** — step 1 is writing the plan doc; regression tests come before code edits; out-of-repo follow-ups go last and are marked as such.
-10. **Verification** — the full quality gate *plus* a real end-to-end smoke run (actual launcher/entry point, not only unit tests); list manual checks that need hardware the dev machine lacks as explicitly pending.
+2. **Context**: why the change, current state including gaps, research conclusion, settled design decisions, core principle.
+3. **Terminology**: short explanations of every piece of jargon the plan introduces. Write for a reader who has not used the technology.
+4. **Numbered per-file sections**: for edits to existing files, use a table of pre-change `file:line` targets (label them "pre-change lines"; they shift during implementation). Call out required correctness fixes separately from mechanical changes.
+5. **Application migration sketch**: a short code diff showing the consumer-side changes.
+6. **Tests**: always include: (a) *baseline regression tests written and green before any edits*, freezing current numeric behavior with fixed seeds; give them a `__main__` entry point that regenerates the frozen constants, and note the dependency version they were generated with; (b) a dedicated test for the single riskiest path, named as the ship gate.
+7. **Documentation**: the plan itself plus the `N+1` usage doc.
+8. **Unrelated improvements observed**: report-only list of cleanups noticed during exploration; never apply them silently.
+9. **Ordered implementation steps**: step 1 is writing the plan doc; regression tests come before code edits; out-of-repo follow-ups go last and are marked as such.
+10. **Verification**: the full quality gate *plus* a real end-to-end smoke run (actual launcher/entry point, not only unit tests); list manual checks that need hardware the dev machine lacks as explicitly pending.
 11. **Risks / edge cases**.
 
 **Writing style**:
@@ -55,11 +55,11 @@ Nothing checks the result at the time it is written. The plan's `Base-Commit` le
 
 ## 4. After implementation: Addendum
 
-Append a final section "Addendum: deviations and findings during implementation" to the same plan doc. Record: API deprecations discovered (and the compat shims they forced), restructurings demanded by the type checker, version-pinned assumptions, test-infrastructure workarounds, the verification outcomes with test counts, and what remains pending. Plan for this section's existence from the start — it is what makes the document trustworthy later.
+Append a final section "Addendum: deviations and findings during implementation" to the same plan doc. Record: API deprecations discovered (and the compat shims they forced), restructurings demanded by the type checker, version-pinned assumptions, test-infrastructure workarounds, the verification outcomes with test counts, and what remains pending. Plan for this section's existence from the start, because it makes the document trustworthy later.
 
 ## Pitfalls learned
 
-- Line numbers in the plan are valid at `Base-Commit` and go stale the moment edits start; that is fine — they should only be search anchors, not addresses. Additional information in the text should be given so the anchors can be found after the implementation.
+- Line numbers in the plan are valid at `Base-Commit` and go stale the moment edits start; that is fine, since they serve as search anchors only. Additional information in the text should be given so the anchors can be found after the implementation.
 - Deprecation warnings during the smoke run are findings, not noise: resolve them with version-compatible shims when the dependency range spans the deprecation.
 - Frozen regression constants are machine/version-specific; the regeneration entry point is mandatory, not optional.
 - When tests spawn worker processes, force them onto the hardware-independent path (e.g. hide GPUs) so the suite passes on any machine.

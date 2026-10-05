@@ -79,7 +79,7 @@ Bullets keep the shape the draft gave them, `- <short sha> <scope>: <lowercase d
 
 **Changed files.** Leave this section alone. Paste nothing into it and edit nothing in it. Where a renamed file matters to a reader, say the old name in the Changelog bullet, because the histogram lists a renamed file under its new path only.
 
-Follow the voice from `.agents/skills/write-user-guide/SKILL.md`: concrete nouns, no en- and em-dashes, no "not X, but Y". Descriptions after the scope start lowercase and stay on one line, with no line wrap.
+Write with concrete nouns, no en- and em-dashes, and no "not X, but Y". Descriptions after the scope start lowercase and stay on one line, with no line wrap.
 
 ## 4. Check the result
 
