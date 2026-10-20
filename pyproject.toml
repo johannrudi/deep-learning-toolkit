@@ -51,6 +51,7 @@ dev = [
     "ipykernel>=6,<8",
     "isort>=5,<6",
     "pytest>=8,<9",
+    "zensical>=0.0.71",
 ]
 
 # Accelerator groups for PyTorch

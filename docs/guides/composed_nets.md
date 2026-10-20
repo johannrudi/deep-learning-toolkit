@@ -240,7 +240,7 @@ the vmapped split matches evaluating each replica in a loop
 
 ## Learn more
 
-- [2026.006__compose_nets__1-plan](2026.006__compose_nets__1-plan.md) for the design decisions behind the shape protocol, the two edge kinds, and the deviations found during implementation.
+- [2026.006__compose_nets__1-plan](../features/2026.006__compose_nets__1-plan.md) for the design decisions behind the shape protocol, the two edge kinds, and the deviations found during implementation.
 - [torch.vmap documentation] for what vectorized mapping traces and why it rejects writes into unbatched state.
 - `examples/nets/compose_conditional_gan.py` and `examples/nets/compose_replica_latents.py`, runnable end to end, for the two patterns this guide walks through.
 
