@@ -18,6 +18,7 @@ classifiers = [
 keywords = [
     "artificial intelligence",
     "deep learning",
+    "high-performance computing",
     "machine learning",
     "neural networks",
     "scientific computing",
@@ -25,7 +26,7 @@ keywords = [
 ]
 requires-python = ">=3.11"
 
-# Normal dependencies
+# Package dependencies
 dependencies = [
     "flow-matching>=1.0.10,<2",
     "matplotlib>=3,<4",
@@ -37,12 +38,17 @@ dependencies = [
     "typer>=0.27",
 ]
 
+# Optional dependencies
+#[project.optional-dependencies]
+#foo ["bar>=1.0.0"]
+
 # Development dependencies
 # (https://docs.astral.sh/uv/concepts/projects/dependencies/#development-dependencies)
 [dependency-groups]
 dev = [
     "basedpyright>=1.39,<2",
     "black[jupyter]>=25,<26",
+    "ipykernel>=6,<8",
     "isort>=5,<6",
     "pytest>=8,<9",
 ]
@@ -56,15 +62,6 @@ cu128 = ["torch>=2.11,<3"]
 cu130 = ["torch>=2.11,<3"]
 cu132 = ["torch>=2.11,<3"]
 xpu = ["torch>=2.11,<3", "triton-xpu"]
-
-# Published optional dependencies
-[project.optional-dependencies]
-diffusion = [
-    "flow-matching>=1.0.10,<2",
-]
-kde = [
-    "torch-kde>=0.1.5",
-]
 
 [project.urls]
 Homepage = "https://github.com/johannrudi/deep-learning-toolkit"
