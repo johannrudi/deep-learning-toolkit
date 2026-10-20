@@ -29,30 +29,19 @@ Network modules share a consistent activation-aware parameter initialization sch
 
 ### Runtime dependencies
 
+- `flow-matching` version `>=1.0.10,<2`
 - `matplotlib` version `>=3,<4`
 - `prettytable` version `>=3,<4`
 - `pyyaml` version `>=6,<7`
-- **`torch` version `>=2,<3`**
+- **`torch` version `>=2.11,<3`**
+- `torch-kde` version `>=0.1.5`
 - `tqdm` version `>=4,<5`
+- `typer` version `>=0.27`
 
 ### Install commands using `pip`
 
 ```sh
 pip install deep-learning-toolkit
-```
-
-#### Install with optional extras
-
-Dependencies for generative diffusion models:
-
-```sh
-pip install deep-learning-toolkit[diffusion]
-```
-
-Dependencies for kernel density estimation:
-
-```sh
-pip install deep-learning-toolkit[kde]
 ```
 
 ---
@@ -137,12 +126,6 @@ uv sync
 
 This creates `.venv` from the pinned versions in `uv.lock` and installs the default `dev` group, which covers formatting, linting, and testing.
 
-To additionally install the published extras:
-
-```sh
-uv sync --all-extras
-```
-
 #### Select a PyTorch build
 
 By default, `torch` resolves from PyPI, which serves CUDA-enabled wheels on Linux and CPU-only wheels on macOS and Windows. To choose a specific build, enable one of the accelerator dependency groups, for example the CPU-only one:
@@ -151,7 +134,7 @@ By default, `torch` resolves from PyPI, which serves CUDA-enabled wheels on Linu
 uv sync --group cpu
 ```
 
-The available groups are `cpu`, `cu126`, `cu128`, and `cu130`. Each points `torch` at the matching [PyTorch index](https://pytorch.org/get-started/locally/), and the default `dev` group is still installed alongside it.
+The available groups are `cpu`, `cu126`, `cu128`, `cu130`, `cu132`, and `xpu` (Intel GPUs). Each points `torch` at the matching [PyTorch index](https://pytorch.org/get-started/locally/), and the default `dev` group is still installed alongside it.
 
 The groups are declared as mutually exclusive, so enable at most one; combining them, including via `uv sync --all-groups`, is rejected. Dependency groups are not published in the package metadata, so `pip install deep-learning-toolkit` is unaffected by this configuration.
 

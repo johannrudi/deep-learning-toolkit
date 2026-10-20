@@ -5,7 +5,6 @@
 - use Python `>=3.11`
 - use `uv` version `>=0.12.1,<0.13`
 - run `uv sync` to create `.venv` and install the default `dev` dependency group
-- run `uv sync --all-extras` to also install the `diffusion` and `kde` extras
 - run `uv sync --group cpu` to install the CPU-only `torch` build; use `cu126`, `cu128`, `cu130`, or `cu132` for CUDA builds, or `xpu` for Intel GPUs
 - without an accelerator group, `torch` resolves from PyPI: CUDA on Linux, CPU on macOS and Windows
 - enable at most one accelerator group; they are declared in `tool.uv.conflicts` and `uv sync --all-groups` fails
