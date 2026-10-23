@@ -118,3 +118,32 @@ def test_kde_on_3d_grid_matches_histogram_bin_masses() -> None:
     assert float(l1_distance) < 0.50
 
     print(end="  ")
+
+
+def test_histogramdd_unit_weights_match_unweighted() -> None:
+    torch.manual_seed(2)
+    samples = torch.randn(1000, 2)
+
+    kwargs = dict(bin_counts=[8, 6], bin_ranges=[(-2.0, 2.0), (-2.0, 2.0)])
+    hist = utils.histogramdd(samples, to_mass=True, **kwargs)
+    hist_weighted = utils.histogramdd(
+        samples, to_mass=True, weights=torch.ones(1000), **kwargs
+    )
+
+    torch.testing.assert_close(hist_weighted, hist)
+
+
+def test_histogramdd_weights_scale_bin_masses() -> None:
+    samples = torch.tensor([[0.25], [0.75], [0.75]])
+    weights = torch.tensor([3.0, 0.5, 0.5])
+
+    hist = utils.histogramdd(
+        samples, bin_counts=2, bin_ranges=[(0.0, 1.0)], to_mass=True, weights=weights
+    )
+
+    torch.testing.assert_close(hist, torch.tensor([0.75, 0.25]))
+
+
+def test_histogramdd_rejects_weights_of_wrong_shape() -> None:
+    with pytest.raises(ValueError, match="weights"):
+        utils.histogramdd(torch.zeros(4, 1), weights=torch.ones(3))

@@ -199,6 +199,7 @@ def histogramdd(
     bin_ranges: LimitsLike = None,
     to_density: bool = False,
     to_mass: bool = False,
+    weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Estimate a normalized multidimensional histogram from samples.
 
@@ -208,17 +209,27 @@ def histogramdd(
         bin_ranges: Global `(min, max)` range or per-feature ranges.
         to_density: If `True`, return density values whose integral over the
             histogram domain is approximately 1.
-        to_mass: If `True`, divide the histogram output by `n_samples` so each
-            bin stores empirical probability mass.
+        to_mass: If `True`, divide the histogram output by `n_samples` (by the
+            sum of `weights` if given) so each bin stores empirical probability
+            mass.
+        weights: Optional non-negative weight per sample with shape
+            `(n_samples,)`. Each sample contributes its weight to its bin
+            instead of 1.
 
     Returns:
         Histogram density tensor with one axis per feature dimension.
 
     Raises:
-        ValueError: If samples, bin_counts, or bin_ranges are invalid.
+        ValueError: If samples, bin_counts, bin_ranges, or weights are invalid.
     """
     samples = as_floating_2d(samples=samples, name="samples")
     n_features = samples.shape[1]
+    if weights is not None:
+        if weights.shape != (samples.shape[0],):
+            raise ValueError(
+                f"weights must have shape ({samples.shape[0]},), got {tuple(weights.shape)}"
+            )
+        weights = weights.to(device=samples.device, dtype=samples.dtype)
 
     resolved_bin_counts = resolve_counts(
         counts=bin_counts,
@@ -237,9 +248,11 @@ def histogramdd(
         counts_are_intervals=True,
     )
 
-    hist, _ = torch.histogramdd(samples, bins=bin_edges, density=to_density)
+    hist, _ = torch.histogramdd(
+        samples, bins=bin_edges, weight=weights, density=to_density
+    )
     if to_mass:
-        hist = hist / samples.shape[0]
+        hist = hist / (samples.shape[0] if weights is None else weights.sum())
     return hist
 
 
