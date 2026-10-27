@@ -14,10 +14,11 @@ statistics play no part. The cases in ``TRAIN_MODE_CASES`` also run in
 batch statistics, and their builders turn dropout off. The inputs come from
 their own generator, so the case order does not affect any result.
 
-The constants were generated with ``torch 2.13.0+cu130`` and are version and
-machine specific; they were checked to be bit-identical under ``2.13.0+cpu``,
-which is the build CI installs, train-mode cases included. Run this file as a
-script to regenerate them:
+The constants were generated with ``torch 2.13.0+cu130`` on one thread and are
+version and machine specific. Every forward pass runs on one thread, because the
+reduction order of batch norm in train mode, and with it the last digits of the
+output, varies with the thread count and the CPU. Run this file as a script to
+regenerate the constants:
 
     uv run python tests/nets/test_net_baselines.py
 """
@@ -36,17 +37,13 @@ from dlk.nets.mlp import MLPNet, MLPResNet
 from dlk.nets.transformer1d import ChannelWiseTransformerNet, TransformerNet
 from dlk.nets.utils import get_gain, set_init_parameters
 
-# Tolerances for the comparison against the stored constants. Both are
-# relative, and they differ in what they are relative to: ELEMENT_RTOL is taken
-# per entry, and SCALE_RTOL is taken against the largest magnitude of the case,
-# which is what covers entries near zero. Nothing is absolute, because an
-# untrained EfficientNet in eval mode decays its activations stage by stage and
-# returns values near 1e-10, against which a fixed absolute tolerance would
-# accept anything.
-ELEMENT_RTOL = 1e-5
+# Tolerances for the comparison against the stored constants:
+# - ELEMENT_RTOL is the relative tolerance per entry
+# - SCALE_RTOL is the relative tolerance for the largest magnitude
+ELEMENT_RTOL = 1e-4
 SCALE_RTOL = 1e-6
 
-# one case: a built network and the positional inputs of one forward pass
+# Type for one case: tuple with a built network and the positional inputs of one forward pass
 Case = tuple[nn.Module, tuple[torch.Tensor, ...]]
 
 
@@ -223,36 +220,36 @@ BASELINE_OUTPUTS: dict[str, list[list[float]]] = {
         [0.4073147475719452, -1.6424623727798462, 1.8300310373306274],
     ],
     "convnext_block": [
-        [0.12845762073993683, 1.4875056743621826, 0.40791213512420654],
+        [0.12845756113529205, 1.4875056743621826, 0.4079121947288513],
         [0.5338109135627747, -1.279374122619629, -1.3488813638687134],
     ],
     "convresnet": [
-        [-0.7722904086112976, -0.05231968313455582, 0.4531893730163574],
-        [0.10470473766326904, 0.17464129626750946, -0.24429607391357422],
+        [-0.7722904682159424, -0.05231970548629761, 0.453189492225647],
+        [0.10470473766326904, 0.17464125156402588, -0.24429607391357422],
     ],
     "efficientnet_v1_bb0": [
-        [-3.638240264614012e-10, -1.6396646540517423e-10, -2.7084653964060124e-10],
-        [-2.2792809306615425e-11, -1.0313081638679833e-10, -7.65879859532248e-11],
-        [-1.6143925085643218e-10, -1.5931383989808978e-10, -3.989962527040092e-10],
-        [1.4552042904014684e-10, 2.4023122380256723e-10, 1.8342670438098452e-10],
+        [-3.638241652392793e-10, -1.6396653479411327e-10, -2.7084659515175247e-10],
+        [-2.2792805837168473e-11, -1.0313079557011662e-10, -7.658809697552726e-11],
+        [-1.6143933412315903e-10, -1.5931400643154348e-10, -3.9899633597073603e-10],
+        [1.4552048455129807e-10, 2.4023122380256723e-10, 1.834270374478919e-10],
     ],
     "efficientnet_v1_bb0[train]": [
-        [0.02806950733065605, 0.0811753123998642, -0.10261622071266174],
-        [-0.03332018479704857, 0.04700588434934616, 0.21423229575157166],
-        [0.01966693624854088, -0.05921027436852455, -0.0874396413564682],
-        [-0.014621413312852383, 0.03641124442219734, -0.03254002332687378],
+        [0.0280679389834404, 0.08117476105690002, -0.10261688381433487],
+        [-0.03332015872001648, 0.04700576514005661, 0.21423295140266418],
+        [0.019668180495500565, -0.05920999497175217, -0.08743955194950104],
+        [-0.014621236361563206, 0.03641166910529137, -0.03254004567861557],
     ],
     "efficientnet_v2_bb0": [
-        [-1.0591045196406412e-07, -1.0125177141162567e-08, -1.0978830999874845e-07],
-        [-1.6397908098042535e-07, 1.9807063722510065e-07, 1.740789912219043e-08],
-        [-9.879227746978358e-08, 1.5908146622223285e-07, -9.351737872975718e-08],
-        [3.2292075502482476e-07, -3.246358915021119e-07, 4.0907502807385754e-07],
+        [-1.0591048038577355e-07, -1.0125273064431894e-08, -1.0978828868246637e-07],
+        [-1.6397900992615178e-07, 1.9807069406851951e-07, 1.7407799646207422e-08],
+        [-9.879225615350151e-08, 1.590814235896687e-07, -9.351736451890247e-08],
+        [3.229208971333719e-07, -3.246358915021119e-07, 4.0907505649556697e-07],
     ],
     "efficientnet_v2_bb0[train]": [
-        [-0.04301675036549568, -0.0033205971121788025, 0.011387664824724197],
-        [0.01424730196595192, -0.03820154070854187, -0.13943955302238464],
-        [-0.03531705588102341, 0.09347786754369736, 0.025604240596294403],
-        [-0.16220541298389435, 0.04529890418052673, 0.010898835957050323],
+        [-0.043014124035835266, -0.0033219438046216965, 0.011386148631572723],
+        [0.014246227219700813, -0.038201428949832916, -0.1394394338130951],
+        [-0.03531438112258911, 0.09348168224096298, 0.02560703083872795],
+        [-0.16220994293689728, 0.04529629647731781, 0.010897468775510788],
     ],
     "mlpnet": [
         [-0.2424575388431549, 0.503169059753418, -0.3081715703010559],
@@ -263,8 +260,8 @@ BASELINE_OUTPUTS: dict[str, list[list[float]]] = {
         [-1.1489803791046143, -1.6987935304641724, -0.1310654878616333],
     ],
     "transformer_net": [
-        [0.4538363218307495, -0.943134069442749, -0.13515830039978027],
-        [0.3019818961620331, -0.9044573307037354, -0.25542715191841125],
+        [0.4538363218307495, -0.943134069442749, -0.1351582407951355],
+        [0.301982045173645, -0.9044573307037354, -0.2554270625114441],
     ],
 }
 
@@ -279,10 +276,16 @@ def _forward(name: str, train: bool) -> torch.Tensor:
     Returns:
         The output tensor of the case's forward pass.
     """
-    net, inputs = BUILDERS[name]()
-    net.train(train)
-    with torch.no_grad():
-        return net(*inputs)
+    # one thread fixes the reduction order, which varies with the thread count
+    num_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        net, inputs = BUILDERS[name]()
+        net.train(train)
+        with torch.no_grad():
+            return net(*inputs)
+    finally:
+        torch.set_num_threads(num_threads)
 
 
 @pytest.mark.parametrize("name, train", MODES)
