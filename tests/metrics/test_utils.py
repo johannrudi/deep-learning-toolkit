@@ -124,10 +124,20 @@ def test_histogramdd_unit_weights_match_unweighted() -> None:
     torch.manual_seed(2)
     samples = torch.randn(1000, 2)
 
-    kwargs = dict(bin_counts=[8, 6], bin_ranges=[(-2.0, 2.0), (-2.0, 2.0)])
-    hist = utils.histogramdd(samples, to_mass=True, **kwargs)
+    bin_counts = [8, 6]
+    bin_ranges = [(-2.0, 2.0), (-2.0, 2.0)]
+    hist = utils.histogramdd(
+        samples,
+        to_mass=True,
+        bin_counts=bin_counts,
+        bin_ranges=bin_ranges,
+    )
     hist_weighted = utils.histogramdd(
-        samples, to_mass=True, weights=torch.ones(1000), **kwargs
+        samples,
+        to_mass=True,
+        weights=torch.ones(1000),
+        bin_counts=bin_counts,
+        bin_ranges=bin_ranges,
     )
 
     torch.testing.assert_close(hist_weighted, hist)
