@@ -158,8 +158,9 @@ All make targets run their tools through `uv run`:
 
 - `make format`: run `isort` and `black` on `dlk/` and `tests/`
 - `make format-check`: check `isort` and `black` formatting without modifying files
-- `make lint`: run `basedpyright` on `dlk/` and `tests/`
-- `make compile`: run `python -m compileall -q -f` on `dlk/` and `tests/`
+- `make lint`: run `basedpyright` on `dlk/`, `tests/`, and `examples/`
+- `make compile`: run `python -m compileall -q -f` on `dlk/`, `tests/`, and `examples/`
+- `make license-check`: run `reuse lint` to check the SPDX copyright and license headers of all files
 - `make test`: run `pytest`
 - `make testq`: run `pytest -quiet`
 - `make testv`: run `pytest --verbose`
@@ -170,7 +171,7 @@ All test targets depend on the `compile` target.
 ### Building a distribution
 
 ```sh
-uv build --no-sources
+make build
 ```
 
 ---

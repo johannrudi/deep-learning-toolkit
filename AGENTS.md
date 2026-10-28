@@ -42,8 +42,8 @@ SPDX-License-Identifier: Apache-2.0
 - run `make version-patch` (or `version-minor`, `version-major`) to bump `project.version` in `pyproject.toml` and sync `CITATION.cff`
 - `uv version` also updates `uv.lock`; commit `pyproject.toml`, `uv.lock`, and `CITATION.cff` together
 - do not add a version to `dlk/__init__.py`; `__version__` is read from the installed package metadata
-- run `uvx cffconvert --validate` after editing `CITATION.cff`
-- run `uv build --no-sources` to build the sdist and wheel
+- run `make citation-check` to validate `CITATION.cff` after editing it
+- run `make build` to build the sdist and wheel
 - tag the release commit as `v{version}` and push the tag
 - publish by creating a GitHub release; `.github/workflows/release.yml` uploads to PyPI with trusted publishing
 

@@ -4,7 +4,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-#
 # Report the state of the repository relative to a plan: the branch, the plan's
 # base commit, the steps already committed, and which files the plan references
 # have changed since the plan was written.

@@ -4,7 +4,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-#
 # Print the changed-lines histograms for a release, ready to paste into
 # docs/releases/v<version>.md.
 #

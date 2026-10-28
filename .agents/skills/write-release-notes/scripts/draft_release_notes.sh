@@ -4,7 +4,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-#
 # Scaffold the release notes file, then check it once it is written.
 #
 # Usage:

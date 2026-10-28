@@ -22,6 +22,8 @@ PY_LINT          := uv run --no-sync basedpyright
 PY_COMPILE       := uv run --no-sync python -m compileall -q -f
 PY_TEST          := uv run --no-sync pytest
 PY_LICENSE_CHECK := uv run --no-sync reuse lint
+PY_CFF_CHECK     := uvx cffconvert --validate
+PY_BUILD         := uv build --no-sources
 PY_VERSION       := uv version --no-sync
 # bare version & no color codes (e.g., for a filename):
 PY_VERSION_READ  := NO_COLOR=1 $(PY_VERSION) --short
@@ -138,7 +140,7 @@ version-major: ## Bump the major version and sync the citation file
 	$(PY_VERSION) --bump major
 	@$(MAKE) --no-print-directory citation
 
-.PHONY: citation
+.PHONY: citation citation-check build
 
 # Releasing targets -----------------------------------------------------------
 
@@ -149,6 +151,12 @@ citation: ## Sync version and release date into CITATION.cff
 	$(SED) -i "s|^version: .*|version: \"$$version\"|" $(CITATION_FILE); \
 	$(SED) -i "s|^date-released: .*|date-released: \"$$date\"|" $(CITATION_FILE); \
 	echo "updated $(CITATION_FILE): version $$version, date-released $$date"
+
+citation-check: ## Validate CITATION.cff against the CFF schema
+	$(PY_CFF_CHECK) --infile $(CITATION_FILE)
+
+build: ## Build the sdist and wheel into dist/
+	$(PY_BUILD)
 
 .PHONY: release-body
 

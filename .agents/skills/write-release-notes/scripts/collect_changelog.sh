@@ -4,7 +4,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-#
 # Collect the release notes in docs/releases into two index pages, newest
 # release first:
 #
