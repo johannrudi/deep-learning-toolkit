@@ -103,6 +103,9 @@ cd "$(git rev-parse --show-toplevel)"
 # one source of truth for which version and range are in play
 eval "$("$script_dir/release_range.sh" --facts "$@")"
 
+# the copyright holder for the SPDX header; see docs/guides/dev/reuse.md
+SPDX_COPYRIGHT="2024-present Johann Rudi <jrudi@vt.edu>"
+
 # subject prefixes that state a kind of change rather than a place in the tree.
 # "Fix: ..." says nothing about scope, so the scope comes from the paths instead.
 TYPE_WORDS="fix|fixes|feat|feature|refactor|chore|test|tests|perf|style"
@@ -240,9 +243,15 @@ fi
 
 mkdir -p "$(dirname "$FILE")"
 
+# keep reuse from reading the SPDX header below as this script's own
+# REUSE-IgnoreStart
 {
     cat <<EOF
 ---
+# SPDX-FileCopyrightText: $SPDX_COPYRIGHT
+#
+# SPDX-License-Identifier: Apache-2.0
+
 Title: Release v$VERSION
 Author: $AUTHOR
 Co-Authored-By: TODO the model name when an agent wrote these notes, or delete this line
@@ -288,6 +297,7 @@ EOF
     echo
     "$script_dir/diffstat_histogram.sh" "$RANGE"
 } >"$FILE"
+# REUSE-IgnoreEnd
 
 cat <<EOF
 wrote $FILE

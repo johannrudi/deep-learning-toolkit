@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <!-- Generated from docs/releases by .agents/skills/write-release-notes/scripts/collect_changelog.sh -->
 <!-- Do not edit by hand; rerun that script after adding a release. -->
 

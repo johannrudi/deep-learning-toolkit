@@ -24,7 +24,7 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.11"]
-        target: [compile, format-check, lint, test]
+        target: [compile, format-check, lint, license-check, test]
     steps:
       # use pinned commits (https://docs.astral.sh/uv/guides/integration/github/)
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

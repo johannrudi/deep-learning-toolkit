@@ -13,10 +13,11 @@ TEST        := test
 
 # Python commands
 PY_FORMAT        := uv run --no-sync black
-PY_IMPORT_FORMAT := uv run --no-sync isort
+PY_FORMAT_IMPORT := uv run --no-sync isort
 PY_LINT          := uv run --no-sync basedpyright
 PY_COMPILE       := uv run --no-sync python -m compileall -q -f
 PY_TEST          := uv run --no-sync pytest
+PY_LICENSE_CHECK := uv run --no-sync reuse lint
 PY_VERSION       := uv version --no-sync
 # bare version & no color codes (e.g., for a filename):
 PY_VERSION_READ  := NO_COLOR=1 $(PY_VERSION) --short
@@ -48,37 +49,40 @@ help: ## Show this message
 
 # Format & static check targets -----------------------------------------------
 
-.PHONY: format format-check lint compile
+.PHONY: format format-check lint license-check compile
 
 format-check: ## Check isort and black formatting without modifying files
-	$(PY_IMPORT_FORMAT) --check $(PACKAGE_DIR)
+	$(PY_FORMAT_IMPORT) --check $(PACKAGE_DIR)
 	$(PY_FORMAT) --check $(PACKAGE_DIR)
 	@echo
-	$(PY_IMPORT_FORMAT) --check $(TESTS_DIR)
+	$(PY_FORMAT_IMPORT) --check $(TESTS_DIR)
 	$(PY_FORMAT) --check $(TESTS_DIR)
 	@echo
-	$(PY_IMPORT_FORMAT) --check $(EXAMPLES_DIR)
+	$(PY_FORMAT_IMPORT) --check $(EXAMPLES_DIR)
 	$(PY_FORMAT) --check $(EXAMPLES_DIR)
 
 format: ## Format Python files with isort and black
-	$(PY_IMPORT_FORMAT) $(PACKAGE_DIR)
+	$(PY_FORMAT_IMPORT) $(PACKAGE_DIR)
 	$(PY_FORMAT) $(PACKAGE_DIR)
 	@echo
-	$(PY_IMPORT_FORMAT) $(TESTS_DIR)
+	$(PY_FORMAT_IMPORT) $(TESTS_DIR)
 	$(PY_FORMAT) $(TESTS_DIR)
 	@echo
-	$(PY_IMPORT_FORMAT) $(EXAMPLES_DIR)
+	$(PY_FORMAT_IMPORT) $(EXAMPLES_DIR)
 	$(PY_FORMAT) $(EXAMPLES_DIR)
-
-compile: ## Compile Python files to catch syntax errors
-	$(PY_COMPILE) $(PACKAGE_DIR)
-	$(PY_COMPILE) $(TESTS_DIR)
-	$(PY_COMPILE) $(EXAMPLES_DIR)
 
 lint: ## Type-check and lint with basedpyright
 	$(PY_LINT) $(PACKAGE_DIR)
 	$(PY_LINT) $(TESTS_DIR)
 	$(PY_LINT) $(EXAMPLES_DIR)
+
+license-check: ## Check SPDX copyright and license information with reuse
+	$(PY_LICENSE_CHECK)
+
+compile: ## Compile Python files to catch syntax errors
+	$(PY_COMPILE) $(PACKAGE_DIR)
+	$(PY_COMPILE) $(TESTS_DIR)
+	$(PY_COMPILE) $(EXAMPLES_DIR)
 
 # Test targets ----------------------------------------------------------------
 
@@ -145,12 +149,13 @@ citation: ## Sync version and release date into CITATION.cff
 .PHONY: release-body
 
 # print the release notes of the current version without frontmatter and title,
-# which is the body of the GitHub release
+# which is the body of the GitHub release; match the full title, since the SPDX
+# header in the frontmatter also starts with "# "
 release-body: ## Print the current version's release notes for the GitHub release
 	@version=$$($(PY_VERSION_READ)); \
 	file=$(RELEASES_DIR)/v$$version.md; \
 	$(TEST) -f $$file || { echo "missing release notes: $$file" >&2; exit 1; }; \
-	$(SED) '1,/^# /d' $$file
+	$(SED) '1,/^# Release v/d' $$file
 
 # Cleaning targets ------------------------------------------------------------
 

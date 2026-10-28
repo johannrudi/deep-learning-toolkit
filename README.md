@@ -183,4 +183,6 @@ Citation metadata is provided in [`CITATION.cff`](CITATION.cff), which GitHub re
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [Apache License 2.0](LICENSE). Images are licensed under CC-BY-4.0, and example notebooks adapted from other projects keep the license of their source, as stated in each notebook. The license texts are in [`LICENSES/`](LICENSES/).
+
+Every file carries its copyright and license as an SPDX header following the [REUSE specification](https://reuse.software/spec/).

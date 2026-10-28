@@ -69,6 +69,9 @@ INDEX_FILE="$RELEASES_DIR/index.md"
 # from $0, so the output does not change with how the script was invoked
 SELF=".agents/skills/write-release-notes/scripts/collect_changelog.sh"
 
+# the copyright holder for the SPDX header; see docs/guides/dev/reuse.md
+SPDX_COPYRIGHT="2024-present Johann Rudi <jrudi@vt.edu>"
+
 mode="write"
 case "${1:-}" in
     --print) mode="print" ;;
@@ -152,8 +155,16 @@ entries() {
     done
 }
 
+# keep reuse from reading the SPDX headers below as this script's own
+# REUSE-IgnoreStart
 render_changelog() {
     cat <<EOF
+<!--
+SPDX-FileCopyrightText: $SPDX_COPYRIGHT
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 <!-- Generated from $RELEASES_DIR by $SELF -->
 <!-- Do not edit by hand; rerun that script after adding a release. -->
 
@@ -169,6 +180,10 @@ EOF
 render_index() {
     cat <<EOF
 ---
+# SPDX-FileCopyrightText: $SPDX_COPYRIGHT
+#
+# SPDX-License-Identifier: Apache-2.0
+
 Title: Releases
 tags:
   - release
@@ -186,6 +201,7 @@ histograms.
 EOF
     entries ""
 }
+# REUSE-IgnoreEnd
 
 case "$mode" in
     print)

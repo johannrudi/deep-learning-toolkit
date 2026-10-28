@@ -17,6 +17,7 @@
 - run `make format-check` to check `isort` and `black` formatting in `dlk`, `tests`, and `examples` without modifying files
 - run `make compile` to compile Python files in `dlk`, `tests`, and `examples`
 - run `make lint` to run `basedpyright` across `dlk`, `tests`, and `examples`
+- run `make license-check` to check SPDX copyright and license headers of all files with `reuse lint`
 - run `make test` to run `pytest` across the codebase
 - run `make testq` to run `pytest -q` across the codebase
 - run `make testv` to run `pytest -v` across the codebase
@@ -25,7 +26,7 @@
 
 ## CI
 
-- `.github/workflows/ci.yml` runs `make compile`, `make format-check`, `make lint`, and `make test` on Python 3.11
+- `.github/workflows/ci.yml` runs `make compile`, `make format-check`, `make lint`, `make license-check`, and `make test` on Python 3.11
 - CI sets `UV_LOCKED=1`; a stale `uv.lock` fails the build
 - CI runs `uv sync --group cpu` and sets `UV_NO_SYNC=1`, so `uv run` in the Makefile reuses that environment
 
@@ -39,6 +40,10 @@
 - run `uv build --no-sources` to build the sdist and wheel
 - tag the release commit as `v{version}` and push the tag
 - publish by creating a GitHub release; `.github/workflows/release.yml` uploads to PyPI with trusted publishing
+
+## Licensing
+
+- add an SPDX header to every new file with `uv run reuse annotate`; `docs/guides/dev/reuse.md` gives the license per file type and the exceptions
 
 ## Git
 
