@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Regression tests freezing single-process loss trajectories of the train loops.
 
 The expected values below were generated with this file's `__main__` entry point

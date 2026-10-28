@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 #
 # Work out which version is being written up, which commit range it covers, and
 # print that range's commits. Run it with no argument and read the output.

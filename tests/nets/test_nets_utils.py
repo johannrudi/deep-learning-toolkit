@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for the layer initialization in `dlk.nets.utils`."""
 
 import pytest

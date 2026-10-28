@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 name: plan-feature
 description: Plan a new feature for this codebase and write the plan as a dated document in docs/features/. Use when the user asks to plan, design, or scope a feature or extension (e.g. "let's plan X", "write a plan for Y", "we will work on extending Z").
 ---

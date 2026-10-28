@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Draw several latent samples per observation from a composed generator.
 
 An application that draws replicas evaluates the generator once per latent

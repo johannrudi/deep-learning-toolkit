@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Utility helpers for typing, checkpoint I/O, and training-loop performance helpers."""
 
 import math

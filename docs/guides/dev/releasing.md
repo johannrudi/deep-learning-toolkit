@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 Title: Releasing a New Version to PyPI and Zenodo
 Author: Johann Rudi
 Co-Authored-By: Oz, Claude Opus 5, Claude Sonnet 5

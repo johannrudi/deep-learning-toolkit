@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 name: write-config-dataclass
 description: Write a typed config dataclass that holds the arguments for one torch constructor, resolving machine-dependent ones automatically. Use when the user asks to wrap a torch class or function in a config, to stop repeating the same argument set across scripts, or to pick parameters like num_workers or pin_memory automatically.
 ---

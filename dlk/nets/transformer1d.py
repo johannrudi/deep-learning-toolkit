@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """1D transformer networks for sequence modeling with optional channel-wise attention."""
 
 import math

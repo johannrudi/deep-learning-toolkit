@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for `dlk.opt.train_gan` training loops under a 2-process gloo group."""
 
 from typing import Any

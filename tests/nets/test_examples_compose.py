@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Run the composition examples as smoke tests.
 
 The examples in `examples/nets/` are the end-to-end exercise of

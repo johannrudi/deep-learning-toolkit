@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for the finite-difference gradient penalties in `dlk.loss.gradient_penalty`."""
 
 import math

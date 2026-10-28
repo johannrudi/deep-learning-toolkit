@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 r"""Provide spectral norm regularization of network weights.
 
 For every weighted layer :math:`l` with weight :math:`W_l` reshaped to a

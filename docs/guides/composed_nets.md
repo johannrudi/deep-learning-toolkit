@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 Title: Composing Existing Networks into a Directed Acyclic Graph
 Author: Johann Rudi
 Co-Authored-By: Claude Sonnet 5

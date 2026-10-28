@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """EfficientNet-inspired 1D convolutional network for time-series classification.
 
 EfficientNet stacks inverted-bottleneck blocks into stages between a stem and a

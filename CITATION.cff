@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata from this file."
 title: "Deep Learning Toolkit: Reusable PyTorch building blocks for artificial intelligence and scientific machine learning"

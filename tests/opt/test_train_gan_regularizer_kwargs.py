@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Tests for the mandatory `d_outputs_gen`/`d_outputs_data` keywords and `autocast_d_reg_fn` in `dlk.opt.train_gan`."""
 
 import functools

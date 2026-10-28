@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import torch
 
 from dlk.nets.transformer1d import ChannelWiseTransformerNet, TransformerNet

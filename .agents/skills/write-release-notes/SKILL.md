@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 name: write-release-notes
 description: Write the release notes for a version of the Deep Learning Toolkit as a changelog page in docs/releases/, which also becomes the GitHub release body. Use when the user asks for release notes, a changelog entry, or a summary of what changed in a version, and whenever a release is being prepared following docs/guides/dev/releasing.md.
 ---

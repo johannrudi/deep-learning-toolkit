@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import os
 from dataclasses import InitVar, dataclass, field, fields
 from typing import Any, Optional

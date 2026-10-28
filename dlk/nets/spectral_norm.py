@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Provide spectral normalization helpers for weighted layers.
 
 See ``docs/features/2026.010__efficientnet_arch_mod__2-plan.md`` (decisions 11

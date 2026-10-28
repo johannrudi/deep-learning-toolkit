@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 Title: Choosing a Normalization Layer for 1D Convolutional Networks
 Author: Johann Rudi
 Co-Authored-By: Claude Opus 5.5

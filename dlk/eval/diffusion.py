@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Forward solvers to sample from flow matching diffusion models."""
 
 from typing import Any, Callable, Sequence, Tuple, Union

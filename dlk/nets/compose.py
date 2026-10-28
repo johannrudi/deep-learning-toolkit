@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Compose already-built networks into a directed acyclic graph.
 
 Composition here is wiring and nothing else: a node is a network the caller has

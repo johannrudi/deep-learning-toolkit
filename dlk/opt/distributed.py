@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Building blocks for distributed data-parallel (DDP) training with torchrun.
 
 Launch with torchrun (primary path), which sets the environment variables

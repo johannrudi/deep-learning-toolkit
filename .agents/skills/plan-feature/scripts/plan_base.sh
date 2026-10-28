@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 #
 # Report the commit a plan is written against, for its Base-Commit field. The
 # plan's pre-change line numbers are valid at this commit, and impl-feature

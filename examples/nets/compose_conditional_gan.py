@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Train a conditional GAN whose generator is a composed network.
 
 The generator is the motivating case of `dlk.nets.compose`: a convolutional

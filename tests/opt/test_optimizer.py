@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for the optimizer configs in `dlk.opt.optimizer`."""
 
 import dataclasses

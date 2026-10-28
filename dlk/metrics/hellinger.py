@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 r"""Compute Hellinger distances using histograms and kernel density estimation.
 
 The Hellinger distance (https://en.wikipedia.org/wiki/Hellinger_distance) is defined as

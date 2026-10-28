@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Regression tests freezing the autograd gradient penalty in `dlk.loss.gradient_penalty`.
 
 The expected values below were generated with this file's `__main__` entry point

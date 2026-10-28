@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 Title: Diagnosing PyTorch CPU Multithreading Behavior
 Author: Johann Rudi
 Co-Authored-By: Claude Fable 5 and Claude Opus 5

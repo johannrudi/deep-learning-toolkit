@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Provide helper utilities for histogram, KDE, and distance metrics."""
 
 from collections.abc import Sequence

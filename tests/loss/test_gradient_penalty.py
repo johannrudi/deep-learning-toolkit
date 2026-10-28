@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for the autograd gradient penalty in `dlk.loss.gradient_penalty`."""
 
 import copy

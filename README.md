@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Deep Learning Toolkit
 
 <!-- NOTE: github badges work with private repos -->

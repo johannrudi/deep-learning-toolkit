@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Implementer brief: plan <id>, steps <N-M>
 
 <Fill every `<placeholder>`, then save the result verbatim as `brief.md` and pass it as the agent's prompt. Delete this paragraph and any section that does not apply.>

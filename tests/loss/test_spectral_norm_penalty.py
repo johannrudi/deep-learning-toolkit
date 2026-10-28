@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Unit tests for `SpectralNormPenalty` in `dlk.loss.spectral_penalty`."""
 
 from collections.abc import Callable

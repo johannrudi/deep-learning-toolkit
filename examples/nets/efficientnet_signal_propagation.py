@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Plot signal propagation through the 1D EfficientNet presets at initialization.
 
 A signal propagation plot [Brock et al., 2021a] follows the residual stream

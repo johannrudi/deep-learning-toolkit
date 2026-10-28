@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Verifier prompt: plan <id>, steps <N-M>
 
 <Fill every `<placeholder>` and pass the result as the agent's prompt. Delete this paragraph.>

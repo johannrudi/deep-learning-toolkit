@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 r"""Estimate Lipschitz constants of the 1D EfficientNet presets from below.
 
 The inputs are sums of radial basis functions in time,

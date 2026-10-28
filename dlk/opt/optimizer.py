@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Build optimizers from typed argument sets."""
 
 from dataclasses import InitVar, dataclass, field, fields

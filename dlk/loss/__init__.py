@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 from dlk.loss.hinge_gan import hinge_loss_fn
 from dlk.loss.least_squares_gan import least_squares_loss_fn
 from dlk.loss.wasserstein_gan import wasserstein_loss_fn

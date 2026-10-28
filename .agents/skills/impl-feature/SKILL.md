@@ -1,4 +1,8 @@
 ---
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 name: impl-feature
 description: Implement a feature plan from docs/features/ in bundles of steps, with an implementer, a verifier, and a simplifier agent per bundle and one commit per bundle. Use when the user asks to implement, execute, or carry out a plan written with plan-feature (e.g. "implement the plan", "let's implement 2026.008", "start on the gradient penalties plan").
 ---

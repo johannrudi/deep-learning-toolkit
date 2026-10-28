@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Define multilayer perceptron architectures, including residual and attention-based variants."""
 
 from collections import OrderedDict

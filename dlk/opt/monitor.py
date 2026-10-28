@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Per-batch/per-epoch training logs: Welford mean/std, cross-rank combining, and
 end-of-run summary statistics.
 """

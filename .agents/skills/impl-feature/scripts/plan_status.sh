@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 #
 # Report the state of the repository relative to a plan: the branch, the plan's
 # base commit, the steps already committed, and which files the plan references

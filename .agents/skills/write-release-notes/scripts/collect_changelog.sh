@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 #
 # Collect the release notes in docs/releases into two index pages, newest
 # release first:
@@ -71,6 +76,9 @@ SELF=".agents/skills/write-release-notes/scripts/collect_changelog.sh"
 
 # the copyright holder for the SPDX header; see docs/guides/dev/reuse.md
 SPDX_COPYRIGHT="2024-present Johann Rudi <jrudi@vt.edu>"
+# the tag prefix, kept apart from the tag names so that reuse does not read the
+# header written below as this script's own
+SPDX="SPDX-"
 
 mode="write"
 case "${1:-}" in
@@ -155,14 +163,12 @@ entries() {
     done
 }
 
-# keep reuse from reading the SPDX headers below as this script's own
-# REUSE-IgnoreStart
 render_changelog() {
     cat <<EOF
 <!--
-SPDX-FileCopyrightText: $SPDX_COPYRIGHT
+${SPDX}FileCopyrightText: $SPDX_COPYRIGHT
 
-SPDX-License-Identifier: Apache-2.0
+${SPDX}License-Identifier: Apache-2.0
 -->
 
 <!-- Generated from $RELEASES_DIR by $SELF -->
@@ -180,9 +186,9 @@ EOF
 render_index() {
     cat <<EOF
 ---
-# SPDX-FileCopyrightText: $SPDX_COPYRIGHT
+# ${SPDX}FileCopyrightText: $SPDX_COPYRIGHT
 #
-# SPDX-License-Identifier: Apache-2.0
+# ${SPDX}License-Identifier: Apache-2.0
 
 Title: Releases
 tags:
@@ -201,7 +207,6 @@ histograms.
 EOF
     entries ""
 }
-# REUSE-IgnoreEnd
 
 case "$mode" in
     print)

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Freeze the forward output of every composable network in ``dlk/nets``.
 
 The networks here are the ones that gain shape accessors when composition lands

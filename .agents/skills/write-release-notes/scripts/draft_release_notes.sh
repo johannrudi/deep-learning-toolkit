@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 #
 # Scaffold the release notes file, then check it once it is written.
 #
@@ -105,6 +110,9 @@ eval "$("$script_dir/release_range.sh" --facts "$@")"
 
 # the copyright holder for the SPDX header; see docs/guides/dev/reuse.md
 SPDX_COPYRIGHT="2024-present Johann Rudi <jrudi@vt.edu>"
+# the tag prefix, kept apart from the tag names so that reuse does not read the
+# header written below as this script's own
+SPDX="SPDX-"
 
 # subject prefixes that state a kind of change rather than a place in the tree.
 # "Fix: ..." says nothing about scope, so the scope comes from the paths instead.
@@ -243,14 +251,12 @@ fi
 
 mkdir -p "$(dirname "$FILE")"
 
-# keep reuse from reading the SPDX header below as this script's own
-# REUSE-IgnoreStart
 {
     cat <<EOF
 ---
-# SPDX-FileCopyrightText: $SPDX_COPYRIGHT
+# ${SPDX}FileCopyrightText: $SPDX_COPYRIGHT
 #
-# SPDX-License-Identifier: Apache-2.0
+# ${SPDX}License-Identifier: Apache-2.0
 
 Title: Release v$VERSION
 Author: $AUTHOR
@@ -297,7 +303,6 @@ EOF
     echo
     "$script_dir/diffstat_histogram.sh" "$RANGE"
 } >"$FILE"
-# REUSE-IgnoreEnd
 
 cat <<EOF
 wrote $FILE

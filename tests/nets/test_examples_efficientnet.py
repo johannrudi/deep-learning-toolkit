@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Run the EfficientNet examples as smoke tests.
 
 Each example is run as a subprocess, the way a reader runs it, with a

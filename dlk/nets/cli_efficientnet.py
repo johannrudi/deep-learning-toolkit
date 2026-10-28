@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Command-line inspection tool for EfficientNet1D stage configs and parameter counts."""
 
 import inspect
