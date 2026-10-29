@@ -22,6 +22,7 @@ Every file states its copyright holder and license in an SPDX header, following 
 | Files | License |
 |---|---|
 | Everything not listed below: code, documentation, configuration | `Apache-2.0` |
+| `Makefile`, shared with other repositories | `CC0-1.0` |
 | Images in `docs/images/` | `CC-BY-4.0` |
 | `examples/opt/diffusion_flow_matching_2d_checkerboard.ipynb`, adapted from [facebookresearch/flow_matching] | `CC-BY-NC-4.0` |
 

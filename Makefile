@@ -1,181 +1,170 @@
 # SPDX-FileCopyrightText: 2024-present Johann Rudi <jrudi@vt.edu>
 #
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: CC0-1.0
 
-# Makefile for this package
+# Makefile for a uv-managed Python package
 #
 # Author: Johann Rudi <jrudi@vt.edu>
 #
-# Run 'make help' to list available targets.
+# Run 'make help' to list available targets. Adapt the settings to the project;
+# the targets need no changes.
 
-# Shell programs
-RM          := rm -rf
-RSYNC       := rsync -aiz
-RSYNC_LOCAL := rsync -ai
-SED         := sed
-TEST        := test
+# Settings --------------------------------------------------------------------
 
-# Python commands
-PY_FORMAT        := uv run --no-sync black
-PY_FORMAT_IMPORT := uv run --no-sync isort
-PY_LINT          := uv run --no-sync basedpyright
-PY_COMPILE       := uv run --no-sync python -m compileall -q -f
-PY_TEST          := uv run --no-sync pytest
-PY_LICENSE_CHECK := uv run --no-sync reuse lint
-PY_CFF_CHECK     := uvx cffconvert --validate
-PY_BUILD         := uv build --no-sources
-PY_VERSION       := uv version --no-sync
-# bare version & no color codes (e.g., for a filename):
-PY_VERSION_READ  := NO_COLOR=1 $(PY_VERSION) --short
+# set the directories with Python files to format, lint, compile, and clean
+PY_DIRS := src/dlk tests examples
 
-# Documentation generator commands
-DOCS_BUILD := uv run --no-sync zensical build
-DOCS_SERVE := uv run --no-sync zensical serve
+# set the directory with the benchmarks, which 'make test' does not run
+BENCH_DIR := benchmarks
 
-# set directories
-PACKAGE_DIR  := src/dlk
-TESTS_DIR    := tests
-EXAMPLES_DIR := examples
-RELEASES_DIR := docs/releases
-SITE_DIR     := site
-SITE_DEST    := _TODO_
+# set the citation file to sync on version bumps; a missing file skips the sync
+CITATION_FILE := CITATION.cff
 
-# set the tests to run; empty runs all (e.g., make test TESTS="tests/loss/test_x.py::test_y")
+# set the release notes of the current version
+# (use '=' instead of ':=' to read the version only when needed)
+RELEASE_NOTES = docs/releases/v$(VERSION).md
+
+# set the regex of the release notes' title; 'release-body' prints what follows
+# (write '#' as '\#')
+RELEASE_NOTES_TITLE := ^\# Release v
+
+# set the files and directories to remove with 'make clean'
+CLEAN_FILES := site dist .pytest_cache
+
+# set the files and directories to remove with 'make distclean', besides those
+# of 'make clean'
+DISTCLEAN_FILES := .venv
+
+# set the tests to run; empty runs all
+# (e.g., make test TESTS="tests/loss/test_x.py::test_y")
 TESTS ?=
 
-# set files
-CITATION_FILE := CITATION.cff
+# Commands --------------------------------------------------------------------
+
+# skip syncing so 'uv run' keeps the groups chosen at 'uv sync'
+UV_RUN        := uv run --no-sync
+ISORT         := $(UV_RUN) isort
+BLACK         := $(UV_RUN) black
+LINT          := $(UV_RUN) basedpyright
+COMPILE       := $(UV_RUN) python -m compileall -q
+PYTEST        := $(UV_RUN) pytest
+LICENSE_CHECK := $(UV_RUN) reuse lint
+DOCS          := $(UV_RUN) zensical
+CFF           := uvx cffconvert --validate
+BUILD         := uv build --no-sources
+UV_VERSION    := uv version --no-sync
+# bare version & no color codes (e.g., for a filename)
+VERSION = $(shell NO_COLOR=1 $(UV_VERSION) --short)
+
+SED := sed
+RM  := rm -rf
+
+.DEFAULT_GOAL := help
+MAKEFLAGS += --no-print-directory
 
 # Help target -----------------------------------------------------------------
 
 .PHONY: help
 
 help: ## Show this message
-	@grep -E '^[a-zA-Z0-9_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-22s %s\n", $$1, $$2}'
 
 # Format & static check targets -----------------------------------------------
 
 .PHONY: format format-check lint license-check compile
 
-format-check: ## Check isort and black formatting without modifying files
-	$(PY_FORMAT_IMPORT) --check $(PACKAGE_DIR)
-	$(PY_FORMAT) --check $(PACKAGE_DIR)
-	@echo
-	$(PY_FORMAT_IMPORT) --check $(TESTS_DIR)
-	$(PY_FORMAT) --check $(TESTS_DIR)
-	@echo
-	$(PY_FORMAT_IMPORT) --check $(EXAMPLES_DIR)
-	$(PY_FORMAT) --check $(EXAMPLES_DIR)
-
 format: ## Format Python files with isort and black
-	$(PY_FORMAT_IMPORT) $(PACKAGE_DIR)
-	$(PY_FORMAT) $(PACKAGE_DIR)
-	@echo
-	$(PY_FORMAT_IMPORT) $(TESTS_DIR)
-	$(PY_FORMAT) $(TESTS_DIR)
-	@echo
-	$(PY_FORMAT_IMPORT) $(EXAMPLES_DIR)
-	$(PY_FORMAT) $(EXAMPLES_DIR)
+	$(ISORT) $(PY_DIRS)
+	$(BLACK) $(PY_DIRS)
+
+format-check: ## Check isort and black formatting without modifying files
+	$(ISORT) --check $(PY_DIRS)
+	$(BLACK) --check $(PY_DIRS)
 
 lint: ## Type-check and lint with basedpyright
-	$(PY_LINT) $(PACKAGE_DIR)
-	$(PY_LINT) $(TESTS_DIR)
-	$(PY_LINT) $(EXAMPLES_DIR)
+	$(LINT) $(PY_DIRS)
 
 license-check: ## Check SPDX copyright and license information with reuse
-	$(PY_LICENSE_CHECK)
+	$(LICENSE_CHECK)
 
 compile: ## Compile Python files to catch syntax errors
-	$(PY_COMPILE) $(PACKAGE_DIR)
-	$(PY_COMPILE) $(TESTS_DIR)
-	$(PY_COMPILE) $(EXAMPLES_DIR)
+	$(COMPILE) $(PY_DIRS)
 
 # Test targets ----------------------------------------------------------------
 
-.PHONY: test testq testv testvv
+.PHONY: test testq testv testvv bench
 
-test: compile ## Run pytest (select with TESTS="<files or node ids>")
-	@$(PY_TEST) $(TESTS)
+test:   ## Run pytest (select with TESTS="<files or node ids>")
+testq:  ## Run pytest quietly
+testv:  ## Run pytest verbosely
+testvv: ## Run pytest verbosely and show captured output
 
-testq: compile ## Run pytest quietly
-	@$(PY_TEST) --quiet $(TESTS)
+testq:  PYTEST_FLAGS := --quiet
+testv:  PYTEST_FLAGS := --verbose
+testvv: PYTEST_FLAGS := --verbose --capture=no
 
-testv: compile ## Run pytest verbosely
-	@$(PY_TEST) --verbose $(TESTS)
+test testq testv testvv:
+	$(PYTEST) $(PYTEST_FLAGS) $(TESTS)
 
-testvv: compile ## Run pytest verbosely and show captured output
-	@$(PY_TEST) --verbose --capture=no $(TESTS)
+bench: ## Run the benchmarks (e.g., PYTEST_FLAGS=--benchmark-autosave)
+	$(PYTEST) $(PYTEST_FLAGS) $(BENCH_DIR)
 
 # Documentation targets -------------------------------------------------------
 
-.PHONY: docs publish serve
+.PHONY: docs serve
 
 docs: ## Build the documentation site
-	$(DOCS_BUILD)
-
-publish: docs ## Build and rsync the documentation site to the remote host
-	@printf "\n"
-	$(RSYNC) --delete $(SITE_DIR)/ $(SITE_DEST)/
-	@printf "\n"
+	$(DOCS) build
 
 serve: ## Serve the documentation site locally
-	$(DOCS_SERVE)
+	$(DOCS) serve
 
 # Versioning targets ----------------------------------------------------------
 
 .PHONY: version version-patch version-minor version-major
 
 version: ## Print the current package version
-	@$(PY_VERSION_READ)
+	@echo $(VERSION)
 
 version-patch: ## Bump the patch version and sync the citation file
-	$(PY_VERSION) --bump patch
-	@$(MAKE) --no-print-directory citation
-
 version-minor: ## Bump the minor version and sync the citation file
-	$(PY_VERSION) --bump minor
-	@$(MAKE) --no-print-directory citation
-
 version-major: ## Bump the major version and sync the citation file
-	$(PY_VERSION) --bump major
-	@$(MAKE) --no-print-directory citation
 
-.PHONY: citation citation-check build
+version-patch version-minor version-major:
+	$(UV_VERSION) --bump $(@:version-%=%)
+	@test ! -f $(CITATION_FILE) || $(MAKE) citation
 
 # Releasing targets -----------------------------------------------------------
 
-# sync the version and release date into the citation metadata
-citation: ## Sync version and release date into CITATION.cff
-	@version=$$($(PY_VERSION_READ)); \
-	date=$$(date -u +%F); \
-	$(SED) -i "s|^version: .*|version: \"$$version\"|" $(CITATION_FILE); \
-	$(SED) -i "s|^date-released: .*|date-released: \"$$date\"|" $(CITATION_FILE); \
-	echo "updated $(CITATION_FILE): version $$version, date-released $$date"
+.PHONY: citation citation-check build release-body
 
-citation-check: ## Validate CITATION.cff against the CFF schema
-	$(PY_CFF_CHECK) --infile $(CITATION_FILE)
+citation: ## Sync version and release date into the citation file
+	@$(SED) -i.bak \
+		-e 's|^version: .*|version: "$(VERSION)"|' \
+		-e "s|^date-released: .*|date-released: \"$$(date -u +%F)\"|" \
+		$(CITATION_FILE) && $(RM) $(CITATION_FILE).bak
+	@grep -E '^(version|date-released):' $(CITATION_FILE)
+
+citation-check: ## Validate the citation file against the CFF schema
+	$(CFF) --infile $(CITATION_FILE)
 
 build: ## Build the sdist and wheel into dist/
-	$(PY_BUILD)
-
-.PHONY: release-body
+	$(BUILD)
 
 # print the release notes of the current version without frontmatter and title,
 # which is the body of the GitHub release; match the full title, since the SPDX
 # header in the frontmatter also starts with "# "
 release-body: ## Print the current version's release notes for the GitHub release
-	@version=$$($(PY_VERSION_READ)); \
-	file=$(RELEASES_DIR)/v$$version.md; \
-	$(TEST) -f $$file || { echo "missing release notes: $$file" >&2; exit 1; }; \
-	$(SED) '1,/^# Release v/d' $$file
+	@test -f $(RELEASE_NOTES) || { echo "missing release notes: $(RELEASE_NOTES)" >&2; exit 1; }
+	@$(SED) '1,/$(RELEASE_NOTES_TITLE)/d' $(RELEASE_NOTES)
 
 # Cleaning targets ------------------------------------------------------------
 
 .PHONY: clean distclean
 
-clean: ## Remove the built site, build output, and Python caches
-	$(RM) $(SITE_DIR) dist .pytest_cache
-	find $(PACKAGE_DIR) $(TESTS_DIR) $(EXAMPLES_DIR) -type d -name __pycache__ -prune -exec rm -rf {} +
+clean: ## Remove build output and Python caches
+	$(RM) $(CLEAN_FILES)
+	find $(PY_DIRS) -type d -name __pycache__ -prune -exec rm -rf {} +
 
 distclean: clean ## Remove everything clean does, plus the virtual environment
-	$(RM) .venv .basedpyright *.egg-info
+	$(RM) $(DISTCLEAN_FILES)

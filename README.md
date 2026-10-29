@@ -156,17 +156,17 @@ Continuous integration runs with `UV_LOCKED=1`, so a stale `uv.lock` fails the b
 
 All make targets run their tools through `uv run`:
 
-- `make format`: run `isort` and `black` on `src/dlk/` and `tests/`
+- `make format`: run `isort` and `black` on `src/dlk/`, `tests/`, and `examples/`
 - `make format-check`: check `isort` and `black` formatting without modifying files
 - `make lint`: run `basedpyright` on `src/dlk/`, `tests/`, and `examples/`
-- `make compile`: run `python -m compileall -q -f` on `src/dlk/`, `tests/`, and `examples/`
+- `make compile`: run `python -m compileall -q` on `src/dlk/`, `tests/`, and `examples/`
 - `make license-check`: run `reuse lint` to check the SPDX copyright and license headers of all files
 - `make test`: run `pytest`
-- `make testq`: run `pytest -quiet`
+- `make testq`: run `pytest --quiet`
 - `make testv`: run `pytest --verbose`
 - `make testvv`: run `pytest --verbose --capture=no`
 
-All test targets depend on the `compile` target.
+Select tests with `TESTS="<files or node ids>"` and pass extra `pytest` options with `PYTEST_FLAGS`, for example `make test TESTS=tests/test_mode.py PYTEST_FLAGS=-x`. The test targets do not run `compile`; run `make compile` on its own to check `examples/`, which the tests do not import.
 
 ### Building a distribution
 
