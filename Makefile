@@ -33,7 +33,7 @@ DOCS_BUILD := uv run --no-sync zensical build
 DOCS_SERVE := uv run --no-sync zensical serve
 
 # set directories
-PACKAGE_DIR  := dlk
+PACKAGE_DIR  := src/dlk
 TESTS_DIR    := tests
 EXAMPLES_DIR := examples
 RELEASES_DIR := docs/releases

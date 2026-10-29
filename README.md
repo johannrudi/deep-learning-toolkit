@@ -77,7 +77,7 @@ train_epochs(n_epochs=100, net=net, dataloader=..., optimizer=..., loss_fn=...)
 
 ## Architecture
 
-### Neural network architectures &rarr; `dlk/nets/`
+### Neural network architectures &rarr; `src/dlk/nets/`
 
 - `mlp.py`: Multilayer Perceptron (MLPNet, MLPNet_MultIn, MLPResNet with residual and attention blocks)
 - `autoencoder.py`: Generic autoencoder wrapper for encoder/decoder pairs
@@ -94,7 +94,7 @@ All network modules follow a consistent pattern:
 - `init_parameters()` uses Xavier initialization with gain calculated from activation functions
 - Utility functions `_get_gain()` and `_set_init_parameters()` handle activation-aware initialization
 
-### Training and optimization &rarr; `dlk/opt/`
+### Training and optimization &rarr; `src/dlk/opt/`
 
 - `train.py`: Training loops (`train_epochs`, `train_batches`) with checkpointing and validation hooks
 - `train_gan.py`: GAN-specific training loops
@@ -103,7 +103,7 @@ All network modules follow a consistent pattern:
 
 #### Logging of the training progress
 
-Training functions return a detailed logging dictionary (`TrainLog`, built by `dlk/opt/monitor.py`) containing:
+Training functions return a detailed logging dictionary (`TrainLog`, built by `src/dlk/opt/monitor.py`) containing:
 
 - Per-epoch loss statistics (`loss_mean`, `loss_std`), and per-epoch `time_step_mean`/`time_step_std`, one value per epoch
 - Raw per-epoch `time_step` tensors (one per epoch, from each epoch's batch-level log) collected in the `time_step` list, for pooling across epochs in `summary`
@@ -114,9 +114,9 @@ Training functions return a detailed logging dictionary (`TrainLog`, built by `d
 
 ### Additional components of the package
 
-- `dlk/mgmt/`: Management of configuration parameter loading/saving, logging, etc.
-- `dlk/loss/`: Loss functions
-- `dlk/metrics/`: Metrics for evaluating trained nets
+- `src/dlk/mgmt/`: Management of configuration parameter loading/saving, logging, etc.
+- `src/dlk/loss/`: Loss functions
+- `src/dlk/metrics/`: Metrics for evaluating trained nets
 
 ---
 
@@ -156,10 +156,10 @@ Continuous integration runs with `UV_LOCKED=1`, so a stale `uv.lock` fails the b
 
 All make targets run their tools through `uv run`:
 
-- `make format`: run `isort` and `black` on `dlk/` and `tests/`
+- `make format`: run `isort` and `black` on `src/dlk/` and `tests/`
 - `make format-check`: check `isort` and `black` formatting without modifying files
-- `make lint`: run `basedpyright` on `dlk/`, `tests/`, and `examples/`
-- `make compile`: run `python -m compileall -q -f` on `dlk/`, `tests/`, and `examples/`
+- `make lint`: run `basedpyright` on `src/dlk/`, `tests/`, and `examples/`
+- `make compile`: run `python -m compileall -q -f` on `src/dlk/`, `tests/`, and `examples/`
 - `make license-check`: run `reuse lint` to check the SPDX copyright and license headers of all files
 - `make test`: run `pytest`
 - `make testq`: run `pytest -quiet`

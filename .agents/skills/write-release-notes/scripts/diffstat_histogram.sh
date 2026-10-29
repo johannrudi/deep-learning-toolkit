@@ -28,15 +28,15 @@
 #   ### Library
 #
 #   ```text
-#   dlk/eval/diffusion.py       199  ████████████████████
-#   dlk/opt/scheduler.py         14  █░
-#   dlk/opt/train_gan.py         13  █░
-#   dlk/opt/train_diffusion.py   10  █░
-#   dlk/mgmt/parameters.py        8  █░
-#   dlk/opt/train.py              7  █░
-#   dlk/opt/utils.py              7  █░
-#   dlk/nets/diffusion.py         5  ░
-#   dlk/__init__.py               2  █░
+#   src/dlk/eval/diffusion.py       199  ████████████████████
+#   src/dlk/opt/scheduler.py         14  █░
+#   src/dlk/opt/train_gan.py         13  █░
+#   src/dlk/opt/train_diffusion.py   10  █░
+#   src/dlk/mgmt/parameters.py        8  █░
+#   src/dlk/opt/train.py              7  █░
+#   src/dlk/opt/utils.py              7  █░
+#   src/dlk/nets/diffusion.py         5  ░
+#   src/dlk/__init__.py               2  █░
 #   9 files, +232 -33
 #   ```
 #
@@ -59,7 +59,7 @@
 # wrapped in a colored span:
 #
 #   <pre>
-#   dlk/eval/diffusion.py  199  <span style="color:#2ea043">████████████████████</span>
+#   src/dlk/eval/diffusion.py  199  <span style="color:#2ea043">████████████████████</span>
 #   </pre>
 #
 # When a range touches a generated file, a footnote follows the last histogram:
@@ -69,7 +69,7 @@
 # Examples:
 #   .agents/skills/write-release-notes/scripts/diffstat_histogram.sh
 #   .agents/skills/write-release-notes/scripts/diffstat_histogram.sh v0.4.1..HEAD
-#   .agents/skills/write-release-notes/scripts/diffstat_histogram.sh v0.4.1..HEAD -- dlk/opt
+#   .agents/skills/write-release-notes/scripts/diffstat_histogram.sh v0.4.1..HEAD -- src/dlk/opt
 
 set -euo pipefail
 
@@ -204,11 +204,14 @@ for path in "${GENERATED[@]}"; do
 done
 
 printed=0
-section "### Library" dlk
+# list both package locations so a range across the move to src/ pairs the renames
+# TODO: After the next release with the path change, dlk -> src/dlk, name only one path,
+#       for "Library" and in "Build and tooling"; and delete the comment line above.
+section "### Library" src/dlk dlk
 section "### Tests and examples" tests examples
 section "### Documentation" docs '*.md'
 # everything no group above claimed, so only generated files go unreported
-section "### Build and tooling" . ':!dlk' ':!tests' ':!examples' ':!docs' ':!*.md' "${excluded[@]}"
+section "### Build and tooling" . ':!src/dlk' ':!dlk' ':!tests' ':!examples' ':!docs' ':!*.md' "${excluded[@]}"
 
 # name the generated files rather than dropping them without a word
 note="$(

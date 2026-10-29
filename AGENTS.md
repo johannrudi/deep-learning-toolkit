@@ -19,10 +19,10 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Tests
 
-- run `make format` to format Python files in `dlk`, `tests`, and `examples` with `black` and `isort`
-- run `make format-check` to check `isort` and `black` formatting in `dlk`, `tests`, and `examples` without modifying files
-- run `make compile` to compile Python files in `dlk`, `tests`, and `examples`
-- run `make lint` to run `basedpyright` across `dlk`, `tests`, and `examples`
+- run `make format` to format Python files in `src/dlk`, `tests`, and `examples` with `black` and `isort`
+- run `make format-check` to check `isort` and `black` formatting in `src/dlk`, `tests`, and `examples` without modifying files
+- run `make compile` to compile Python files in `src/dlk`, `tests`, and `examples`
+- run `make lint` to run `basedpyright` across `src/dlk`, `tests`, and `examples`
 - run `make license-check` to check SPDX copyright and license headers of all files with `reuse lint`
 - run `make test` to run `pytest` across the codebase
 - run `make testq` to run `pytest -q` across the codebase
@@ -41,7 +41,7 @@ SPDX-License-Identifier: Apache-2.0
 - run `make version` to read the current version
 - run `make version-patch` (or `version-minor`, `version-major`) to bump `project.version` in `pyproject.toml` and sync `CITATION.cff`
 - `uv version` also updates `uv.lock`; commit `pyproject.toml`, `uv.lock`, and `CITATION.cff` together
-- do not add a version to `dlk/__init__.py`; `__version__` is read from the installed package metadata
+- do not add a version to `src/dlk/__init__.py`; `__version__` is read from the installed package metadata
 - run `make citation-check` to validate `CITATION.cff` after editing it
 - run `make build` to build the sdist and wheel
 - tag the release commit as `v{version}` and push the tag

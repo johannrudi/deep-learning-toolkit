@@ -23,10 +23,10 @@ A **normalization layer** rescales activations to zero mean and unit variance us
 
 Picking a normalization by what a famous architecture uses therefore carries that architecture's assumptions about its data into yours. ConvNeXt normalizes each position over its channels because, for natural images, the brightness of a patch is mostly a nuisance. For a 1D signal where the energy of a segment is the information, the same choice throws the signal away. This guide gives the math of each normalization in one notation, shows how to measure what each one keeps, and walks through a controlled comparison on your own dataset.
 
-This guide assumes you have trained convolutional networks in PyTorch and build blocks from `dlk/nets/conv1d.py`. The examples use `UniversalMultiLevelBlock`, whose `normalization` argument takes any factory that builds a layer from its number of channels.
+This guide assumes you have trained convolutional networks in PyTorch and build blocks from `src/dlk/nets/conv1d.py`. The examples use `UniversalMultiLevelBlock`, whose `normalization` argument takes any factory that builds a layer from its number of channels.
 
 > [!WARNING]
-> `nn.LayerNorm(C)` does not normalize over the channels of a `(batch, channels, length)` tensor. It normalizes the trailing dimensions, which for a 1D feature map is the length, and it fails outright when the length differs from `C`: `RuntimeError: Given normalized_shape=[8], expected input with shape [*, 8], but got input of size[4, 8, 64]`. Use `ChannelLayerNorm` from `dlk/nets/conv1d.py` for layer normalization over channels.
+> `nn.LayerNorm(C)` does not normalize over the channels of a `(batch, channels, length)` tensor. It normalizes the trailing dimensions, which for a 1D feature map is the length, and it fails outright when the length differs from `C`: `RuntimeError: Given normalized_shape=[8], expected input with shape [*, 8], but got input of size[4, 8, 64]`. Use `ChannelLayerNorm` from `src/dlk/nets/conv1d.py` for layer normalization over channels.
 
 ## The common form
 
@@ -70,7 +70,7 @@ $$
 \sigma_{b,g}^2 = \frac{G}{C L} \sum_{c \in \mathcal{G}_g} \sum_{l=1}^{L} \left( x_{b,c,l} - \mu_{b,g} \right)^2.
 $$
 
-Two settings of $G$ have their own names. With $G = 1$, one mean and one variance per sample cover the whole feature map, so the layer removes a single global offset and gain and keeps every relative magnitude, between channels and between positions. This is the default of `UniversalMultiLevelBlock` (the `Normalization` helper in `dlk/nets/conv1d.py`) and of `UNetResBlock`. With $G = C$, each channel gets its own statistics along the sequence, which is **instance normalization**: it removes each channel's level and gain.
+Two settings of $G$ have their own names. With $G = 1$, one mean and one variance per sample cover the whole feature map, so the layer removes a single global offset and gain and keeps every relative magnitude, between channels and between positions. This is the default of `UniversalMultiLevelBlock` (the `Normalization` helper in `src/dlk/nets/conv1d.py`) and of `UNetResBlock`. With $G = C$, each channel gets its own statistics along the sequence, which is **instance normalization**: it removes each channel's level and gain.
 
 `nn.GroupNorm` requires $C$ to be divisible by $G$, and it checks this at construction.
 
@@ -84,7 +84,7 @@ $$
 \sigma_{b,l}^2 = \frac{1}{C} \sum_{c=1}^{C} \left( x_{b,c,l} - \mu_{b,l} \right)^2.
 $$
 
-`ChannelLayerNorm` in `dlk/nets/conv1d.py` implements exactly this by transposing to channels-last, applying `nn.LayerNorm(C)`, and transposing back; it is the normalization of `ConvNeXtBlock`. After it, the channel vector at every position has zero mean and unit variance, so only its **direction** survives. A silent stretch of the signal and a loud one produce outputs of the same size.
+`ChannelLayerNorm` in `src/dlk/nets/conv1d.py` implements exactly this by transposing to channels-last, applying `nn.LayerNorm(C)`, and transposing back; it is the normalization of `ConvNeXtBlock`. After it, the channel vector at every position has zero mean and unit variance, so only its **direction** survives. A silent stretch of the signal and a loud one produce outputs of the same size.
 
 That per-position view needs enough channels to estimate a variance from. With $C = 1$ the output is $\beta$ at every position, whatever the input, and with $C = 2$ every normalized entry is $\pm 1$. Both happen in practice in early blocks of networks whose input has few channels.
 
@@ -100,7 +100,7 @@ $$
 \sigma_{c}^2 = \frac{1}{B L} \sum_{b=1}^{B} \sum_{l=1}^{L} \left( x_{b,c,l} - \mu_{c} \right)^2.
 $$
 
-During training it also tracks exponential moving averages of $\mu_c$ and $\sigma_c^2$, the **running statistics**, and uses them in evaluation mode instead of batch statistics. It is the only method here whose output for one sample depends on the other samples in its batch, which is its strength (regularizing noise, no per-sample cost at inference) and the source of every one of its problems: a gap between training and evaluation behavior, poor estimates at small per-device batch sizes, and cross-process synchronization under DDP. `dlk/nets/efficientnet1d.py` uses it throughout.
+During training it also tracks exponential moving averages of $\mu_c$ and $\sigma_c^2$, the **running statistics**, and uses them in evaluation mode instead of batch statistics. It is the only method here whose output for one sample depends on the other samples in its batch, which is its strength (regularizing noise, no per-sample cost at inference) and the source of every one of its problems: a gap between training and evaluation behavior, poor estimates at small per-device batch sizes, and cross-process synchronization under DDP. `src/dlk/nets/efficientnet1d.py` uses it throughout.
 
 ### RMS normalization
 
@@ -161,7 +161,7 @@ Several constraints eliminate candidates before any comparison, and they are che
 
 - **Small per-device batches.** Batch statistics over two or four samples are noise. Prefer a per-sample method when each GPU sees fewer than roughly 16 samples.
 - **DDP.** `nn.BatchNorm1d` computes statistics per process. Converting it with `nn.SyncBatchNorm.convert_sync_batchnorm` restores full-batch statistics at the cost of a synchronization in every normalization layer of every forward pass.
-- **GAN critics with a gradient penalty.** `dlk/loss/gradient_penalty.py` penalizes the gradient norm of the critic per sample (`gradient_penalty` and its finite-difference variants `gradient_penalty_fd_*`). Batch normalization couples the samples of a batch, so the gradient with respect to one sample depends on the others and the penalty no longer constrains the function it is meant to constrain. Gulrajani et al. (2017) recommend layer normalization in the critic for this reason; any batch-independent method here qualifies.
+- **GAN critics with a gradient penalty.** `src/dlk/loss/gradient_penalty.py` penalizes the gradient norm of the critic per sample (`gradient_penalty` and its finite-difference variants `gradient_penalty_fd_*`). Batch normalization couples the samples of a batch, so the gradient with respect to one sample depends on the others and the penalty no longer constrains the function it is meant to constrain. Gulrajani et al. (2017) recommend layer normalization in the critic for this reason; any batch-independent method here qualifies.
 - **`torch.vmap`.** The running-statistics update of batch normalization writes into an unbatched buffer and fails under `vmap` in training mode; [the composed networks guide](composed_nets.md) covers splitting such a module out of the vmapped region.
 - **Few channels.** `ChannelLayerNorm` and RMS normalization over one or two channels degenerate as described above.
 
@@ -280,7 +280,7 @@ $$
 y = \gamma(e) \odot \hat{x} + \beta(e),
 $$
 
-where $\hat{x}$ is the normalized activation and $\gamma(e)$, $\beta(e)$ come from a small network. FiLM (Perez et al., 2018) introduced the pattern, and diffusion U-Nets apply it after group normalization as **AdaGN** (Dhariwal and Nichol, 2021). DiT's **adaLN-Zero** (Peebles and Xie, 2023) also predicts a gate $\alpha(e)$ for the residual branch, $x + \alpha(e) \odot F(x)$, initialized to zero so every block starts as the identity. The embedding blocks in `dlk/nets/unet.py` are where this pattern belongs.
+where $\hat{x}$ is the normalized activation and $\gamma(e)$, $\beta(e)$ come from a small network. FiLM (Perez et al., 2018) introduced the pattern, and diffusion U-Nets apply it after group normalization as **AdaGN** (Dhariwal and Nichol, 2021). DiT's **adaLN-Zero** (Peebles and Xie, 2023) also predicts a gate $\alpha(e)$ for the residual branch, $x + \alpha(e) \odot F(x)$, initialized to zero so every block starts as the identity. The embedding blocks in `src/dlk/nets/unet.py` are where this pattern belongs.
 
 ### Normalizing weights
 
@@ -300,7 +300,7 @@ $$
 A = \operatorname{softmax}\!\Big( \frac{N(Q) \, N(K)^{\top}}{\sqrt{d}} \Big),
 $$
 
-which bounds the attention logits and prevents the logit growth that destabilizes large transformers. It is relevant to `dlk/nets/transformer1d.py`, which normalizes only the residual stream.
+which bounds the attention logits and prevents the logit growth that destabilizes large transformers. It is relevant to `src/dlk/nets/transformer1d.py`, which normalizes only the residual stream.
 
 ### Networks without normalization
 

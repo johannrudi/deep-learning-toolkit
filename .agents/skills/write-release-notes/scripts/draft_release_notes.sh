@@ -71,9 +71,9 @@
 #
 #   FAIL  changed files section differs from a fresh render, so a number or a bar was altered
 #           4c4
-#           < dlk/nets/conv1d.py  732  <span ...>██████</span><span ...>░░░░░░░░░░░░░</span>
+#           < src/dlk/nets/conv1d.py  732  <span ...>██████</span><span ...>░░░░░░░░░░░░░</span>
 #           ---
-#           > dlk/nets/conv1d.py  732  <span ...>██████</span><span ...>░░░░░░░░░░░</span>
+#           > src/dlk/nets/conv1d.py  732  <span ...>██████</span><span ...>░░░░░░░░░░░</span>
 #
 # A commit the file never cites is reported as INFO rather than FAIL, because
 # folding several commits into one bullet is expected:
@@ -130,8 +130,11 @@ commit_scope() {
     fi
     git show --name-only --pretty=format: "$sha" | awk '
         NF == 0 { next }
-        /^dlk\// {
-            n = split($0, part, "/")
+        # match the package before and after its move to src/
+        /^(src\/)?dlk\// {
+            path = $0
+            sub(/^src\//, "", path)
+            n = split(path, part, "/")
             scope[n > 2 ? part[2] : "dlk"] = 1
             next
         }

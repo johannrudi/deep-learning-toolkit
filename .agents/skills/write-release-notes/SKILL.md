@@ -78,7 +78,7 @@ Then delete the `### Unsorted` heading.
 Bullets keep the shape the draft gave them, `- <short sha> <scope>: <lowercase description>`, with these corrections:
 
 - Fold commits that formed one logical change into a single bullet, keeping the sha of the last one.
-- Fill in a scope the script left blank, and fix one it guessed wrong. A scope is the top-level package under `dlk/` that the commit touches, or the area for repository-wide work (build, ci, docs). Several are allowed, comma-separated.
+- Fill in a scope the script left blank, and fix one it guessed wrong. A scope is the top-level package under `src/dlk/` (or `dlk/` before the move to `src/`) that the commit touches, or the area for repository-wide work (build, ci, docs). Several are allowed, comma-separated.
 - Append `(#N)` only when the commit message itself references an issue or pull request. Never infer a number.
 
 **Changed files.** Leave this section alone. Paste nothing into it and edit nothing in it. Where a renamed file matters to a reader, say the old name in the Changelog bullet, because the histogram lists a renamed file under its new path only.

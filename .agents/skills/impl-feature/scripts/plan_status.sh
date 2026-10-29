@@ -37,11 +37,11 @@
 #   base:        ebebf8d (approximate: no Base-Commit, last commit before end of 2026-09-24)
 #   steps done:  none
 #   files:       20 referenced, 12 in repo
-#   not in repo: dlk/loss/spectral_norm.py fhn_gan/pytorch/train_gan.py ...
+#   not in repo: src/dlk/loss/spectral_norm.py fhn_gan/pytorch/train_gan.py ...
 #   uncommitted: none
 #   drift:
 #   875ab42 nets: Rebuild ResidualBlock of MLPResNet after UniversalMultiLevelBlock.
-#     dlk/nets/mlp.py
+#     src/dlk/nets/mlp.py
 #     tests/nets/test_mlp.py
 #   ...
 #

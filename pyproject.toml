@@ -94,7 +94,7 @@ target-version = ["py311"]
 
 [tool.isort]
 profile = "black"
-src_paths = ["dlk", "tests"]
+src_paths = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -123,10 +123,9 @@ conflicts = [
 requires = ["uv_build>=0.12.1,<0.13"]
 build-backend = "uv_build"
 
-# set a custom module location
+# set the module name; the default module root is `src`
 [tool.uv.build-backend]
 module-name = "dlk"
-module-root = ""
 
 # --------------------------------------
 # Package Sources

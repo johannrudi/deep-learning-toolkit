@@ -11,7 +11,7 @@ description: Write a typed config dataclass that holds the arguments for one tor
 
 A config dataclass is a typed argument set for one torch constructor. It records the choices the project always makes, resolves the machine-dependent ones from the machine it runs on, and hands the result to torch as keyword arguments. A script then carries one object instead of a dozen loose arguments.
 
-The worked example is `DataLoaderConfig` in `dlk/data/loader.py`, tested in `tests/data/test_loader.py`. Read both before writing a new one.
+The worked example is `DataLoaderConfig` in `src/dlk/data/loader.py`, tested in `tests/data/test_loader.py`. Read both before writing a new one.
 
 ## Target model tier
 
@@ -35,7 +35,7 @@ Everything below applies to both. Wherever it says parameter of the target, read
 
 ## 1. Name and place
 
-`<Target>Config`, in the `dlk` module that uses the target. `DataLoaderConfig` lives in `dlk/data/loader.py`. The test goes in the mirrored path under `tests/`.
+`<Target>Config`, in the `dlk` module that uses the target. `DataLoaderConfig` lives in `src/dlk/data/loader.py`. The test goes in the mirrored path under `tests/`.
 
 ## 2. Read the target's signature first
 

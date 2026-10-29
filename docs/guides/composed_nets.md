@@ -18,7 +18,7 @@ link: "[[2026.006__compose_nets__1-plan]]"
 
 `dlk.nets.compose` wires already-built `dlk` networks into a **composed net**: a directed acyclic graph of named nodes, where each node is one network and each edge is a tensor one node returns and another consumes unchanged. Building a stem-and-trunk architecture by hand means writing a bespoke `nn.Module` and recomputing every concatenation width whenever a stem changes size. `ComposedNet` derives those widths instead, from the networks themselves, and checks them once at construction rather than on the first batch.
 
-This guide assumes you already build `dlk` networks from `dlk/nets/` (e.g., `dlk/nets/mlp.py` or `dlk/nets/efficientnet1d.py`) and that you know what a directed acyclic graph is. It walks through declaring a graph, building it, and using it as a drop-in for an existing training loop, then covers the two things that are not obvious from the interface: [routing a tensor into a residual block](#routing-a-tensor-into-a-residual-block) instead of concatenating it, and [splitting a graph so a batch-normalized stem is evaluated once per batch](#splitting-off-vmap-safe-replicas) instead of once per `torch.vmap` replica.
+This guide assumes you already build `dlk` networks from `src/dlk/nets/` (e.g., `src/dlk/nets/mlp.py` or `src/dlk/nets/efficientnet1d.py`) and that you know what a directed acyclic graph is. It walks through declaring a graph, building it, and using it as a drop-in for an existing training loop, then covers the two things that are not obvious from the interface: [routing a tensor into a residual block](#routing-a-tensor-into-a-residual-block) instead of concatenating it, and [splitting a graph so a batch-normalized stem is evaluated once per batch](#splitting-off-vmap-safe-replicas) instead of once per `torch.vmap` replica.
 
 > [!NOTE]
 > Every node's module must answer `resolve_input_shape()` and `resolve_output_shape()`, the two-method `NetShape` protocol, or the node's `NodeConfig` must set `input_shape` and `output_shape` explicitly. `MLPNet`, `MLPResNet`, `ConvNet`, `ConvResNet`, `TransformerNet`, `ChannelWiseTransformerNet`, and every `ScalableEfficientNet1D` subclass already implement it. A module that does neither raises `TypeError` naming the node at construction, not at the first forward call.
@@ -115,7 +115,7 @@ ValueError: the output 'trunk' does not reach nodes ['orphan']; their parameters
 `ComposedNet.forward(*inputs)` binds its positional arguments to `external_inputs` in order and returns the output node's tensor, so a composed net drops into an existing call site unchanged:
 
 ```python
-x_gen = g_net(y_data, z)  # the g_net(y_data, z) contract of dlk/opt/train_gan.py
+x_gen = g_net(y_data, z)  # the g_net(y_data, z) contract of src/dlk/opt/train_gan.py
 ```
 
 Training it is nothing special either. `examples/nets/compose_conditional_gan.py` trains this exact generator against an ordinary `MLPResNet` discriminator through `dlk.opt.train_gan.train_epochs`, unmodified:

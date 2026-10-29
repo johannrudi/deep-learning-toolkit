@@ -18,7 +18,7 @@
 # commit. If it is empty, the commit lives only on the current branch, and a
 # rebase or squash of that branch would drop it.
 #
-# Example, "plan_base.sh dlk/loss/wasserstein_gan.py dlk/opt/train_gan.py":
+# Example, "plan_base.sh src/dlk/loss/wasserstein_gan.py src/dlk/opt/train_gan.py":
 #
 #   branch:      feature-gp
 #   Base-Commit: d73b7a1c0f5e8a2b9d4c6e1f3a7b8c9d0e1f2a3b
@@ -29,7 +29,7 @@
 # Example of the refusal:
 #
 #   uncommitted:
-#    M dlk/opt/train_gan.py
+#    M src/dlk/opt/train_gan.py
 #
 #   error: commit these changes before recording Base-Commit
 

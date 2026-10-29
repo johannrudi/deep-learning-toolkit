@@ -58,7 +58,7 @@ The helper seeds `random`, numpy, and torch with `base_seed + rank`, so per-rank
 
 ### Step 3: Rank-suffix the log files
 
-`dlk/mgmt/log.py` opens log files with `filemode="w"`, so all ranks writing to one file name clobber each other. Give each rank its own file:
+`src/dlk/mgmt/log.py` opens log files with `filemode="w"`, so all ranks writing to one file name clobber each other. Give each rank its own file:
 
 ```python
 log_name = name if not ctx.is_distributed else f"{name}_rank{ctx.rank}"
